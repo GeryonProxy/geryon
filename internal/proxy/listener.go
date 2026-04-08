@@ -696,8 +696,334 @@ func (ps *ProxySession) forwardAuthToBackend() error {
 
 // handleMySQLStartup handles MySQL startup handshake.
 func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
-	// TODO: Implement MySQL startup handshake
-	return fmt.Errorf("MySQL startup not yet implemented")
+	// For MySQL, we need to connect to backend first to get the handshake
+	// Connect to backend
+	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
+		return fmt.Errorf("failed to connect to backend: %w", err)
+	}
+
+	serverConn := ps.poolSession.ServerConn()
+	if serverConn == nil {
+		return fmt.Errorf("no server connection available")
+	}
+
+	ps.serverConn = serverConn
+
+	// Read handshake from backend
+	reader := bufio.NewReader(serverConn.Conn())
+
+	// Read packet header (4 bytes)
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return fmt.Errorf("failed to read handshake header: %w", err)
+	}
+
+	length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
+	_ = header[3] // sequence
+
+	// Read handshake packet
+	handshakeData := make([]byte, length)
+	if _, err := io.ReadFull(reader, handshakeData); err != nil {
+		return fmt.Errorf("failed to read handshake data: %w", err)
+	}
+
+	// Parse handshake to get scramble
+	scramble, err := extractMySQLScramble(handshakeData)
+	if err != nil {
+		return fmt.Errorf("failed to extract scramble: %w", err)
+	}
+
+	// Modify handshake with our server info
+	ourHandshake := createMySQLHandshake(ps.id, scramble)
+
+	// Send to client
+	pkt := make([]byte, 4+len(ourHandshake))
+	copy(pkt[0:4], header)
+	copy(pkt[4:], ourHandshake)
+	pkt[3] = 0 // Reset sequence number
+
+	if _, err := ps.clientConn.Write(pkt); err != nil {
+		return fmt.Errorf("failed to send handshake: %w", err)
+	}
+
+	// Read handshake response from client
+	respHeader := make([]byte, 4)
+	if _, err := io.ReadFull(ps.clientConn, respHeader); err != nil {
+		return fmt.Errorf("failed to read response header: %w", err)
+	}
+
+	respLength := int(respHeader[0]) | int(respHeader[1])<<8 | int(respHeader[2])<<16
+	respData := make([]byte, respLength)
+	if _, err := io.ReadFull(ps.clientConn, respData); err != nil {
+		return fmt.Errorf("failed to read response data: %w", err)
+	}
+
+	// Parse response to get username/database
+	username, database, err := parseMySQLHandshakeResponse(respData)
+	if err != nil {
+		return fmt.Errorf("failed to parse handshake response: %w", err)
+	}
+
+	ps.username = username
+	ps.database = database
+
+	// Forward response to backend (adjusted sequence)
+	respPkt := make([]byte, 4+respLength)
+	copy(respPkt[0:4], respHeader)
+	respPkt[3] = 1 // Sequence should be 1 for client response
+	copy(respPkt[4:], respData)
+
+	if _, err := serverConn.Conn().Write(respPkt); err != nil {
+		return fmt.Errorf("failed to forward response: %w", err)
+	}
+
+	// Forward remaining auth packets until OK or error
+	if err := ps.forwardMySQLAuth(); err != nil {
+		return fmt.Errorf("mysql auth failed: %w", err)
+	}
+
+	ps.authenticated.Store(true)
+	ps.poolSession.SetAuthDone()
+
+	return nil
+}
+
+// extractMySQLScramble extracts the auth scramble from handshake packet.
+func extractMySQLScramble(data []byte) ([]byte, error) {
+	if len(data) < 10 {
+		return nil, fmt.Errorf("handshake too short")
+	}
+
+	// Protocol version (1 byte)
+	protoVersion := data[0]
+	if protoVersion != 10 {
+		return nil, fmt.Errorf("unsupported protocol version: %d", protoVersion)
+	}
+
+	// Skip server version (null-terminated)
+	pos := 1
+	for pos < len(data) && data[pos] != 0 {
+		pos++
+	}
+	pos++ // skip null
+
+	// Skip connection ID (4 bytes)
+	pos += 4
+
+	// Auth data part 1 (8 bytes)
+	if pos+8 > len(data) {
+		return nil, fmt.Errorf("handshake too short for auth part 1")
+	}
+	scramble := make([]byte, 0, 20)
+	scramble = append(scramble, data[pos:pos+8]...)
+	pos += 8
+
+	// Skip filler (1 byte)
+	pos++
+
+	// Skip capability flags lower (2 bytes), charset (1 byte), status (2 bytes)
+	pos += 5
+
+	// Check if we have more capability flags
+	if pos+2 > len(data) {
+		return scramble, nil // Old protocol, only 8 bytes
+	}
+
+	// Skip capability flags upper (2 bytes)
+	pos += 2
+
+	// Auth data length (1 byte) - at least 21 bytes total
+	authLen := data[pos]
+	pos++
+
+	// Skip reserved (10 bytes)
+	pos += 10
+
+	// Auth data part 2 (remaining bytes up to 12)
+	part2Len := int(authLen) - 8
+	if part2Len > 12 {
+		part2Len = 12
+	}
+	if pos+part2Len > len(data) {
+		part2Len = len(data) - pos
+	}
+	if part2Len > 0 {
+		scramble = append(scramble, data[pos:pos+part2Len]...)
+	}
+
+	return scramble[:20], nil // Return exactly 20 bytes
+}
+
+// createMySQLHandshake creates a handshake packet with our server info.
+func createMySQLHandshake(connID uint64, scramble []byte) []byte {
+	version := "5.7.42-geryon"
+	buf := make([]byte, 0, 128)
+
+	// Protocol version
+	buf = append(buf, 10)
+
+	// Server version
+	buf = append(buf, []byte(version)...)
+	buf = append(buf, 0)
+
+	// Connection ID
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(connID))
+
+	// Auth data part 1 (8 bytes)
+	if len(scramble) >= 8 {
+		buf = append(buf, scramble[:8]...)
+	} else {
+		buf = append(buf, make([]byte, 8)...)
+	}
+
+	// Filler
+	buf = append(buf, 0)
+
+	// Capability flags lower (CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH)
+	buf = binary.LittleEndian.AppendUint16(buf, 0x85a6)
+
+	// Character set (utf8mb4 = 255)
+	buf = append(buf, 255)
+
+	// Status flags (AUTOCOMMIT)
+	buf = binary.LittleEndian.AppendUint16(buf, 0x0002)
+
+	// Capability flags upper
+	buf = binary.LittleEndian.AppendUint16(buf, 0x800f)
+
+	// Auth data length
+	buf = append(buf, 21)
+
+	// Reserved (10 bytes)
+	buf = append(buf, make([]byte, 10)...)
+
+	// Auth data part 2 (12 bytes) + null
+	if len(scramble) >= 20 {
+		buf = append(buf, scramble[8:20]...)
+	} else if len(scramble) > 8 {
+		buf = append(buf, scramble[8:]...)
+		buf = append(buf, make([]byte, 20-len(scramble))...)
+	} else {
+		buf = append(buf, make([]byte, 12)...)
+	}
+	buf = append(buf, 0)
+
+	// Auth plugin name
+	buf = append(buf, []byte("mysql_native_password")...)
+	buf = append(buf, 0)
+
+	return buf
+}
+
+// parseMySQLHandshakeResponse parses the client handshake response.
+func parseMySQLHandshakeResponse(data []byte) (username, database string, err error) {
+	if len(data) < 32 {
+		return "", "", fmt.Errorf("response too short")
+	}
+
+	pos := 0
+
+	// Capability flags (4 bytes)
+	pos += 4
+
+	// Max packet size (4 bytes)
+	pos += 4
+
+	// Character set (1 byte)
+	pos++
+
+	// Reserved (23 bytes)
+	pos += 23
+
+	// Username (null-terminated)
+	usernameStart := pos
+	for pos < len(data) && data[pos] != 0 {
+		pos++
+	}
+	username = string(data[usernameStart:pos])
+	pos++ // skip null
+
+	// Skip auth response (variable length)
+	if pos < len(data) {
+		authLen := int(data[pos])
+		pos++
+		pos += authLen
+	}
+
+	// Database (null-terminated)
+	if pos < len(data) {
+		dbStart := pos
+		for pos < len(data) && data[pos] != 0 {
+			pos++
+		}
+		database = string(data[dbStart:pos])
+	}
+
+	return username, database, nil
+}
+
+// forwardMySQLAuth forwards authentication packets until completion.
+func (ps *ProxySession) forwardMySQLAuth() error {
+	// Forward packets between client and server until OK or ERR
+	for {
+		// Read from server
+		serverReader := bufio.NewReader(ps.serverConn.Conn())
+
+		// Read header
+		header := make([]byte, 4)
+		if _, err := io.ReadFull(serverReader, header); err != nil {
+			return err
+		}
+
+		length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
+		seq := header[3]
+
+		// Read payload
+		payload := make([]byte, length)
+		if _, err := io.ReadFull(serverReader, payload); err != nil {
+			return err
+		}
+
+		// Forward to client
+		pkt := make([]byte, 4+length)
+		copy(pkt, header)
+		copy(pkt[4:], payload)
+		if _, err := ps.clientConn.Write(pkt); err != nil {
+			return err
+		}
+
+		// Check for OK (0x00) or ERR (0xff) or EOF (0xfe for old protocol)
+		if length > 0 {
+			switch payload[0] {
+			case 0x00: // OK
+				return nil
+			case 0xff: // ERR
+				return fmt.Errorf("authentication failed")
+			case 0xfe: // Auth switch request
+				// Read client response
+				clientHeader := make([]byte, 4)
+				if _, err := io.ReadFull(ps.clientConn, clientHeader); err != nil {
+					return err
+				}
+
+				clientLength := int(clientHeader[0]) | int(clientHeader[1])<<8 | int(clientHeader[2])<<16
+				clientPayload := make([]byte, clientLength)
+				if _, err := io.ReadFull(ps.clientConn, clientPayload); err != nil {
+					return err
+				}
+
+				// Forward to server
+				clientPkt := make([]byte, 4+clientLength)
+				copy(clientPkt, clientHeader)
+				clientPkt[3] = seq + 1
+				copy(clientPkt[4:], clientPayload)
+				if _, err := ps.serverConn.Conn().Write(clientPkt); err != nil {
+					return err
+				}
+				// Continue waiting for OK/ERR
+			}
+		}
+	}
 }
 
 // handleMSSQLStartup handles MSSQL startup handshake.
