@@ -1087,8 +1087,244 @@ func (ps *ProxySession) forwardMySQLAuth() error {
 
 // handleMSSQLStartup handles MSSQL startup handshake.
 func (ps *ProxySession) handleMSSQLStartup(ctx context.Context) error {
-	// TODO: Implement MSSQL startup handshake
-	return fmt.Errorf("MSSQL startup not yet implemented")
+	// TDS protocol: Pre-Login -> Login7 -> Auth complete
+	// Connect to backend first
+	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
+		return fmt.Errorf("failed to connect to backend: %w", err)
+	}
+
+	serverConn := ps.poolSession.ServerConn()
+	if serverConn == nil {
+		return fmt.Errorf("no server connection available")
+	}
+
+	ps.serverConn = serverConn
+
+	// Forward Pre-Login from client to server
+	if err := ps.forwardMSSQLPreLogin(); err != nil {
+		return fmt.Errorf("pre-login failed: %w", err)
+	}
+
+	// Forward Login7 from client to server
+	if err := ps.forwardMSSQLLogin7(); err != nil {
+		return fmt.Errorf("login failed: %w", err)
+	}
+
+	ps.authenticated.Store(true)
+	ps.poolSession.SetAuthDone()
+
+	return nil
+}
+
+// forwardMSSQLPreLogin forwards Pre-Login negotiation.
+func (ps *ProxySession) forwardMSSQLPreLogin() error {
+	// Read Pre-Login from client
+	reader := bufio.NewReader(ps.clientConn)
+
+	// Read TDS header (8 bytes)
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return fmt.Errorf("failed to read Pre-Login header: %w", err)
+	}
+
+	if header[0] != 0x12 { // PacketTypePreLogin
+		return fmt.Errorf("expected Pre-Login packet, got 0x%02x", header[0])
+	}
+
+	length := binary.BigEndian.Uint16(header[2:4])
+	payloadLen := int(length) - 8
+
+	payload := make([]byte, payloadLen)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return fmt.Errorf("failed to read Pre-Login payload: %w", err)
+	}
+
+	// Forward to server
+	preLogin := make([]byte, length)
+	copy(preLogin[0:8], header)
+	copy(preLogin[8:], payload)
+
+	if _, err := ps.serverConn.Conn().Write(preLogin); err != nil {
+		return fmt.Errorf("failed to forward Pre-Login: %w", err)
+	}
+
+	// Read response from server
+	serverReader := bufio.NewReader(ps.serverConn.Conn())
+
+	for {
+		// Read header
+		respHeader := make([]byte, 8)
+		if _, err := io.ReadFull(serverReader, respHeader); err != nil {
+			return fmt.Errorf("failed to read Pre-Login response header: %w", err)
+		}
+
+		respLength := binary.BigEndian.Uint16(respHeader[2:4])
+		respPayloadLen := int(respLength) - 8
+
+		respPayload := make([]byte, respPayloadLen)
+		if _, err := io.ReadFull(serverReader, respPayload); err != nil {
+			return fmt.Errorf("failed to read Pre-Login response payload: %w", err)
+		}
+
+		// Forward to client
+		resp := make([]byte, respLength)
+		copy(resp[0:8], respHeader)
+		copy(resp[8:], respPayload)
+
+		if _, err := ps.clientConn.Write(resp); err != nil {
+			return fmt.Errorf("failed to send Pre-Login response: %w", err)
+		}
+
+		// Check for end of message
+		if respHeader[1]&0x01 != 0 { // StatusEndOfMessage
+			break
+		}
+	}
+
+	return nil
+}
+
+// forwardMSSQLLogin7 forwards Login7 authentication.
+func (ps *ProxySession) forwardMSSQLLogin7() error {
+	// Read Login7 from client
+	reader := bufio.NewReader(ps.clientConn)
+
+	// Read TDS header (8 bytes)
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return fmt.Errorf("failed to read Login7 header: %w", err)
+	}
+
+	if header[0] != 0x10 { // PacketTypeLogin7
+		return fmt.Errorf("expected Login7 packet, got 0x%02x", header[0])
+	}
+
+	length := binary.BigEndian.Uint16(header[2:4])
+	payloadLen := int(length) - 8
+
+	payload := make([]byte, payloadLen)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return fmt.Errorf("failed to read Login7 payload: %w", err)
+	}
+
+	// Extract username from Login7 for logging
+	ps.extractLogin7Credentials(payload)
+
+	// Forward to server
+	login7 := make([]byte, length)
+	copy(login7[0:8], header)
+	copy(login7[8:], payload)
+
+	if _, err := ps.serverConn.Conn().Write(login7); err != nil {
+		return fmt.Errorf("failed to forward Login7: %w", err)
+	}
+
+	// Forward authentication response packets
+	if err := ps.forwardMSSQLAuthResponse(); err != nil {
+		return fmt.Errorf("auth response failed: %w", err)
+	}
+
+	return nil
+}
+
+// extractLogin7Credentials extracts username from Login7 packet.
+func (ps *ProxySession) extractLogin7Credentials(data []byte) {
+	if len(data) < 36 {
+		return
+	}
+
+	// Offset of username is at byte 28-29 (2 bytes)
+	usernameOffset := binary.LittleEndian.Uint16(data[28:30])
+	usernameLen := binary.LittleEndian.Uint16(data[30:32])
+
+	if int(usernameOffset)+int(usernameLen)*2 > len(data) {
+		return
+	}
+
+	// Username is UTF-16LE
+	usernameBytes := data[usernameOffset : usernameOffset+usernameLen*2]
+	var username strings.Builder
+	for i := 0; i < len(usernameBytes); i += 2 {
+		if i+1 >= len(usernameBytes) {
+			break
+		}
+		r := rune(binary.LittleEndian.Uint16(usernameBytes[i:]))
+		if r == 0 {
+			break
+		}
+		username.WriteRune(r)
+	}
+
+	ps.username = username.String()
+
+	// Database is at offset 36-37
+	dbOffset := binary.LittleEndian.Uint16(data[36:38])
+	dbLen := binary.LittleEndian.Uint16(data[38:40])
+
+	if int(dbOffset)+int(dbLen)*2 <= len(data) {
+		dbBytes := data[dbOffset : dbOffset+dbLen*2]
+		var db strings.Builder
+		for i := 0; i < len(dbBytes); i += 2 {
+			if i+1 >= len(dbBytes) {
+				break
+			}
+			r := rune(binary.LittleEndian.Uint16(dbBytes[i:]))
+			if r == 0 {
+				break
+			}
+			db.WriteRune(r)
+		}
+		ps.database = db.String()
+	}
+}
+
+// forwardMSSQLAuthResponse forwards authentication response until complete.
+func (ps *ProxySession) forwardMSSQLAuthResponse() error {
+	serverReader := bufio.NewReader(ps.serverConn.Conn())
+
+	for {
+		// Read packet from server
+		header := make([]byte, 8)
+		if _, err := io.ReadFull(serverReader, header); err != nil {
+			return fmt.Errorf("failed to read auth response header: %w", err)
+		}
+
+		length := binary.BigEndian.Uint16(header[2:4])
+		payloadLen := int(length) - 8
+
+		payload := make([]byte, payloadLen)
+		if _, err := io.ReadFull(serverReader, payload); err != nil {
+			return fmt.Errorf("failed to read auth response payload: %w", err)
+		}
+
+		// Forward to client
+		pkt := make([]byte, length)
+		copy(pkt[0:8], header)
+		copy(pkt[8:], payload)
+
+		if _, err := ps.clientConn.Write(pkt); err != nil {
+			return fmt.Errorf("failed to forward auth response: %w", err)
+		}
+
+		// Check for LoginAck (0xAD) or Error (0xAA)
+		if len(payload) > 0 {
+			tokenType := payload[0]
+			if tokenType == 0xAD { // LoginAck
+				// Authentication successful
+				// Continue until we see Done
+			}
+			if tokenType == 0xAA { // Error
+				return fmt.Errorf("authentication failed")
+			}
+		}
+
+		// Check for end of message
+		if header[1]&0x01 != 0 { // StatusEndOfMessage
+			break
+		}
+	}
+
+	return nil
 }
 
 // OnQuery is called when a query is received.
@@ -1194,18 +1430,28 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 		var cacheKey string
 		if ps.cacheStore != nil && ps.cacheRules != nil && codec.IsQuery(msg) {
 			query, _ = codec.ExtractQuery(msg)
-			if query != "" && ps.cacheRules.ShouldCache(query) && isSelectQuery(query) {
-				cacheKey = cache.GenerateKey(query).String()
-				// Check cache
-				if cachedData, hit := ps.cacheStore.Get(cacheKey); hit {
-					ps.log.Debug("Cache hit", "query", query[:min(len(query), 50)])
-					// Send cached response to client
-					if err := ps.sendCachedResponse(clientConn, cachedData); err != nil {
-						ps.log.Error("Failed to send cached response", "error", err)
-						// Fall through to normal handling
-					} else {
-						// Cache hit served, continue to next message
-						continue
+			if query != "" {
+				// Check if this is a data modification query
+				if isModificationQuery(query) {
+					// Invalidate cache for affected tables
+					tables := extractTablesFromQuery(query)
+					if len(tables) > 0 {
+						ps.log.Debug("Cache invalidation", "tables", tables, "query", query[:min(len(query), 50)])
+						ps.cacheStore.InvalidateTables(tables)
+					}
+				} else if ps.cacheRules.ShouldCache(query) && isSelectQuery(query) {
+					cacheKey = cache.GenerateKey(query).String()
+					// Check cache
+					if cachedData, hit := ps.cacheStore.Get(cacheKey); hit {
+						ps.log.Debug("Cache hit", "query", query[:min(len(query), 50)])
+						// Send cached response to client
+						if err := ps.sendCachedResponse(clientConn, cachedData); err != nil {
+							ps.log.Error("Failed to send cached response", "error", err)
+							// Fall through to normal handling
+						} else {
+							// Cache hit served, continue to next message
+							continue
+						}
 					}
 				}
 			}
@@ -1241,6 +1487,19 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 func isSelectQuery(query string) bool {
 	upper := strings.ToUpper(strings.TrimSpace(query))
 	return strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "WITH")
+}
+
+// isModificationQuery returns true if query modifies data (INSERT, UPDATE, DELETE, etc.).
+func isModificationQuery(query string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(query))
+	return strings.HasPrefix(upper, "INSERT") ||
+		strings.HasPrefix(upper, "UPDATE") ||
+		strings.HasPrefix(upper, "DELETE") ||
+		strings.HasPrefix(upper, "TRUNCATE") ||
+		strings.HasPrefix(upper, "DROP") ||
+		strings.HasPrefix(upper, "ALTER") ||
+		strings.HasPrefix(upper, "CREATE") ||
+		strings.HasPrefix(upper, "REPLACE")
 }
 
 // sendCachedResponse sends a cached response to the client.
