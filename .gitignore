@@ -1,0 +1,45 @@
+# Binaries
+geryon
+*.exe
+*.dll
+*.so
+*.dylib
+bin/
+
+# Test binary
+*.test
+
+# Output of go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config files (local)
+geryon.yaml
+*.local.yaml
+
+# Logs
+*.log
+
+# Build artifacts
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

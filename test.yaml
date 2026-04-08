@@ -1,0 +1,14 @@
+# Simple test configuration for Geryon
+global:
+  log_level: info
+  log_format: json
+
+admin:
+  rest:
+    listen: "127.0.0.1:8080"
+    auth:
+      enabled: false
+  dashboard:
+    enabled: true
+
+pools: []

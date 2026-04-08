@@ -1,0 +1,195 @@
+package tokenizer
+
+import (
+	"regexp"
+	"strings"
+)
+
+// QueryType represents the type of SQL query.
+type QueryType int
+
+const (
+	QueryUnknown QueryType = iota
+	QuerySelect
+	QueryInsert
+	QueryUpdate
+	QueryDelete
+	QueryBegin
+	QueryCommit
+	QueryRollback
+	QueryDDL
+	QueryOther
+)
+
+// String returns the string representation of the query type.
+func (t QueryType) String() string {
+	switch t {
+	case QuerySelect:
+		return "SELECT"
+	case QueryInsert:
+		return "INSERT"
+	case QueryUpdate:
+		return "UPDATE"
+	case QueryDelete:
+		return "DELETE"
+	case QueryBegin:
+		return "BEGIN"
+	case QueryCommit:
+		return "COMMIT"
+	case QueryRollback:
+		return "ROLLBACK"
+	case QueryDDL:
+		return "DDL"
+	case QueryOther:
+		return "OTHER"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// ClassifyQuery determines the type of SQL query.
+func ClassifyQuery(query string) (QueryType, error) {
+	queryUpper := strings.ToUpper(query)
+
+	if strings.HasPrefix(queryUpper, "SELECT") {
+		return QuerySelect, nil
+	}
+	if strings.HasPrefix(queryUpper, "INSERT") {
+		return QueryInsert, nil
+	}
+	if strings.HasPrefix(queryUpper, "UPDATE") {
+		return QueryUpdate, nil
+	}
+	if strings.HasPrefix(queryUpper, "DELETE") {
+		return QueryDelete, nil
+	}
+	if strings.HasPrefix(queryUpper, "BEGIN") || strings.HasPrefix(queryUpper, "START TRANSACTION") {
+		return QueryBegin, nil
+	}
+	if strings.HasPrefix(queryUpper, "COMMIT") {
+		return QueryCommit, nil
+	}
+	if strings.HasPrefix(queryUpper, "ROLLBACK") {
+		return QueryRollback, nil
+	}
+	if strings.HasPrefix(queryUpper, "CREATE") {
+		return QueryDDL, nil
+	}
+	if strings.HasPrefix(queryUpper, "DROP") {
+		return QueryDDL, nil
+	}
+	if strings.HasPrefix(queryUpper, "ALTER") {
+		return QueryDDL, nil
+	}
+	if strings.HasPrefix(queryUpper, "TRUNCATE") {
+		return QueryDDL, nil
+	}
+
+	return QueryUnknown, nil
+}
+
+// IsWriteQuery returns true if the query is a write operation.
+func IsWriteQuery(queryType QueryType) bool {
+	return queryType == QueryInsert || queryType == QueryUpdate || queryType == QueryDelete || queryType == QueryDDL
+}
+
+// IsReadQuery returns true if the query is a read operation.
+func IsReadQuery(queryType QueryType) bool {
+	return queryType == QuerySelect
+}
+
+// ExtractTables extracts table names from a SQL query.
+// This is a simplified implementation.
+func ExtractTables(query string) []string {
+	tables := make([]string, 0)
+	queryUpper := strings.ToUpper(query)
+
+	// Very simple table extraction - would need full SQL parser for complete solution
+	// Look for FROM clause
+	if idx := strings.Index(queryUpper, "FROM"); idx != -1 {
+		afterFrom := query[idx+4:]
+		afterFrom = strings.TrimSpace(afterFrom)
+		// Get first token after FROM
+		parts := strings.FieldsFunc(afterFrom, func(r rune) bool {
+			return r == ' ' || r == ',' || r == ';' || r == '\n' || r == '\t'
+		})
+		if len(parts) > 0 {
+			tableName := strings.TrimSpace(parts[0])
+			tableName = strings.Trim(tableName, "`\"[]")
+			if tableName != "" {
+				tables = append(tables, tableName)
+			}
+		}
+	}
+
+	// Look for INSERT INTO
+	if idx := strings.Index(queryUpper, "INSERT INTO"); idx != -1 {
+		afterInsert := query[idx+11:]
+		afterInsert = strings.TrimSpace(afterInsert)
+		parts := strings.FieldsFunc(afterInsert, func(r rune) bool {
+			return r == ' ' || r == '(' || r == ';'
+		})
+		if len(parts) > 0 {
+			tableName := strings.TrimSpace(parts[0])
+			tableName = strings.Trim(tableName, "`\"[]")
+			if tableName != "" {
+				tables = append(tables, tableName)
+			}
+		}
+	}
+
+	// Look for UPDATE
+	if idx := strings.Index(queryUpper, "UPDATE"); idx != -1 {
+		afterUpdate := query[idx+6:]
+		afterUpdate = strings.TrimSpace(afterUpdate)
+		parts := strings.FieldsFunc(afterUpdate, func(r rune) bool {
+			return r == ' ' || r == ',' || r == ';' || r == '\n' || r == '\t' || r == '='
+		})
+		if len(parts) > 0 {
+			tableName := strings.TrimSpace(parts[0])
+			tableName = strings.Trim(tableName, "`\"[]")
+			if tableName != "" {
+				tables = append(tables, tableName)
+			}
+		}
+	}
+
+	return tables
+}
+
+// NormalizeQuery normalizes a query for cache key generation.
+// Removes extra whitespace, converts to lowercase, normalizes parameter placeholders.
+func NormalizeQuery(query string) string {
+	// Convert to lowercase
+	query = strings.ToLower(query)
+
+	// Replace multiple whitespace with single space
+	var result strings.Builder
+	inWhitespace := false
+	for _, ch := range query {
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			if !inWhitespace {
+				result.WriteByte(' ')
+				inWhitespace = true
+			}
+		} else {
+			result.WriteRune(ch)
+			inWhitespace = false
+		}
+	}
+
+	normalized := strings.TrimSpace(result.String())
+
+	// Normalize parameter placeholders ($1, $2, ?) to ?
+	normalized = normalizeParameters(normalized)
+
+	return normalized
+}
+
+func normalizeParameters(query string) string {
+	// Replace $N style parameters with ?
+	query = regexp.MustCompile(`\$\d+`).ReplaceAllString(query, "?")
+
+	// Already using ? style, no change needed
+	return query
+}
