@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/GeryonProxy/geryon/internal/api/rest"
+	"github.com/GeryonProxy/geryon/internal/auth"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -86,6 +87,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Create user database
+	userDB := auth.NewUserDatabase()
+	if err := userDB.LoadFromConfig(&cfg.Auth); err != nil {
+		log.Error("Failed to load user database", "error", err)
+		os.Exit(1)
+	}
+
 	// Create pool manager
 	poolMgr := pool.NewManager(log)
 
@@ -105,7 +113,7 @@ func main() {
 			continue
 		}
 
-		listener, err := proxy.NewListener(p, &poolCfg, p.Codec(), log)
+		listener, err := proxy.NewListener(p, &poolCfg, p.Codec(), userDB, log)
 		if err != nil {
 			log.Error("Failed to create listener", "pool", poolCfg.Name, "error", err)
 			os.Exit(1)
