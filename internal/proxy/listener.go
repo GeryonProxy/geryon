@@ -2,17 +2,20 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/GeryonProxy/geryon/internal/auth"
+	"github.com/GeryonProxy/geryon/internal/cache"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -32,6 +35,8 @@ type Listener struct {
 	sessions    map[uint64]*ProxySession
 	tlsConfig   *tls.Config
 	userDB      *auth.UserDatabase
+	cacheStore  *cache.Store
+	cacheRules  *cache.RulesEngine
 	ctx         context.Context
 	cancel      context.CancelFunc
 	log         *logger.Logger
@@ -53,6 +58,27 @@ func NewListener(pool *pool.Pool, cfg *config.PoolConfig, codec common.Codec, us
 		log:      log,
 	}
 
+	// Setup cache if enabled
+	if cfg.Cache.Enabled {
+		maxMemory := parseMemoryString(cfg.Cache.MaxMemory)
+		defaultTTL, err := cache.ParseDuration(cfg.Cache.DefaultTTL)
+		if err != nil {
+			defaultTTL = 5 * time.Minute
+		}
+		l.cacheStore = cache.NewStore(maxMemory, defaultTTL)
+		l.cacheRules = cache.NewRulesEngine()
+
+		// Load cache rules from config
+		for _, rule := range cfg.Cache.Rules {
+			ttl, _ := cache.ParseDuration(rule.TTL)
+			l.cacheRules.AddRule(rule.Match, ttl, true)
+		}
+
+		// Start cleanup goroutine
+		l.cacheStore.StartCleanup(1 * time.Minute)
+		log.Info("Query cache enabled", "pool", cfg.Name, "max_memory", cfg.Cache.MaxMemory)
+	}
+
 	// Setup TLS if configured
 	if cfg.TLS.Mode != "disable" {
 		if err := l.setupTLS(); err != nil {
@@ -67,6 +93,35 @@ func NewListener(pool *pool.Pool, cfg *config.PoolConfig, codec common.Codec, us
 func (l *Listener) setupTLS() error {
 	// TODO: Implement TLS setup
 	return nil
+}
+
+// parseMemoryString parses memory string like "64MB", "1GB" to bytes.
+func parseMemoryString(s string) int64 {
+	if s == "" {
+		return 64 * 1024 * 1024 // 64MB default
+	}
+
+	var multiplier int64 = 1
+	s = strings.ToUpper(strings.TrimSpace(s))
+
+	if strings.HasSuffix(s, "GB") {
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "GB")
+	} else if strings.HasSuffix(s, "MB") {
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "MB")
+	} else if strings.HasSuffix(s, "KB") {
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "KB")
+	}
+
+	var value int64
+	fmt.Sscanf(s, "%d", &value)
+	if value == 0 {
+		return 64 * 1024 * 1024 // 64MB default
+	}
+
+	return value * multiplier
 }
 
 // Start starts the listener.
@@ -131,8 +186,8 @@ func (l *Listener) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// Create proxy session
-	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.log)
+	// Create proxy session with cache
+	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.log)
 	if err != nil {
 		l.log.Error("Failed to create session", "error", err)
 		return
@@ -226,6 +281,8 @@ type ProxySession struct {
 	username      string
 	database      string
 	scramState    *auth.SCRAMState
+	cacheStore    *cache.Store
+	cacheRules    *cache.RulesEngine
 }
 
 var (
@@ -233,7 +290,7 @@ var (
 )
 
 // NewProxySession creates a new proxy session.
-func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, log *logger.Logger) (*ProxySession, error) {
+func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, log *logger.Logger) (*ProxySession, error) {
 	// Create pool strategy
 	strategy, err := pool.DefaultStrategyFactory.CreateStrategy(p)
 	if err != nil {
@@ -252,6 +309,8 @@ func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, user
 		config:      cfg,
 		poolSession: poolSession,
 		relay:       NewRelay(),
+		cacheStore:  cacheStore,
+		cacheRules:  cacheRules,
 		log:         log,
 	}
 
@@ -1130,15 +1189,45 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			return io.EOF
 		}
 
+		// Extract query for cache check
+		var query string
+		var cacheKey string
+		if ps.cacheStore != nil && ps.cacheRules != nil && codec.IsQuery(msg) {
+			query, _ = codec.ExtractQuery(msg)
+			if query != "" && ps.cacheRules.ShouldCache(query) && isSelectQuery(query) {
+				cacheKey = cache.GenerateKey(query).String()
+				// Check cache
+				if cachedData, hit := ps.cacheStore.Get(cacheKey); hit {
+					ps.log.Debug("Cache hit", "query", query[:min(len(query), 50)])
+					// Send cached response to client
+					if err := ps.sendCachedResponse(clientConn, cachedData); err != nil {
+						ps.log.Error("Failed to send cached response", "error", err)
+						// Fall through to normal handling
+					} else {
+						// Cache hit served, continue to next message
+						continue
+					}
+				}
+			}
+		}
+
 		// Get server connection for this message
 		serverConn, err := ps.OnQuery(ctx, msg)
 		if err != nil {
 			return err
 		}
 
-		// Write message to server
-		if err := codec.WriteMessage(serverConn.Conn(), msg); err != nil {
-			return err
+		// If this is a cachable query, capture the response
+		if cacheKey != "" {
+			// Forward and capture response
+			if err := r.forwardAndCapture(serverConn.Conn(), clientConn, msg, cacheKey, ps); err != nil {
+				return err
+			}
+		} else {
+			// Write message to server normally
+			if err := codec.WriteMessage(serverConn.Conn(), msg); err != nil {
+				return err
+			}
 		}
 
 		// Handle extended query protocol (Sync message indicates end of extended query)
@@ -1146,6 +1235,86 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			ps.OnQueryComplete()
 		}
 	}
+}
+
+// isSelectQuery returns true if query is a SELECT statement.
+func isSelectQuery(query string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(query))
+	return strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "WITH")
+}
+
+// sendCachedResponse sends a cached response to the client.
+func (ps *ProxySession) sendCachedResponse(clientConn net.Conn, data []byte) error {
+	_, err := clientConn.Write(data)
+	return err
+}
+
+// forwardAndCapture forwards request to server and captures response for caching.
+func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg *common.Message, cacheKey string, ps *ProxySession) error {
+	codec := ps.codec
+
+	// Write request to server
+	if err := codec.WriteMessage(serverConn, msg); err != nil {
+		return err
+	}
+
+	// Read and capture response
+	// For PostgreSQL, we need to read multiple messages until ReadyForQuery
+	var response bytes.Buffer
+
+	for {
+		respMsg, err := codec.ReadMessage(serverConn)
+		if err != nil {
+			return err
+		}
+
+		respMsg.Direction = common.Backend
+
+		// Add to response buffer
+		response.Write(respMsg.Raw)
+
+		// Forward to client
+		if err := codec.WriteMessage(clientConn, respMsg); err != nil {
+			return err
+		}
+
+		// Check for end of response
+		if respMsg.Type == 'Z' { // ReadyForQuery
+			break
+		}
+	}
+
+	// Store in cache
+	tables := extractTablesFromQuery(ps.poolSession.LastQuery())
+	ttl := ps.cacheRules.GetTTL(ps.poolSession.LastQuery(), 5*time.Minute)
+	if err := ps.cacheStore.Set(cacheKey, response.Bytes(), tables, ttl); err != nil {
+		ps.log.Debug("Failed to cache response", "error", err)
+	}
+
+	return nil
+}
+
+// extractTablesFromQuery extracts table names from a query for invalidation.
+func extractTablesFromQuery(query string) []string {
+	// Simple extraction - look for FROM and JOIN clauses
+	tables := make([]string, 0)
+	upper := strings.ToUpper(query)
+
+	// Simple regex-like extraction
+	fromIdx := strings.Index(upper, "FROM ")
+	if fromIdx != -1 {
+		rest := query[fromIdx+5:]
+		// Extract table name
+		fields := strings.Fields(rest)
+		if len(fields) > 0 {
+			table := fields[0]
+			// Remove any trailing commas or semicolons
+			table = strings.TrimRight(table, ",;")
+			tables = append(tables, table)
+		}
+	}
+
+	return tables
 }
 
 // forwardServerToClient forwards messages from server to client.
