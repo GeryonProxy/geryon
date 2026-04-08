@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geryon Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="brand">
+                <h1>Geryon</h1>
+                <span class="tagline">Three Bodies. One Proxy.</span>
+            </div>
+            <nav>
+                <a href="#overview" class="nav-item active" data-page="overview">
+                    <span class="icon">📊</span> Overview
+                </a>
+                <a href="#pools" class="nav-item" data-page="pools">
+                    <span class="icon">🗄️</span> Pools
+                </a>
+                <a href="#backends" class="nav-item" data-page="backends">
+                    <span class="icon">🖥️</span> Backends
+                </a>
+                <a href="#connections" class="nav-item" data-page="connections">
+                    <span class="icon">🔗</span> Connections
+                </a>
+                <a href="#queries" class="nav-item" data-page="queries">
+                    <span class="icon">⚡</span> Queries
+                </a>
+                <a href="#config" class="nav-item" data-page="config">
+                    <span class="icon">⚙️</span> Config
+                </a>
+            </nav>
+            <div class="status-bar">
+                <div class="status-indicator online"></div>
+                <span id="connection-status">Connected</span>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="page-header">
+                <h2 id="page-title">Overview</h2>
+                <div class="header-actions">
+                    <button id="refresh-btn" class="btn btn-secondary">Refresh</button>
+                    <button id="reload-config-btn" class="btn btn-primary">Reload Config</button>
+                </div>
+            </header>
+
+            <div id="content" class="content">
+                <div class="loading">Loading dashboard...</div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

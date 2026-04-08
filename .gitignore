@@ -1,5 +1,5 @@
 # Binaries
-geryon
+/geryon
 *.exe
 *.dll
 *.so
