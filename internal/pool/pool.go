@@ -207,7 +207,22 @@ func (p *serverConnPool) release(conn *ServerConn) {
 
 	// Only add to idle pool if we're below max and connection is healthy
 	if len(p.idle) < p.maxSize {
-		conn.MarkIdle()
+		// Perform connection state reset before returning to pool
+		if conn.codec != nil {
+			// Reset in background to avoid blocking
+			go func(c *ServerConn) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := ResetConnection(ctx, c.conn, c.codec); err != nil {
+					// Reset failed, close the connection instead of returning to pool
+					c.Close()
+					return
+				}
+				c.MarkIdle()
+			}(conn)
+		} else {
+			conn.MarkIdle()
+		}
 		p.idle = append(p.idle, conn)
 	} else {
 		// Pool is full, close the connection

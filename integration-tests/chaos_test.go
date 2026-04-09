@@ -112,7 +112,7 @@ func (c *ChaosRunner) printResults() {
 	// Group by operation
 	byOp := make(map[string][]ChaosResult)
 	for _, r := range c.results {
-		byOp[r.Operation] = append(byOp[r.Operation], r.results)
+		byOp[r.Operation] = append(byOp[r.Operation], r)
 	}
 
 	for opName, results := range byOp {

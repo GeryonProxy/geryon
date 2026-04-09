@@ -325,10 +325,27 @@ func (w *WAL) Truncate(beforeIndex uint64) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Read all entries we want to keep
-	entries, err := w.ReadEntries(beforeIndex)
-	if err != nil {
+	// Read all entries we want to keep (inline because we already hold lock)
+	entries := make([]Entry, 0)
+
+	// Seek past header
+	if _, err := w.file.Seek(8, 0); err != nil {
 		return err
+	}
+
+	reader := bufio.NewReader(w.file)
+	for {
+		entry, err := w.readEntry(reader)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		if entry.Index >= beforeIndex {
+			entries = append(entries, entry)
+		}
 	}
 
 	// Close current file

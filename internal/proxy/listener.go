@@ -482,6 +482,11 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 					return fmt.Errorf("TLS handshake failed: %w", err)
 				}
 				ps.clientConn = tlsConn
+
+				// Check for client certificate authentication
+				if err := ps.authenticateWithCertificate(); err != nil {
+					return err
+				}
 			} else {
 				// Send 'N' to indicate SSL not supported
 				ps.clientConn.Write([]byte{'N'})
@@ -1927,4 +1932,47 @@ func SetDeadline(conn net.Conn, timeout time.Duration) {
 	if timeout > 0 {
 		conn.SetDeadline(time.Now().Add(timeout))
 	}
+}
+
+// authenticateWithCertificate attempts to authenticate using the client certificate.
+// This should be called after TLS handshake for mTLS connections.
+func (ps *ProxySession) authenticateWithCertificate() error {
+	tlsConn, ok := ps.clientConn.(*tls.Conn)
+	if !ok {
+		return nil // Not a TLS connection
+	}
+
+	connState := tlsConn.ConnectionState()
+	if len(connState.PeerCertificates) == 0 {
+		// No client certificate provided - this is ok if not in verify-full mode
+		return nil
+	}
+
+	// Get the first peer certificate (client certificate)
+	cert := connState.PeerCertificates[0]
+
+	// Extract username from certificate
+	username, err := auth.ExtractIdentity(cert, auth.CertAuthEither)
+	if err != nil {
+		ps.log.Debug("Failed to extract identity from certificate", "error", err)
+		return nil // Don't fail - username may be provided via startup params
+	}
+
+	// Validate certificate time validity
+	if !auth.IsCertificateValid(cert) {
+		return fmt.Errorf("client certificate is not valid (expired or not yet valid)")
+	}
+
+	// Check if user exists in database
+	user := ps.userDB.GetUser(username)
+	if user == nil {
+		ps.log.Debug("Certificate authenticated user not found in database", "username", username)
+		return nil // Allow through, backend will handle auth
+	}
+
+	// Set authenticated username
+	ps.username = username
+	ps.log.Info("Client authenticated via certificate", "username", username, "cn", cert.Subject.CommonName)
+
+	return nil
 }

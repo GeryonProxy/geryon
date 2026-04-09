@@ -588,17 +588,42 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	pools := s.poolMgr.ListPools()
 	var totalConns, totalQueries int64
+	var totalCacheHitRate float64
+	var cacheCount int
+
 	for _, p := range pools {
 		stats := p.Stats()
 		totalConns += stats.ClientConnections
 		totalQueries += stats.TotalQueries
+		if stats.QueryCacheHitRate > 0 {
+			totalCacheHitRate += stats.QueryCacheHitRate
+			cacheCount++
+		}
+	}
+
+	// Calculate average cache hit rate
+	var avgCacheHitRate float64
+	if cacheCount > 0 {
+		avgCacheHitRate = totalCacheHitRate / float64(cacheCount)
+	}
+
+	// Calculate QPS (queries per second) from listener query loggers
+	var qps float64
+	for _, l := range s.listeners {
+		if ql := l.QueryLogger(); ql != nil {
+			stats := ql.GetStats(time.Now().Add(-time.Minute))
+			if stats.TotalQueries > 0 {
+				// Calculate average over last minute
+				qps = float64(stats.TotalQueries) / 60.0
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"total_connections": totalConns,
 		"active_pools":      len(pools),
-		"queries_per_sec":   0, // TODO: Calculate
-		"cache_hit_rate":    0, // TODO: Calculate
+		"queries_per_sec":   qps,
+		"cache_hit_rate":    avgCacheHitRate,
 	})
 }
 
@@ -671,20 +696,36 @@ func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 			// Collect stats
 			pools := s.poolMgr.ListPools()
 			var totalConns, totalQueries int64
-			var cacheHits int64
+			var totalCacheHitRate float64
+			var cacheCount int
 			var activeTransactions int
 
 			for _, p := range pools {
 				stats := p.Stats()
 				totalConns += stats.ClientConnections
 				totalQueries += stats.TotalQueries
+				if stats.QueryCacheHitRate > 0 {
+					totalCacheHitRate += stats.QueryCacheHitRate
+					cacheCount++
+				}
 			}
 
-			// Get query stats
+			// Calculate average cache hit rate
+			var avgCacheHitRate float64
+			if cacheCount > 0 {
+				avgCacheHitRate = totalCacheHitRate / float64(cacheCount)
+			}
+
+			// Get query stats and calculate QPS
+			var qps float64
+			var cacheHits int64
 			for _, l := range s.listeners {
 				if ql := l.QueryLogger(); ql != nil {
-					stats := ql.GetStats(time.Now().Add(-24 * time.Hour))
-					cacheHits += int64(stats.CachedQueries)
+					stats := ql.GetStats(time.Now().Add(-time.Minute))
+					if stats.TotalQueries > 0 {
+						qps = float64(stats.TotalQueries) / 60.0
+					}
+					cacheHits = int64(stats.CachedQueries)
 				}
 				if tm := l.TransactionManager(); tm != nil {
 					stats := tm.GetStats()
@@ -695,8 +736,8 @@ func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 			data := map[string]interface{}{
 				"total_connections":   totalConns,
 				"active_pools":        len(pools),
-				"queries_per_sec":     0, // TODO: Calculate
-				"cache_hit_rate":      0, // TODO: Calculate
+				"queries_per_sec":     qps,
+				"cache_hit_rate":      avgCacheHitRate,
 				"cached_queries":      cacheHits,
 				"active_transactions": activeTransactions,
 				"timestamp":           time.Now().UTC(),
@@ -922,23 +963,19 @@ func (s *Server) handleSlowQueries(w http.ResponseWriter, r *http.Request) {
 
 	for _, l := range s.listeners {
 		if ql := l.QueryLogger(); ql != nil {
-			// TODO: Implement GetSlowQueries method in QueryLogger
-			// For now, return placeholder
-			_ = ql
+			entries := ql.GetSlowQueries(limit)
+			for _, entry := range entries {
+				slowQueries = append(slowQueries, map[string]interface{}{
+					"query_id":      entry.QueryID,
+					"query":         entry.Query,
+					"duration_ms":   entry.Duration.Milliseconds(),
+					"timestamp":     entry.Timestamp.UTC(),
+					"pool":          entry.Pool,
+					"client_addr":   entry.ClientAddr,
+					"rows_returned": entry.RowsReturned,
+				})
+			}
 		}
-	}
-
-	// If no slow queries found, return empty array with placeholder
-	if len(slowQueries) == 0 {
-		slowQueries = append(slowQueries, map[string]interface{}{
-			"query_id":      "example-1",
-			"query":         "SELECT * FROM large_table WHERE...",
-			"duration_ms":   1500,
-			"timestamp":     time.Now().Add(-5 * time.Minute).UTC(),
-			"pool":          "default",
-			"client_addr":   "192.168.1.100",
-			"rows_returned": 10000,
-		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1070,8 +1107,19 @@ func (s *Server) handleRecentQueries(w http.ResponseWriter, r *http.Request) {
 
 	for _, l := range s.listeners {
 		if ql := l.QueryLogger(); ql != nil {
-			// TODO: Implement GetRecentQueries method in QueryLogger
-			_ = ql
+			entries := ql.GetRecentQueries(limit)
+			for _, entry := range entries {
+				recentQueries = append(recentQueries, map[string]interface{}{
+					"query_id":      entry.QueryID,
+					"query":         entry.Query,
+					"duration_ms":   entry.Duration.Milliseconds(),
+					"timestamp":     entry.Timestamp.UTC(),
+					"pool":          entry.Pool,
+					"client_addr":   entry.ClientAddr,
+					"is_cached":     entry.IsCached,
+					"rows_returned": entry.RowsReturned,
+				})
+			}
 		}
 	}
 

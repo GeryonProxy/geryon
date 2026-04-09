@@ -23,6 +23,18 @@ type QueryLogger struct {
 	running    atomic.Bool
 	stopCh     chan struct{}
 	flushTicker *time.Ticker
+
+	// In-memory query store for recent/slow queries
+	recentQueries    []QueryLogEntry
+	slowQueries      []QueryLogEntry
+	queryMu          sync.RWMutex
+	maxRecentQueries int
+	maxSlowQueries   int
+
+	// Query statistics
+	stats            QueryStats
+	statsMu          sync.RWMutex
+	lastReset        time.Time
 }
 
 // QueryLogConfig contains query logging configuration.
@@ -103,8 +115,14 @@ type QueryDigest struct {
 // NewQueryLogger creates a new query logger.
 func NewQueryLogger(config QueryLogConfig) (*QueryLogger, error) {
 	ql := &QueryLogger{
-		config: config,
-		stopCh: make(chan struct{}),
+		config:           config,
+		stopCh:           make(chan struct{}),
+		recentQueries:    make([]QueryLogEntry, 0, 1000),
+		slowQueries:      make([]QueryLogEntry, 0, 100),
+		maxRecentQueries: 1000,
+		maxSlowQueries:   100,
+		lastReset:        time.Now(),
+		stats:            QueryStats{TopQueries: make([]QueryDigest, 0)},
 	}
 
 	if !config.Enabled {
@@ -170,6 +188,17 @@ func (ql *QueryLogger) LogQuery(entry QueryLogEntry) {
 
 	// Determine if slow
 	entry.IsSlow = entry.Duration >= ql.config.SlowThreshold
+
+	// Update in-memory statistics
+	ql.updateStats(entry)
+
+	// Add to recent queries
+	ql.addRecentQuery(entry)
+
+	// Add to slow queries if applicable
+	if entry.IsSlow {
+		ql.addSlowQuery(entry)
+	}
 
 	// Buffer the entry with hard cap to prevent unbounded growth
 	maxBuf := ql.config.BufferSize * 2 // Hard cap at 2x buffer size
@@ -306,14 +335,146 @@ func (ql *QueryLogger) Stop() error {
 
 // GetStats returns query statistics for a time range.
 func (ql *QueryLogger) GetStats(since time.Time) QueryStats {
-	// This would read from the log files in a real implementation
-	// For now, return placeholder
-	return QueryStats{
-		TotalQueries: 0,
-		SlowQueries:  0,
-		AvgDuration:  0,
-		TopQueries:   make([]QueryDigest, 0),
+	ql.statsMu.RLock()
+	defer ql.statsMu.RUnlock()
+
+	// Return copy of stats
+	return ql.stats
+}
+
+// updateStats updates query statistics.
+func (ql *QueryLogger) updateStats(entry QueryLogEntry) {
+	ql.statsMu.Lock()
+	defer ql.statsMu.Unlock()
+
+	ql.stats.TotalQueries++
+
+	if entry.IsSlow {
+		ql.stats.SlowQueries++
 	}
+	if entry.IsCached {
+		ql.stats.CachedQueries++
+	}
+	if entry.IsError {
+		ql.stats.ErrorQueries++
+	}
+
+	// Update duration statistics
+	duration := entry.Duration
+	if ql.stats.TotalQueries == 1 {
+		ql.stats.MinDuration = duration
+		ql.stats.MaxDuration = duration
+		ql.stats.AvgDuration = duration
+	} else {
+		if duration < ql.stats.MinDuration {
+			ql.stats.MinDuration = duration
+		}
+		if duration > ql.stats.MaxDuration {
+			ql.stats.MaxDuration = duration
+		}
+		// Running average
+		ql.stats.AvgDuration = (ql.stats.AvgDuration*(time.Duration(ql.stats.TotalQueries-1)) + duration) / time.Duration(ql.stats.TotalQueries)
+	}
+
+	// Update top queries (simple implementation - could be optimized)
+	found := false
+	for i := range ql.stats.TopQueries {
+		if ql.stats.TopQueries[i].QueryHash == entry.QueryHash {
+			ql.stats.TopQueries[i].Count++
+			ql.stats.TopQueries[i].TotalTime += duration
+			ql.stats.TopQueries[i].AvgDuration = ql.stats.TopQueries[i].TotalTime / time.Duration(ql.stats.TopQueries[i].Count)
+			if duration < ql.stats.TopQueries[i].MinDuration {
+				ql.stats.TopQueries[i].MinDuration = duration
+			}
+			if duration > ql.stats.TopQueries[i].MaxDuration {
+				ql.stats.TopQueries[i].MaxDuration = duration
+			}
+			found = true
+			break
+		}
+	}
+	if !found && len(ql.stats.TopQueries) < 100 {
+		ql.stats.TopQueries = append(ql.stats.TopQueries, QueryDigest{
+			QueryHash:    entry.QueryHash,
+			QueryPattern: entry.Query[:min(len(entry.Query), 100)],
+			Count:        1,
+			AvgDuration:  duration,
+			TotalTime:    duration,
+			MinDuration:  duration,
+			MaxDuration:  duration,
+		})
+	}
+}
+
+// addRecentQuery adds a query to recent queries list.
+func (ql *QueryLogger) addRecentQuery(entry QueryLogEntry) {
+	ql.queryMu.Lock()
+	defer ql.queryMu.Unlock()
+
+	ql.recentQueries = append(ql.recentQueries, entry)
+	if len(ql.recentQueries) > ql.maxRecentQueries {
+		ql.recentQueries = ql.recentQueries[len(ql.recentQueries)-ql.maxRecentQueries:]
+	}
+}
+
+// addSlowQuery adds a query to slow queries list.
+func (ql *QueryLogger) addSlowQuery(entry QueryLogEntry) {
+	ql.queryMu.Lock()
+	defer ql.queryMu.Unlock()
+
+	ql.slowQueries = append(ql.slowQueries, entry)
+	if len(ql.slowQueries) > ql.maxSlowQueries {
+		ql.slowQueries = ql.slowQueries[len(ql.slowQueries)-ql.maxSlowQueries:]
+	}
+}
+
+// GetSlowQueries returns slow queries.
+func (ql *QueryLogger) GetSlowQueries(limit int) []QueryLogEntry {
+	ql.queryMu.RLock()
+	defer ql.queryMu.RUnlock()
+
+	if limit <= 0 || limit > len(ql.slowQueries) {
+		limit = len(ql.slowQueries)
+	}
+
+	// Return copy in reverse order (newest first)
+	result := make([]QueryLogEntry, limit)
+	for i := 0; i < limit; i++ {
+		result[i] = ql.slowQueries[len(ql.slowQueries)-1-i]
+	}
+	return result
+}
+
+// GetRecentQueries returns recent queries.
+func (ql *QueryLogger) GetRecentQueries(limit int) []QueryLogEntry {
+	ql.queryMu.RLock()
+	defer ql.queryMu.RUnlock()
+
+	if limit <= 0 || limit > len(ql.recentQueries) {
+		limit = len(ql.recentQueries)
+	}
+
+	// Return copy in reverse order (newest first)
+	result := make([]QueryLogEntry, limit)
+	for i := 0; i < limit; i++ {
+		result[i] = ql.recentQueries[len(ql.recentQueries)-1-i]
+	}
+	return result
+}
+
+// GetTopQueries returns top queries by frequency.
+func (ql *QueryLogger) GetTopQueries(limit int) []QueryDigest {
+	ql.statsMu.RLock()
+	defer ql.statsMu.RUnlock()
+
+	if limit <= 0 || limit > len(ql.stats.TopQueries) {
+		limit = len(ql.stats.TopQueries)
+	}
+
+	// Return copy
+	result := make([]QueryDigest, limit)
+	copy(result, ql.stats.TopQueries[:limit])
+	return result
 }
 
 // min returns the minimum of two integers.

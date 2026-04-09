@@ -40,7 +40,10 @@ func TestMessageTypeConstants(t *testing.T) {
 
 func TestNewNode(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n := NewNode("node-1", "127.0.0.1:0", []string{}, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
 	if n == nil {
 		t.Fatal("NewNode returned nil")
 	}
@@ -48,7 +51,10 @@ func TestNewNode(t *testing.T) {
 
 func TestNode_ID(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n := NewNode("node-1", "127.0.0.1:0", []string{}, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
 	if n.ID() != "node-1" {
 		t.Errorf("ID = %q, want node-1", n.ID())
 	}
@@ -56,7 +62,10 @@ func TestNode_ID(t *testing.T) {
 
 func TestNode_State(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n := NewNode("node-1", "127.0.0.1:0", []string{}, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
 	if n.State() != StateFollower {
 		t.Errorf("State = %v, want Follower", n.State())
 	}
@@ -67,7 +76,10 @@ func TestNode_State(t *testing.T) {
 
 func TestNode_CurrentTerm(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n := NewNode("node-1", "127.0.0.1:0", []string{}, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
 	if n.CurrentTerm() != 0 {
 		t.Errorf("CurrentTerm = %d, want 0", n.CurrentTerm())
 	}
@@ -75,9 +87,12 @@ func TestNode_CurrentTerm(t *testing.T) {
 
 func TestNode_StartStop(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n := NewNode("node-1", "127.0.0.1:0", []string{}, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
 
-	err := n.Start()
+	err = n.Start()
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}

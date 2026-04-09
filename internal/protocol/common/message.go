@@ -73,6 +73,10 @@ type Codec interface {
 	// ExtractQuery extracts the SQL query string from a query message.
 	ExtractQuery(msg *Message) (string, error)
 
+	// GenerateResetSequence returns messages to reset server state.
+	// Used when returning connections to the pool in transaction/statement mode.
+	GenerateResetSequence() []*Message
+
 	// Protocol returns the protocol identifier.
 	Protocol() Protocol
 }

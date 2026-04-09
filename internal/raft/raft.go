@@ -3,8 +3,10 @@ package raft
 import (
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,6 +63,7 @@ type Node struct {
 	peers             []string
 	listenAddr        string
 	listener          net.Listener
+	dataDir           string
 
 	// Timing
 	electionTimeout   time.Duration
@@ -71,6 +74,14 @@ type Node struct {
 	// Channels
 	stopCh            chan struct{}
 	msgCh             chan Message
+	applyCh           chan Entry // Channel for committed entries to apply
+
+	// Components
+	wal               *WAL
+	fsm               FSM
+	snapshotStore     *SnapshotStore
+	lastSnapshotIndex atomic.Uint64
+	lastSnapshotTerm  atomic.Uint64
 
 	// Logger
 	logger            *logger.Logger
@@ -93,6 +104,8 @@ const (
 	MsgVoteResponse
 	MsgAppendEntries
 	MsgAppendEntriesResponse
+	MsgInstallSnapshot
+	MsgInstallSnapshotResponse
 )
 
 // Maximum raft message payload size (1MB)
@@ -129,12 +142,30 @@ type AppendEntriesResponse struct {
 	Index   uint64 `json:"index"`
 }
 
+// InstallSnapshotRequest represents a request to install a snapshot.
+type InstallSnapshotRequest struct {
+	Term              uint64 `json:"term"`
+	LeaderID          string `json:"leader_id"`
+	LastIncludedIndex uint64 `json:"last_included_index"`
+	LastIncludedTerm  uint64 `json:"last_included_term"`
+	Offset            uint64 `json:"offset"`
+	Data              []byte `json:"data"`
+	Done              bool   `json:"done"`
+}
+
+// InstallSnapshotResponse represents a response to install snapshot.
+type InstallSnapshotResponse struct {
+	Term    uint64 `json:"term"`
+	Success bool   `json:"success"`
+}
+
 // NewNode creates a new Raft node.
-func NewNode(id, listenAddr string, peers []string, log *logger.Logger) *Node {
+func NewNode(id, listenAddr string, peers []string, dataDir string, fsm FSM, log *logger.Logger) (*Node, error) {
 	n := &Node{
 		id:                id,
 		listenAddr:        listenAddr,
 		peers:             peers,
+		dataDir:           dataDir,
 		electionTimeout:   1 * time.Second,
 		heartbeatInterval: 100 * time.Millisecond,
 		logEntries:        make([]Entry, 0),
@@ -142,11 +173,51 @@ func NewNode(id, listenAddr string, peers []string, log *logger.Logger) *Node {
 		matchIndex:        make(map[string]uint64),
 		stopCh:            make(chan struct{}),
 		msgCh:             make(chan Message, 100),
+		applyCh:           make(chan Entry, 100),
+		fsm:               fsm,
 		logger:            log,
 	}
 	n.state.Store(StateFollower)
 	n.votedFor.Store("")
-	return n
+
+	// Initialize WAL
+	walPath := dataDir + "/raft.log"
+	wal, err := NewWAL(walPath, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create WAL: %w", err)
+	}
+	n.wal = wal
+
+	// Load existing log entries from WAL
+	entries, err := wal.ReadEntries(1)
+	if err != nil {
+		wal.Close()
+		return nil, fmt.Errorf("failed to read WAL: %w", err)
+	}
+	n.logEntries = entries
+
+	// Initialize snapshot store
+	snapshotDir := dataDir + "/snapshots"
+	snapshotStore, err := NewSnapshotStore(snapshotDir, 3)
+	if err != nil {
+		wal.Close()
+		return nil, fmt.Errorf("failed to create snapshot store: %w", err)
+	}
+	n.snapshotStore = snapshotStore
+
+	// Try to load latest snapshot
+	if snapshot, err := snapshotStore.Load(); err == nil {
+		n.lastSnapshotIndex.Store(snapshot.Metadata.Index)
+		n.lastSnapshotTerm.Store(snapshot.Metadata.Term)
+		// Restore FSM from snapshot
+		if fsm != nil {
+			if err := fsm.Restore(snapshot.Data); err != nil {
+				log.Error("Failed to restore FSM from snapshot", "error", err)
+			}
+		}
+	}
+
+	return n, nil
 }
 
 // ID returns the node ID.
@@ -206,6 +277,9 @@ func (n *Node) Stop() error {
 func (n *Node) run() {
 	// Start election timer
 	n.resetElectionTimer()
+
+	// Start apply committed goroutine
+	go n.ApplyCommitted()
 
 	for {
 		select {
@@ -272,6 +346,8 @@ func (n *Node) handleMessage(msg Message) {
 		n.handleAppendEntries(msg)
 	case MsgAppendEntriesResponse:
 		n.handleAppendEntriesResponse(msg)
+	case MsgInstallSnapshot:
+		n.handleInstallSnapshot(msg)
 	}
 }
 
@@ -364,6 +440,9 @@ func (n *Node) handleAppendEntries(msg Message) {
 				} else {
 					n.commitIndex.Store(req.LeaderCommit)
 				}
+
+				// Send newly committed entries to applyCh
+				n.sendCommittedToApply()
 			}
 		}
 	}
@@ -397,6 +476,9 @@ func (n *Node) handleAppendEntriesResponse(msg Message) {
 	if resp.Success {
 		n.matchIndex[msg.From] = resp.Index
 		n.nextIndex[msg.From] = resp.Index + 1
+
+		// Check if we can advance commit index
+		n.advanceCommitIndex()
 	} else {
 		// Decrement next index and retry
 		if n.nextIndex[msg.From] > 1 {
@@ -404,6 +486,52 @@ func (n *Node) handleAppendEntriesResponse(msg Message) {
 		}
 	}
 	n.volatileMu.Unlock()
+}
+
+// advanceCommitIndex advances the commit index if a majority of nodes have replicated an entry.
+func (n *Node) advanceCommitIndex() {
+	commitIdx := n.commitIndex.Load()
+	currentTerm := n.currentTerm.Load()
+
+	// Find the highest index that is replicated on a majority
+	matchIndices := make([]uint64, 0, len(n.peers)+1)
+	matchIndices = append(matchIndices, n.lastLogIndex()) // Leader always has its own entries
+	for _, idx := range n.matchIndex {
+		matchIndices = append(matchIndices, idx)
+	}
+
+	// Sort in descending order
+	sort.Slice(matchIndices, func(i, j int) bool {
+		return matchIndices[i] > matchIndices[j]
+	})
+
+	// Majority index
+	majorityIdx := len(matchIndices) / 2
+	if majorityIdx >= len(matchIndices) {
+		return
+	}
+
+	newCommitIdx := matchIndices[majorityIdx]
+	if newCommitIdx <= commitIdx {
+		return
+	}
+
+	// Check if entry at newCommitIdx is from current term
+	n.logMu.RLock()
+	var entryTerm uint64
+	for _, entry := range n.logEntries {
+		if entry.Index == newCommitIdx {
+			entryTerm = entry.Term
+			break
+		}
+	}
+	n.logMu.RUnlock()
+
+	// Only advance if entry is from current term (Raft safety property)
+	if entryTerm == currentTerm {
+		n.commitIndex.Store(newCommitIdx)
+		n.sendCommittedToApply()
+	}
 }
 
 // becomeFollower transitions to follower state.
@@ -625,6 +753,283 @@ func (n *Node) isStopping() bool {
 	default:
 		return false
 	}
+}
+
+// Propose proposes a command to be committed by Raft.
+// Only the leader can propose commands.
+func (n *Node) Propose(command Command) (uint64, error) {
+	if n.State() != StateLeader {
+		return 0, fmt.Errorf("not leader")
+	}
+
+	// Create log entry
+	data, err := json.Marshal(command)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal command: %w", err)
+	}
+
+	n.logMu.Lock()
+	lastIndex, _ := n.lastLogInfo()
+	entry := Entry{
+		Term:    n.currentTerm.Load(),
+		Index:   lastIndex + 1,
+		Command: data,
+	}
+	n.logEntries = append(n.logEntries, entry)
+	n.logMu.Unlock()
+
+	// Persist to WAL
+	if err := n.wal.Append(entry); err != nil {
+		return 0, fmt.Errorf("failed to append to WAL: %w", err)
+	}
+
+	// Replicate to followers
+	n.sendAppendEntriesToAll()
+
+	return entry.Index, nil
+}
+
+// sendAppendEntriesToAll sends AppendEntries to all peers.
+func (n *Node) sendAppendEntriesToAll() {
+	n.logMu.RLock()
+	lastIndex, _ := n.lastLogInfo()
+	n.logMu.RUnlock()
+
+	for _, peer := range n.peers {
+		n.volatileMu.RLock()
+		nextIdx := n.nextIndex[peer]
+		n.volatileMu.RUnlock()
+
+		// Calculate previous index and term
+		prevIndex := nextIdx - 1
+		prevTerm := uint64(0)
+		if prevIndex > 0 {
+			n.logMu.RLock()
+			for _, entry := range n.logEntries {
+				if entry.Index == prevIndex {
+					prevTerm = entry.Term
+					break
+				}
+			}
+			n.logMu.RUnlock()
+		}
+
+		// Get entries to send
+		var entries []Entry
+		n.logMu.RLock()
+		for _, entry := range n.logEntries {
+			if entry.Index >= nextIdx && entry.Index <= lastIndex {
+				entries = append(entries, entry)
+			}
+		}
+		n.logMu.RUnlock()
+
+		req := AppendEntries{
+			Term:         n.currentTerm.Load(),
+			LeaderID:     n.id,
+			PrevLogIndex: prevIndex,
+			PrevLogTerm:  prevTerm,
+			Entries:      entries,
+			LeaderCommit: n.commitIndex.Load(),
+		}
+
+		n.sendMessage(peer, MsgAppendEntries, req)
+	}
+}
+
+// ApplyCommitted applies committed entries to the FSM.
+func (n *Node) ApplyCommitted() {
+	for entry := range n.applyCh {
+		if n.fsm != nil {
+			var cmd Command
+			if err := json.Unmarshal(entry.Command, &cmd); err != nil {
+				n.logger.Error("Failed to unmarshal command", "error", err)
+				continue
+			}
+
+			if _, err := n.fsm.Apply(cmd); err != nil {
+				n.logger.Error("Failed to apply command", "error", err, "index", entry.Index)
+			}
+		}
+
+		n.lastApplied.Store(entry.Index)
+
+		// Check if we should take a snapshot
+		n.maybeSnapshot()
+	}
+}
+
+// maybeSnapshot checks if we should take a snapshot.
+func (n *Node) maybeSnapshot() {
+	lastApplied := n.lastApplied.Load()
+	lastSnapshot := n.lastSnapshotIndex.Load()
+
+	// Take snapshot every 1000 entries
+	if lastApplied-lastSnapshot < 1000 {
+		return
+	}
+
+	if n.fsm == nil {
+		return
+	}
+
+	// Get snapshot from FSM
+	data, err := n.fsm.Snapshot()
+	if err != nil {
+		n.logger.Error("Failed to create snapshot", "error", err)
+		return
+	}
+
+	n.logMu.RLock()
+	var lastTerm uint64
+	for _, entry := range n.logEntries {
+		if entry.Index == lastApplied {
+			lastTerm = entry.Term
+			break
+		}
+	}
+	n.logMu.RUnlock()
+
+	snapshot := CreateSnapshot(lastApplied, lastTerm, data)
+
+	if err := n.snapshotStore.Save(snapshot); err != nil {
+		n.logger.Error("Failed to save snapshot", "error", err)
+		return
+	}
+
+	n.lastSnapshotIndex.Store(lastApplied)
+	n.lastSnapshotTerm.Store(lastTerm)
+
+	// Truncate WAL
+	if err := n.wal.Truncate(lastApplied + 1); err != nil {
+		n.logger.Error("Failed to truncate WAL", "error", err)
+	}
+
+	n.logger.Info("Snapshot created",
+		"index", lastApplied,
+		"term", lastTerm,
+		"size", snapshot.Metadata.Size,
+	)
+}
+
+// InstallSnapshot installs a snapshot on this node.
+func (n *Node) InstallSnapshot(snapshot *Snapshot) error {
+	if n.fsm == nil {
+		return fmt.Errorf("no FSM configured")
+	}
+
+	// Save snapshot
+	if err := n.snapshotStore.Save(snapshot); err != nil {
+		return fmt.Errorf("failed to save snapshot: %w", err)
+	}
+
+	// Restore FSM
+	if err := n.fsm.Restore(snapshot.Data); err != nil {
+		return fmt.Errorf("failed to restore FSM: %w", err)
+	}
+
+	// Update state
+	n.lastSnapshotIndex.Store(snapshot.Metadata.Index)
+	n.lastSnapshotTerm.Store(snapshot.Metadata.Term)
+	n.lastApplied.Store(snapshot.Metadata.Index)
+
+	// Replace log with single entry at snapshot index
+	n.logMu.Lock()
+	n.logEntries = []Entry{{
+		Term:  snapshot.Metadata.Term,
+		Index: snapshot.Metadata.Index,
+	}}
+	n.logMu.Unlock()
+
+	// Truncate WAL
+	if err := n.wal.Truncate(snapshot.Metadata.Index + 1); err != nil {
+		n.logger.Error("Failed to truncate WAL after snapshot", "error", err)
+	}
+
+	return nil
+}
+
+// GetSnapshot returns the latest snapshot.
+func (n *Node) GetSnapshot() (*Snapshot, error) {
+	return n.snapshotStore.Load()
+}
+
+// sendCommittedToApply sends committed entries to the apply channel.
+func (n *Node) sendCommittedToApply() {
+	commitIdx := n.commitIndex.Load()
+	lastApplied := n.lastApplied.Load()
+
+	if commitIdx <= lastApplied {
+		return
+	}
+
+	n.logMu.RLock()
+	entries := make([]Entry, 0)
+	for _, entry := range n.logEntries {
+		if entry.Index > lastApplied && entry.Index <= commitIdx {
+			entries = append(entries, entry)
+		}
+	}
+	n.logMu.RUnlock()
+
+	for _, entry := range entries {
+		select {
+		case n.applyCh <- entry:
+		default:
+			n.logger.Warn("Apply channel full, dropping entry", "index", entry.Index)
+		}
+	}
+}
+
+// handleInstallSnapshot handles install snapshot request.
+func (n *Node) handleInstallSnapshot(msg Message) {
+	var req InstallSnapshotRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		n.logger.Error("Failed to unmarshal install snapshot", "error", err)
+		return
+	}
+
+	if req.Term < n.currentTerm.Load() {
+		// Reject stale snapshot
+		resp := InstallSnapshotResponse{
+			Term:    n.currentTerm.Load(),
+			Success: false,
+		}
+		n.sendMessage(msg.From, MsgInstallSnapshotResponse, resp)
+		return
+	}
+
+	// Reset election timer
+	n.resetElectionTimer()
+	n.votedFor.Store(req.LeaderID)
+
+	// Create snapshot from request data
+	snapshot := &Snapshot{
+		Metadata: SnapshotMetadata{
+			Index:    req.LastIncludedIndex,
+			Term:     req.LastIncludedTerm,
+			Size:     int64(len(req.Data)),
+			Checksum: crc32.ChecksumIEEE(req.Data),
+		},
+		Data: req.Data,
+	}
+
+	// Install snapshot
+	if err := n.InstallSnapshot(snapshot); err != nil {
+		n.logger.Error("Failed to install snapshot", "error", err)
+		resp := InstallSnapshotResponse{
+			Term:    n.currentTerm.Load(),
+			Success: false,
+		}
+		n.sendMessage(msg.From, MsgInstallSnapshotResponse, resp)
+		return
+	}
+
+	resp := InstallSnapshotResponse{
+		Term:    n.currentTerm.Load(),
+		Success: true,
+	}
+	n.sendMessage(msg.From, MsgInstallSnapshotResponse, resp)
 }
 
 // Global random number generator

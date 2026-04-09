@@ -223,6 +223,26 @@ func (p *Protocol) Events() <-chan Event {
 	return p.eventCh
 }
 
+// SendTo sends a message to a specific address.
+func (p *Protocol) SendTo(addr string, data []byte) error {
+	msg := Message{
+		Type:   MsgSync,
+		Source: p.id,
+		Payload: data,
+	}
+	return p.sendMessage(addr, msg)
+}
+
+// BroadcastUserData broadcasts user data to all alive members.
+func (p *Protocol) BroadcastUserData(data []byte) {
+	msg := Message{
+		Type:    MsgSync,
+		Source:  p.id,
+		Payload: data,
+	}
+	p.broadcast(msg)
+}
+
 // receiveLoop receives incoming messages.
 func (p *Protocol) receiveLoop() {
 	buf := make([]byte, 65536)

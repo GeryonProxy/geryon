@@ -28,6 +28,7 @@ func (m *MockCodec) IsTerminate(msg *common.Message) bool { return false }
 func (m *MockCodec) IsTransactionBegin(msg *common.Message) bool { return false }
 func (m *MockCodec) IsTransactionEnd(msg *common.Message) bool { return false }
 func (m *MockCodec) ExtractQuery(msg *common.Message) (string, error) { return "", nil }
+func (m *MockCodec) GenerateResetSequence() []*common.Message { return nil }
 
 func TestParsePoolMode(t *testing.T) {
 	tests := []struct {
