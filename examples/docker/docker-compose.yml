@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Backend
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: geryon
+      POSTGRES_PASSWORD: geryon_password
+      POSTGRES_DB: testdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # Exposed on 5433 to avoid conflict with Geryon
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geryon"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MySQL Backend
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_USER: geryon
+      MYSQL_PASSWORD: geryon_password
+      MYSQL_DATABASE: testdb
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"  # Exposed on 3307 to avoid conflict with Geryon
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Geryon Proxy
+  geryon:
+    image: geryonproxy/geryon:latest
+    ports:
+      - "5432:5432"  # PostgreSQL proxy
+      - "3306:3306"  # MySQL proxy
+      - "8080:8080"  # REST API
+      - "9090:9090"  # gRPC API
+      - "8081:8081"  # MCP Server
+    volumes:
+      - ./geryon.yaml:/etc/geryon/geryon.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    command: ["--config", "/etc/geryon/geryon.yaml"]
+    healthcheck:
+      test: ["CMD", "/geryon", "--validate"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres_data:
+  mysql_data:

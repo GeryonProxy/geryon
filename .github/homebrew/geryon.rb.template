@@ -1,0 +1,48 @@
+class Geryon < Formula
+  desc "High-performance multi-database connection pooler and proxy"
+  homepage "https://github.com/GeryonProxy/geryon"
+  version "{{VERSION}}"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/GeryonProxy/geryon/releases/download/v{{VERSION}}/geryon-darwin-arm64"
+      sha256 "{{DARWIN_ARM64_SHA256}}"
+    else
+      url "https://github.com/GeryonProxy/geryon/releases/download/v{{VERSION}}/geryon-darwin-amd64"
+      sha256 "{{DARWIN_AMD64_SHA256}}"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/GeryonProxy/geryon/releases/download/v{{VERSION}}/geryon-linux-arm64"
+      sha256 "{{LINUX_ARM64_SHA256}}"
+    else
+      url "https://github.com/GeryonProxy/geryon/releases/download/v{{VERSION}}/geryon-linux-amd64"
+      sha256 "{{LINUX_AMD64_SHA256}}"
+    end
+  end
+
+  def install
+    bin.install Dir["geryon-*"].first => "geryon"
+  end
+
+  def post_install
+    (var/"log/geryon").mkpath
+    (etc/"geryon").mkpath
+  end
+
+  service do
+    run [opt_bin/"geryon", "--config", etc/"geryon/geryon.yaml"]
+    keep_alive true
+    log_path var/"log/geryon/geryon.log"
+    error_log_path var/"log/geryon/geryon.log"
+  end
+
+  test do
+    system "#{bin}/geryon", "--version"
+    system "#{bin}/geryon", "--help"
+    system "#{bin}/geryon", "--generate-config"
+  end
+end
