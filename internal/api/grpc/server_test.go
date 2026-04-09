@@ -2,8 +2,12 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -394,5 +398,219 @@ func TestGRPCRateLimiter(t *testing.T) {
 	l3 := rl.GetLimiter("10.0.0.2")
 	if l1 == l3 {
 		t.Error("Different IP should return different limiter")
+	}
+}
+
+func TestServer_Stream_MethodNotAllowed(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	// GET to stream endpoint (requires POST)
+	resp, err := http.Get("http://" + cfg.Listen + "/geryon.v1.Stats/Stream")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestServer_EventsSubscribe_MethodNotAllowed(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/geryon.v1.Events/Subscribe")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestServer_DrainBackend_NotFound(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	body := `{"address":"127.0.0.1:5432"}`
+	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Admin/DrainBackend", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("DrainBackend failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	if _, ok := data["error"]; !ok {
+		t.Error("Should have error for unknown backend")
+	}
+}
+
+func TestServer_DrainBackend_InvalidJSON(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Admin/DrainBackend", "application/json", strings.NewReader("bad"))
+	if err != nil {
+		t.Fatalf("DrainBackend failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestServer_ReloadConfig_Failure(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, func() error {
+		return fmt.Errorf("reload failed")
+	})
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Admin/ReloadConfig", "application/json", nil)
+	if err != nil {
+		t.Fatalf("ReloadConfig failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestServer_ReloadConfig_NoFn(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Admin/ReloadConfig", "application/json", nil)
+	if err != nil {
+		t.Fatalf("ReloadConfig failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestCollectStats(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	stats := s.collectStats()
+	if stats == nil {
+		t.Fatal("collectStats returned nil")
+	}
+	if stats["total_pools"] != 0 {
+		t.Errorf("total_pools = %v, want 0", stats["total_pools"])
+	}
+	if stats["total_clients"] != int64(0) {
+		t.Errorf("total_clients = %v, want 0", stats["total_clients"])
+	}
+	if _, ok := stats["timestamp"]; !ok {
+		t.Error("Should have timestamp")
+	}
+}
+
+func TestWriteProtoResponse(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &Config{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s := NewServer(cfg, nil, log, nil)
+
+	rr := httptest.NewRecorder()
+	s.writeProtoResponse(rr, map[string]string{"key": "value"})
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want 200", rr.Code)
+	}
+	if rr.Header().Get("Content-Type") != "application/grpc+proto" {
+		t.Errorf("Content-Type = %q, want application/grpc+proto", rr.Header().Get("Content-Type"))
+	}
+	if rr.Header().Get("grpc-status") != "0" {
+		t.Errorf("grpc-status = %q, want 0", rr.Header().Get("grpc-status"))
 	}
 }

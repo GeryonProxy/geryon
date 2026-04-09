@@ -481,3 +481,528 @@ func BenchmarkBackendAddress(b *testing.B) {
 		backend.Address()
 	}
 }
+
+func TestManager_CreatePool(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	mgr := NewManager(log)
+
+	cfg := &config.PoolConfig{
+		Name: "mgr-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+		Limits: config.LimitConfig{
+			MinServerConnections: 1,
+			MaxServerConnections: 10,
+		},
+	}
+
+	err := mgr.CreatePool(cfg)
+	if err != nil {
+		t.Fatalf("CreatePool failed: %v", err)
+	}
+
+	p := mgr.GetPool("mgr-test")
+	if p == nil {
+		t.Fatal("GetPool returned nil")
+	}
+	if p.Name() != "mgr-test" {
+		t.Errorf("pool name = %q, want mgr-test", p.Name())
+	}
+
+	pools := mgr.ListPools()
+	if len(pools) != 1 {
+		t.Errorf("ListPools count = %d, want 1", len(pools))
+	}
+}
+
+func TestManager_CreatePoolDuplicate(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	mgr := NewManager(log)
+
+	cfg := &config.PoolConfig{
+		Name: "dup-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	err := mgr.CreatePool(cfg)
+	if err != nil {
+		t.Fatalf("First CreatePool failed: %v", err)
+	}
+
+	err = mgr.CreatePool(cfg)
+	if err == nil {
+		t.Error("Second CreatePool should fail with duplicate name")
+	}
+}
+
+func TestManager_RemovePool(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	mgr := NewManager(log)
+
+	cfg := &config.PoolConfig{
+		Name: "remove-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	err := mgr.CreatePool(cfg)
+	if err != nil {
+		t.Fatalf("CreatePool failed: %v", err)
+	}
+
+	err = mgr.RemovePool("remove-test")
+	if err != nil {
+		t.Errorf("RemovePool failed: %v", err)
+	}
+	if mgr.GetPool("remove-test") != nil {
+		t.Error("Pool should be removed")
+	}
+
+	if len(mgr.ListPools()) != 0 {
+		t.Errorf("ListPools should be empty, got %d", len(mgr.ListPools()))
+	}
+}
+
+func TestManager_RemoveNonExistent(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	mgr := NewManager(log)
+
+	err := mgr.RemovePool("does-not-exist")
+	if err == nil {
+		t.Error("RemovePool should fail for non-existent pool")
+	}
+}
+
+func TestManager_Close(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	mgr := NewManager(log)
+
+	cfg := &config.PoolConfig{
+		Name: "close-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	err := mgr.CreatePool(cfg)
+	if err != nil {
+		t.Fatalf("CreatePool failed: %v", err)
+	}
+
+	err = mgr.Close()
+	if err != nil {
+		t.Errorf("Close failed: %v", err)
+	}
+}
+
+func TestServerConn(t *testing.T) {
+	conn := &ServerConn{
+		id:            42,
+		preparedStmts: make(map[string]bool),
+		paramStatus:   make(map[string]string),
+	}
+
+	if conn.ID() != 42 {
+		t.Errorf("ID = %d, want 42", conn.ID())
+	}
+	if conn.IsInUse() {
+		t.Error("new connection should not be in use")
+	}
+	conn.MarkInUse()
+	if !conn.IsInUse() {
+		t.Error("MarkInUse should set inUse=true")
+	}
+	conn.MarkIdle()
+	if conn.IsInUse() {
+		t.Error("MarkIdle should set inUse=false")
+	}
+}
+
+func TestServerConnParamStatus(t *testing.T) {
+	conn := &ServerConn{
+		preparedStmts: make(map[string]bool),
+		paramStatus:   make(map[string]string),
+	}
+
+	conn.paramStatus["server_version"] = "14.0"
+	if conn.paramStatus["server_version"] != "14.0" {
+		t.Error("paramStatus roundtrip failed")
+	}
+	if conn.paramStatus["nonexistent"] != "" {
+		t.Error("nonexistent key should return empty")
+	}
+}
+
+func TestPool_Codec(t *testing.T) {
+	cfg := &config.PoolConfig{
+		Name: "codec-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	log, _ := logger.New("error", "json")
+	codec := &MockCodec{}
+	pool, err := NewPool(cfg, codec, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	if pool.Codec() != codec {
+		t.Error("Codec should return the same codec")
+	}
+}
+
+func TestPool_IncrementQueryCount(t *testing.T) {
+	cfg := &config.PoolConfig{
+		Name: "query-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	log, _ := logger.New("error", "json")
+	codec := &MockCodec{}
+	pool, err := NewPool(cfg, codec, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	pool.IncrementQueryCount()
+	pool.IncrementQueryCount()
+	pool.IncrementQueryCount()
+
+	stats := pool.Stats()
+	if stats.TotalQueries != 3 {
+		t.Errorf("TotalQueries = %d, want 3", stats.TotalQueries)
+	}
+}
+
+func TestPool_TryIncrementClientCount(t *testing.T) {
+	cfg := &config.PoolConfig{
+		Name: "client-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	log, _ := logger.New("error", "json")
+	codec := &MockCodec{}
+	pool, err := NewPool(cfg, codec, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// max=2: first two should succeed
+	if !pool.TryIncrementClientCount(2) {
+		t.Error("Should succeed for first client")
+	}
+	if !pool.TryIncrementClientCount(2) {
+		t.Error("Should succeed for second client")
+	}
+
+	// Third should fail at limit
+	if pool.TryIncrementClientCount(2) {
+		t.Error("Should fail at limit (2)")
+	}
+}
+
+func TestPoolGetBackends(t *testing.T) {
+	cfg := &config.PoolConfig{
+		Name: "backends-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts: []config.BackendHost{
+				{Host: "primary", Port: 5432, Role: "primary"},
+				{Host: "replica", Port: 5432, Role: "replica"},
+			},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	log, _ := logger.New("error", "json")
+	codec := &MockCodec{}
+	pool, err := NewPool(cfg, codec, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	backends := pool.GetBackends()
+	if len(backends) != 2 {
+		t.Errorf("GetBackends count = %d, want 2", len(backends))
+	}
+}
+
+func TestServerConnPoolRemove(t *testing.T) {
+	pool := newServerConnPool(1, 5)
+
+	mockConn := &ServerConn{
+		id:            1,
+		preparedStmts: make(map[string]bool),
+		paramStatus:   make(map[string]string),
+	}
+
+	pool.addActive(mockConn)
+	pool.remove(mockConn)
+
+	if pool.size() != 0 {
+		t.Errorf("size after remove = %d, want 0", pool.size())
+	}
+	if pool.activeCount() != 0 {
+		t.Errorf("activeCount after remove = %d, want 0", pool.activeCount())
+	}
+}
+
+func TestPoolPreparedStatementCache(t *testing.T) {
+	cfg := &config.PoolConfig{
+		Name: "ps-cache-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	log, _ := logger.New("error", "json")
+	codec := &MockCodec{}
+	pool, err := NewPool(cfg, codec, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	cache := pool.PreparedStatementCache()
+	if cache == nil {
+		t.Error("PreparedStatementCache should not be nil")
+	}
+}
+
+func TestPoolQueryCache(t *testing.T) {
+	cfg := &config.PoolConfig{
+		Name: "q-cache-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	log, _ := logger.New("error", "json")
+	codec := &MockCodec{}
+	pool, err := NewPool(cfg, codec, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	qCache := pool.QueryCache()
+	if qCache != nil {
+		t.Error("QueryCache should be nil when not configured")
+	}
+}
+
+func TestPoolCacheOperations(t *testing.T) {
+	cfg := &config.PoolConfig{
+		Name: "cache-ops-test",
+		Mode: "session",
+		Body: "postgresql",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts:    []config.BackendHost{{Host: "localhost", Port: 5432, Role: "primary"}},
+		},
+		Limits: config.LimitConfig{MinServerConnections: 1, MaxServerConnections: 10},
+	}
+
+	log, _ := logger.New("error", "json")
+	codec := &MockCodec{}
+	pool, err := NewPool(cfg, codec, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Without cache, these should be no-ops
+	_, hit := pool.GetCachedResult("test-key", nil)
+	if hit {
+		t.Error("GetCachedResult should not hit without cache")
+	}
+	err = pool.SetCachedResult("test-key", nil, []byte("data"), time.Minute)
+	if err != nil {
+		t.Errorf("SetCachedResult error: %v", err)
+	}
+	pool.InvalidateCache("test-key")
+}
+
+func TestHealthStatusString(t *testing.T) {
+	cases := []struct {
+		status HealthStatus
+		want   string
+	}{
+		{HealthHealthy, "healthy"},
+		{HealthDegraded, "degraded"},
+		{HealthUnhealthy, "unhealthy"},
+		{HealthUnknown, "unknown"},
+		{HealthStatus(99), "unknown"},
+	}
+	for _, tc := range cases {
+		if got := tc.status.String(); got != tc.want {
+			t.Errorf("HealthStatus(%d).String() = %q, want %q", tc.status, got, tc.want)
+		}
+	}
+}
+
+func TestHealthChecker_AddBackend(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{
+		CheckInterval: "1s",
+		CheckQuery:    "SELECT 1",
+	}, log)
+
+	backend := &Backend{Host: "localhost", Port: 5432}
+	hc.AddBackend(backend)
+
+	health := hc.GetHealth(backend)
+	if health == nil {
+		t.Fatal("GetHealth returned nil")
+	}
+	if health.Status != HealthUnknown {
+		t.Errorf("Status = %v, want unknown", health.Status)
+	}
+}
+
+func TestHealthChecker_AddBackendDuplicate(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, log)
+
+	backend := &Backend{Host: "localhost", Port: 5432}
+	hc.AddBackend(backend)
+	hc.AddBackend(backend) // should not duplicate
+
+	if len(hc.backends) != 1 {
+		t.Errorf("backends count = %d, want 1", len(hc.backends))
+	}
+}
+
+func TestHealthChecker_RemoveBackend(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, log)
+
+	backend := &Backend{Host: "localhost", Port: 5432}
+	hc.AddBackend(backend)
+	hc.RemoveBackend(backend)
+
+	health := hc.GetHealth(backend)
+	if health != nil {
+		t.Error("GetHealth should return nil after removal")
+	}
+}
+
+func TestHealthChecker_Stats(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, log)
+
+	backend1 := &Backend{Host: "localhost", Port: 5432}
+	backend1.Healthy.Store(true)
+	backend2 := &Backend{Host: "localhost", Port: 5433}
+	backend2.Healthy.Store(false)
+
+	hc.AddBackend(backend1)
+	hc.backends[backend1.Address()].Status = HealthHealthy
+	hc.AddBackend(backend2)
+	hc.backends[backend2.Address()].Status = HealthUnhealthy
+
+	stats := hc.Stats()
+	if stats.Backends != 2 {
+		t.Errorf("Backends = %d, want 2", stats.Backends)
+	}
+	if stats.Healthy != 1 {
+		t.Errorf("Healthy = %d, want 1", stats.Healthy)
+	}
+	if stats.Unhealthy != 1 {
+		t.Errorf("Unhealthy = %d, want 1", stats.Unhealthy)
+	}
+}
+
+func TestHealthChecker_StartStop(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{
+		CheckInterval: "100ms",
+	}, log)
+
+	hc.Start()
+	if !hc.running.Load() {
+		t.Error("running should be true after Start")
+	}
+
+	hc.Stop()
+	if hc.running.Load() {
+		t.Error("running should be false after Stop")
+	}
+}
+
+func TestHealthChecker_WaitForHealthy(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, log)
+
+	backend := &Backend{Host: "localhost", Port: 5432}
+	// Not added to checker, should return false
+	ok := hc.WaitForHealthy(backend, 50*time.Millisecond)
+	if ok {
+		t.Error("WaitForHealthy should return false for unknown backend")
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	cases := []struct {
+		input  string
+		def    time.Duration
+		expect time.Duration
+	}{
+		{"", 5 * time.Second, 5 * time.Second},
+		{"10s", 5 * time.Second, 10 * time.Second},
+		{"invalid", 5 * time.Second, 5 * time.Second},
+		{"1m", 5 * time.Second, 1 * time.Minute},
+	}
+	for _, tc := range cases {
+		got := parseDuration(tc.input, tc.def)
+		if got != tc.expect {
+			t.Errorf("parseDuration(%q, %v) = %v, want %v", tc.input, tc.def, got, tc.expect)
+		}
+	}
+}

@@ -349,3 +349,213 @@ func TestResource(t *testing.T) {
 		t.Errorf("URI = %q", res.URI)
 	}
 }
+
+func TestServer_ToolCall_Unknown(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	body := `{"name":"unknown_tool","arguments":{}}`
+	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/call", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ToolCall failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	content, _ := data["content"].([]interface{})
+	if len(content) == 0 {
+		t.Fatal("content array should not be empty")
+	}
+	c := content[0].(map[string]interface{})
+	if c["text"] != "Unknown tool: unknown_tool" {
+		t.Errorf("text = %q, want 'Unknown tool: unknown_tool'", c["text"])
+	}
+	if !data["isError"].(bool) {
+		t.Error("isError should be true for unknown tool")
+	}
+}
+
+func TestServer_ToolCall_InvalidJSON(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/call", "application/json", strings.NewReader("not json"))
+	if err != nil {
+		t.Fatalf("ToolCall failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestServer_ResourcesRead(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	body := `{"uri":"geryon://config"}`
+	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ResourcesRead failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	contents, _ := data["contents"].([]interface{})
+	if len(contents) == 0 {
+		t.Fatal("contents array should not be empty")
+	}
+}
+
+func TestServer_ResourcesRead_NotFound(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	body := `{"uri":"geryon://nonexistent"}`
+	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("ResourcesRead failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestServer_ResourcesRead_InvalidJSON(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader("bad"))
+	if err != nil {
+		t.Fatalf("ResourcesRead failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("Status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestServer_Initialize_MethodNotAllowed(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/initialize")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestServer_ToolsCall_MethodNotAllowed(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: addr,
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/call")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want 405", resp.StatusCode)
+	}
+}
