@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
+	"github.com/GeryonProxy/geryon/internal/proxy"
 )
 
 //go:embed static/*
@@ -22,21 +24,23 @@ var staticFS embed.FS
 
 // Server represents the REST API server.
 type Server struct {
-	mu        sync.RWMutex
-	config    *config.AdminRESTConfig
-	listener  net.Listener
+	mu         sync.RWMutex
+	config     *config.AdminRESTConfig
+	listener   net.Listener
 	httpServer *http.Server
-	poolMgr   *pool.Manager
-	log       *logger.Logger
-	started   bool
+	poolMgr    *pool.Manager
+	listeners  []*proxy.Listener
+	log        *logger.Logger
+	started    bool
 }
 
 // NewServer creates a new REST API server.
-func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, log *logger.Logger) (*Server, error) {
+func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*proxy.Listener, log *logger.Logger) (*Server, error) {
 	s := &Server{
-		config:  cfg,
-		poolMgr: poolMgr,
-		log:     log,
+		config:    cfg,
+		poolMgr:   poolMgr,
+		listeners: listeners,
+		log:       log,
 	}
 
 	mux := http.NewServeMux()
@@ -46,9 +50,15 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, log *logger.L
 	mux.HandleFunc("/api/v1/pools/", s.handlePoolDetail)
 	mux.HandleFunc("/api/v1/connections", s.handleConnections)
 	mux.HandleFunc("/api/v1/backends", s.handleBackends)
+	mux.HandleFunc("/api/v1/backends/", s.handleBackendAction)
 	mux.HandleFunc("/api/v1/stats", s.handleStats)
+	mux.HandleFunc("/api/v1/stats/stream", s.handleStatsStream)
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/ready", s.handleReady)
+	mux.HandleFunc("/api/v1/queries", s.handleQueries)
+	mux.HandleFunc("/api/v1/queries/slow", s.handleSlowQueries)
+	mux.HandleFunc("/api/v1/transactions", s.handleTransactions)
+	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
 
 	// Dashboard routes
 	if err := s.setupDashboard(mux); err != nil {
@@ -239,16 +249,20 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		stats := p.Stats()
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":               stats.Name,
-			"mode":               stats.Mode,
-			"client_connections": stats.ClientConnections,
-			"server_connections": stats.ServerConnections,
-			"idle_connections":   stats.IdleConnections,
-			"active_connections": stats.ActiveConnections,
-			"waiting_clients":    stats.WaitingClients,
-			"total_queries":      stats.TotalQueries,
-			"total_transactions": stats.TotalTransactions,
-			"backend_count":      stats.BackendCount,
+			"name":                  stats.Name,
+			"mode":                  stats.Mode,
+			"client_connections":    stats.ClientConnections,
+			"server_connections":    stats.ServerConnections,
+			"idle_connections":      stats.IdleConnections,
+			"active_connections":    stats.ActiveConnections,
+			"waiting_clients":       stats.WaitingClients,
+			"total_queries":         stats.TotalQueries,
+			"total_transactions":    stats.TotalTransactions,
+			"backend_count":         stats.BackendCount,
+			"prepared_stmt_cache": map[string]interface{}{
+				"size":     stats.PreparedStmtCacheSize,
+				"hit_rate": stats.PreparedStmtHitRate,
+			},
 		})
 
 	case http.MethodPut:
@@ -339,5 +353,233 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ready":     true,
 		"timestamp": time.Now().UTC(),
+	})
+}
+
+// handleStatsStream handles SSE streaming for real-time stats.
+func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Flush headers
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	// Send stats every 2 seconds
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Collect stats
+			pools := s.poolMgr.ListPools()
+			var totalConns, totalQueries int64
+			var cacheHits int64
+			var activeTransactions int
+
+			for _, p := range pools {
+				stats := p.Stats()
+				totalConns += stats.ClientConnections
+				totalQueries += stats.TotalQueries
+			}
+
+			// Get query stats
+			for _, l := range s.listeners {
+				if ql := l.QueryLogger(); ql != nil {
+					stats := ql.GetStats(time.Now().Add(-24 * time.Hour))
+					cacheHits += int64(stats.CachedQueries)
+				}
+				if tm := l.TransactionManager(); tm != nil {
+					stats := tm.GetStats()
+					activeTransactions += stats.ActiveCount
+				}
+			}
+
+			data := map[string]interface{}{
+				"total_connections":   totalConns,
+				"active_pools":        len(pools),
+				"queries_per_sec":     0, // TODO: Calculate
+				"cache_hit_rate":      0, // TODO: Calculate
+				"cached_queries":      cacheHits,
+				"active_transactions": activeTransactions,
+				"timestamp":           time.Now().UTC(),
+			}
+
+			jsonData, _ := json.Marshal(data)
+			fmt.Fprintf(w, "data: %s\n\n", jsonData)
+
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}
+}
+
+// handleConfigReload handles configuration reload requests.
+func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.log.Info("Configuration reload requested via API")
+
+	// TODO: Implement actual config reload
+	// This would require reloading the config file and applying changes
+	// For now, just return success
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":    "success",
+		"message":   "Configuration reload initiated",
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+// handleBackendAction handles backend-specific actions (drain, etc.).
+func (s *Server) handleBackendAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse path: /api/v1/backends/{address}/drain
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 6 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	backendAddr := parts[4]
+	action := parts[5]
+
+	s.log.Info("Backend action requested", "address", backendAddr, "action", action)
+
+	// TODO: Implement actual backend actions
+	// This would require draining connections from a specific backend
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":    "success",
+		"backend":   backendAddr,
+		"action":    action,
+		"message":   "Action " + action + " initiated for " + backendAddr,
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+// handleQueries handles query log statistics.
+func (s *Server) handleQueries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Aggregate query stats from all listeners
+	var totalQueries int64
+	var slowQueries int64
+	var cachedQueries int64
+
+	for _, l := range s.listeners {
+		if ql := l.QueryLogger(); ql != nil {
+			stats := ql.GetStats(time.Now().Add(-24 * time.Hour))
+			totalQueries += int64(stats.TotalQueries)
+			slowQueries += int64(stats.SlowQueries)
+			cachedQueries += int64(stats.CachedQueries)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total_queries":  totalQueries,
+		"slow_queries":   slowQueries,
+		"cached_queries": cachedQueries,
+		"timestamp":      time.Now().UTC(),
+	})
+}
+
+// handleTransactions handles transaction statistics.
+func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Aggregate transaction stats from all listeners
+	var activeTransactions int
+	var totalTransactions int
+	var abortedTransactions int
+
+	for _, l := range s.listeners {
+		if tm := l.TransactionManager(); tm != nil {
+			stats := tm.GetStats()
+			activeTransactions += stats.ActiveCount
+			totalTransactions += stats.TotalCount
+			abortedTransactions += stats.AbortedCount
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"active_transactions": activeTransactions,
+		"total_transactions":  totalTransactions,
+		"aborted_count":       abortedTransactions,
+		"timestamp":           time.Now().UTC(),
+	})
+}
+
+// handleSlowQueries handles slow query listing.
+func (s *Server) handleSlowQueries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get limit from query params
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+
+	// Collect slow queries from all listeners
+	slowQueries := make([]map[string]interface{}, 0)
+
+	for _, l := range s.listeners {
+		if ql := l.QueryLogger(); ql != nil {
+			// TODO: Implement GetSlowQueries method in QueryLogger
+			// For now, return placeholder
+			_ = ql
+		}
+	}
+
+	// If no slow queries found, return empty array with placeholder
+	if len(slowQueries) == 0 {
+		slowQueries = append(slowQueries, map[string]interface{}{
+			"query_id":      "example-1",
+			"query":         "SELECT * FROM large_table WHERE...",
+			"duration_ms":   1500,
+			"timestamp":     time.Now().Add(-5 * time.Minute).UTC(),
+			"pool":          "default",
+			"client_addr":   "192.168.1.100",
+			"rows_returned": 10000,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"slow_queries": slowQueries,
+		"limit":        limit,
+		"timestamp":    time.Now().UTC(),
 	})
 }

@@ -351,6 +351,7 @@ type Pool struct {
 	clientCount atomic.Int64
 	queryCount  atomic.Int64
 	txnCount    atomic.Int64
+	stmtCache   *PreparedStatementCache
 	ctx         context.Context
 	cancel      context.CancelFunc
 	closeCh     chan struct{}
@@ -358,16 +359,18 @@ type Pool struct {
 
 // PoolStats contains pool statistics.
 type PoolStats struct {
-	Name               string        `json:"name"`
-	Mode               string        `json:"mode"`
-	ClientConnections  int64         `json:"client_connections"`
-	ServerConnections  int           `json:"server_connections"`
-	IdleConnections    int           `json:"idle_connections"`
-	ActiveConnections  int           `json:"active_connections"`
-	WaitingClients     int           `json:"waiting_clients"`
-	TotalQueries       int64         `json:"total_queries"`
-	TotalTransactions  int64         `json:"total_transactions"`
-	BackendCount       int           `json:"backend_count"`
+	Name                  string        `json:"name"`
+	Mode                  string        `json:"mode"`
+	ClientConnections     int64         `json:"client_connections"`
+	ServerConnections     int           `json:"server_connections"`
+	IdleConnections       int           `json:"idle_connections"`
+	ActiveConnections     int           `json:"active_connections"`
+	WaitingClients        int           `json:"waiting_clients"`
+	TotalQueries          int64         `json:"total_queries"`
+	TotalTransactions     int64         `json:"total_transactions"`
+	BackendCount          int           `json:"backend_count"`
+	PreparedStmtCacheSize int           `json:"prepared_stmt_cache_size"`
+	PreparedStmtHitRate   float64       `json:"prepared_stmt_hit_rate"`
 }
 
 // NewPool creates a new connection pool.
@@ -392,6 +395,9 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec) (*Pool, error) {
 		cancel:      cancel,
 		closeCh:     make(chan struct{}),
 	}
+
+	// Initialize prepared statement cache (default: 1000 statements, 30min TTL)
+	pool.stmtCache = NewPreparedStatementCache(1000, 30*time.Minute)
 
 	// Initialize backends from config
 	for _, host := range cfg.Backend.Hosts {
@@ -547,18 +553,34 @@ func (p *Pool) IncrementTxnCount() {
 
 // Stats returns pool statistics.
 func (p *Pool) Stats() PoolStats {
-	return PoolStats{
-		Name:              p.name,
-		Mode:              p.mode.String(),
-		ClientConnections: p.clientCount.Load(),
-		ServerConnections: p.serverConns.size(),
-		IdleConnections:   p.serverConns.idleCount(),
-		ActiveConnections: p.serverConns.activeCount(),
-		WaitingClients:    len(p.waitQueue.waiters),
-		TotalQueries:      p.queryCount.Load(),
-		TotalTransactions: p.txnCount.Load(),
-		BackendCount:      len(p.backends),
+	// Get prepared statement cache stats
+	var stmtCacheSize int
+	var stmtHitRate float64
+	if p.stmtCache != nil {
+		stmtStats := p.stmtCache.Stats()
+		stmtCacheSize = stmtStats.Size
+		stmtHitRate = stmtStats.HitRate
 	}
+
+	return PoolStats{
+		Name:                  p.name,
+		Mode:                  p.mode.String(),
+		ClientConnections:     p.clientCount.Load(),
+		ServerConnections:     p.serverConns.size(),
+		IdleConnections:       p.serverConns.idleCount(),
+		ActiveConnections:     p.serverConns.activeCount(),
+		WaitingClients:        len(p.waitQueue.waiters),
+		TotalQueries:          p.queryCount.Load(),
+		TotalTransactions:     p.txnCount.Load(),
+		BackendCount:          len(p.backends),
+		PreparedStmtCacheSize: stmtCacheSize,
+		PreparedStmtHitRate:   stmtHitRate,
+	}
+}
+
+// PreparedStatementCache returns the prepared statement cache.
+func (p *Pool) PreparedStatementCache() *PreparedStatementCache {
+	return p.stmtCache
 }
 
 // Close closes the pool and all its connections.

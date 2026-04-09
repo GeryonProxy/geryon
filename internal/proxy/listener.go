@@ -25,29 +25,31 @@ import (
 
 // Listener manages incoming client connections for a pool.
 type Listener struct {
-	mu          sync.RWMutex
-	pool        *pool.Pool
-	config      *config.PoolConfig
-	codec       common.Codec
-	listener    net.Listener
-	address     string
-	active      atomic.Bool
-	sessions    map[uint64]*ProxySession
-	tlsConfig   *tls.Config
-	userDB      *auth.UserDatabase
-	cacheStore  *cache.Store
-	cacheRules  *cache.RulesEngine
-	ctx         context.Context
-	cancel      context.CancelFunc
-	log         *logger.Logger
+	mu               sync.RWMutex
+	pool             *pool.Pool
+	config           *config.PoolConfig
+	codec            common.Codec
+	listener         net.Listener
+	address          string
+	active           atomic.Bool
+	sessions         map[uint64]*ProxySession
+	tlsConfig        *tls.Config
+	userDB           *auth.UserDatabase
+	cacheStore       *cache.Store
+	cacheRules       *cache.RulesEngine
+	queryLogger      *logger.QueryLogger
+	transactionMgr   *pool.TransactionManager
+	ctx              context.Context
+	cancel           context.CancelFunc
+	log              *logger.Logger
 }
 
 // NewListener creates a new proxy listener.
-func NewListener(pool *pool.Pool, cfg *config.PoolConfig, codec common.Codec, userDB *auth.UserDatabase, log *logger.Logger) (*Listener, error) {
+func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.Codec, userDB *auth.UserDatabase, log *logger.Logger) (*Listener, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	l := &Listener{
-		pool:     pool,
+		pool:     poolInstance,
 		config:   cfg,
 		codec:    codec,
 		address:  fmt.Sprintf("%s:%d", cfg.Listen.Host, cfg.Listen.Port),
@@ -57,6 +59,25 @@ func NewListener(pool *pool.Pool, cfg *config.PoolConfig, codec common.Codec, us
 		cancel:   cancel,
 		log:      log,
 	}
+
+	// Setup query logger if enabled
+	qlConfig := logger.DefaultQueryLogConfig()
+	qlConfig.Enabled = true
+	qlConfig.Directory = "logs/queries/" + cfg.Name
+	qlConfig.LogAllQueries = false // Set to true for debug mode
+	if queryLogger, err := logger.NewQueryLogger(qlConfig); err == nil {
+		l.queryLogger = queryLogger
+		log.Info("Query logger enabled", "pool", cfg.Name, "directory", qlConfig.Directory)
+	} else {
+		log.Warn("Failed to create query logger", "error", err)
+	}
+
+	// Setup transaction manager
+	l.transactionMgr = pool.NewTransactionManager(
+		30*time.Minute, // transaction timeout
+		5*time.Minute,  // idle timeout
+		log,
+	)
 
 	// Setup cache if enabled
 	if cfg.Cache.Enabled {
@@ -186,8 +207,8 @@ func (l *Listener) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// Create proxy session with cache
-	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.log)
+	// Create proxy session with cache, query logger, and transaction manager
+	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.log)
 	if err != nil {
 		l.log.Error("Failed to create session", "error", err)
 		return
@@ -241,6 +262,18 @@ func (l *Listener) Stop() error {
 	}
 	l.sessions = make(map[uint64]*ProxySession)
 
+	// Stop query logger
+	if l.queryLogger != nil {
+		if err := l.queryLogger.Stop(); err != nil {
+			l.log.Debug("Failed to stop query logger", "error", err)
+		}
+	}
+
+	// Stop transaction manager
+	if l.transactionMgr != nil {
+		l.transactionMgr.Stop()
+	}
+
 	l.log.Info("Listener stopped", "address", l.address)
 
 	return nil
@@ -263,26 +296,52 @@ func (l *Listener) SessionCount() int {
 	return len(l.sessions)
 }
 
+// QueryLogger returns the query logger.
+func (l *Listener) QueryLogger() *logger.QueryLogger {
+	return l.queryLogger
+}
+
+// TransactionManager returns the transaction manager.
+func (l *Listener) TransactionManager() *pool.TransactionManager {
+	return l.transactionMgr
+}
+
+// Pool returns the connection pool.
+func (l *Listener) Pool() *pool.Pool {
+	return l.pool
+}
+
+// Config returns the pool config.
+func (l *Listener) Config() *config.PoolConfig {
+	return l.config
+}
+
 // ProxySession represents a client connection session.
 type ProxySession struct {
-	id            uint64
-	clientConn    net.Conn
-	serverConn    *pool.ServerConn
-	pool          *pool.Pool
-	codec         common.Codec
-	userDB        *auth.UserDatabase
-	config        *config.PoolConfig
-	poolSession   *pool.Session
-	relay         *Relay
-	log           *logger.Logger
-	closed        atomic.Bool
-	queryCount    atomic.Int64
-	authenticated atomic.Bool
-	username      string
-	database      string
-	scramState    *auth.SCRAMState
-	cacheStore    *cache.Store
-	cacheRules    *cache.RulesEngine
+	id              uint64
+	clientConn      net.Conn
+	serverConn      *pool.ServerConn
+	pool            *pool.Pool
+	codec           common.Codec
+	userDB          *auth.UserDatabase
+	config          *config.PoolConfig
+	poolSession     *pool.Session
+	relay           *Relay
+	log             *logger.Logger
+	queryLogger     *logger.QueryLogger
+	transactionMgr  *pool.TransactionManager
+	transactionInfo *pool.TransactionInfo
+	closed          atomic.Bool
+	queryCount      atomic.Int64
+	authenticated   atomic.Bool
+	username        string
+	database        string
+	scramState      *auth.SCRAMState
+	cacheStore      *cache.Store
+	cacheRules      *cache.RulesEngine
+	// Query timing for logging
+	currentQuery    string
+	queryStartTime  time.Time
 }
 
 var (
@@ -290,7 +349,7 @@ var (
 )
 
 // NewProxySession creates a new proxy session.
-func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, log *logger.Logger) (*ProxySession, error) {
+func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, log *logger.Logger) (*ProxySession, error) {
 	// Create pool strategy
 	strategy, err := pool.DefaultStrategyFactory.CreateStrategy(p)
 	if err != nil {
@@ -301,17 +360,19 @@ func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, user
 	poolSession := pool.NewSession(p, strategy)
 
 	ps := &ProxySession{
-		id:          sessionIDCounter.Add(1),
-		clientConn:  clientConn,
-		pool:        p,
-		codec:       codec,
-		userDB:      userDB,
-		config:      cfg,
-		poolSession: poolSession,
-		relay:       NewRelay(),
-		cacheStore:  cacheStore,
-		cacheRules:  cacheRules,
-		log:         log,
+		id:             sessionIDCounter.Add(1),
+		clientConn:     clientConn,
+		pool:           p,
+		codec:          codec,
+		userDB:         userDB,
+		config:         cfg,
+		poolSession:    poolSession,
+		relay:          NewRelay(),
+		cacheStore:     cacheStore,
+		cacheRules:     cacheRules,
+		queryLogger:    queryLogger,
+		transactionMgr: transactionMgr,
+		log:            log,
 	}
 
 	return ps, nil
@@ -1425,33 +1486,111 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			return io.EOF
 		}
 
-		// Extract query for cache check
+		// Extract query and start timing
 		var query string
 		var cacheKey string
-		if ps.cacheStore != nil && ps.cacheRules != nil && codec.IsQuery(msg) {
+		queryStartTime := time.Now()
+
+		if codec.IsQuery(msg) {
 			query, _ = codec.ExtractQuery(msg)
-			if query != "" {
-				// Check if this is a data modification query
-				if isModificationQuery(query) {
-					// Invalidate cache for affected tables
-					tables := extractTablesFromQuery(query)
-					if len(tables) > 0 {
-						ps.log.Debug("Cache invalidation", "tables", tables, "query", query[:min(len(query), 50)])
-						ps.cacheStore.InvalidateTables(tables)
+			ps.currentQuery = query
+			ps.queryStartTime = queryStartTime
+
+			// Check for transaction boundaries
+			if ps.transactionMgr != nil {
+				upperQuery := strings.ToUpper(strings.TrimSpace(query))
+				if strings.HasPrefix(upperQuery, "BEGIN") || strings.HasPrefix(upperQuery, "START TRANSACTION") {
+					// Register new transaction
+					if ps.serverConn != nil {
+						ps.transactionInfo = ps.transactionMgr.Register(ps.id, ps.serverConn.ID())
 					}
-				} else if ps.cacheRules.ShouldCache(query) && isSelectQuery(query) {
-					cacheKey = cache.GenerateKey(query).String()
-					// Check cache
-					if cachedData, hit := ps.cacheStore.Get(cacheKey); hit {
-						ps.log.Debug("Cache hit", "query", query[:min(len(query), 50)])
-						// Send cached response to client
-						if err := ps.sendCachedResponse(clientConn, cachedData); err != nil {
-							ps.log.Error("Failed to send cached response", "error", err)
-							// Fall through to normal handling
+				} else if strings.HasPrefix(upperQuery, "COMMIT") || strings.HasPrefix(upperQuery, "ROLLBACK") || strings.HasPrefix(upperQuery, "END") {
+					// End transaction
+					if ps.transactionInfo != nil {
+						if strings.HasPrefix(upperQuery, "COMMIT") {
+							ps.transactionMgr.SetStatus(ps.transactionInfo.ID, pool.TxnCommitted)
 						} else {
-							// Cache hit served, continue to next message
-							continue
+							ps.transactionMgr.SetStatus(ps.transactionInfo.ID, pool.TxnAborted)
 						}
+						ps.transactionMgr.Unregister(ps.transactionInfo.ID)
+						ps.transactionInfo = nil
+					}
+				}
+			}
+		}
+
+		// Handle prepared statements (Parse, Bind, Execute, Close)
+		if ps.poolSession.PreparedStatements() != nil && ps.config.Body == "postgresql" {
+			switch {
+			case codec.IsPrepare(msg):
+				// Parse message - register in cache
+				pgCodec := codec.(*postgresql.PGCodec)
+				stmtName, _ := pgCodec.ExtractStatementName(msg)
+				query, _ := pgCodec.ExtractQuery(msg)
+				if query != "" {
+					ps.poolSession.PreparedStatements().Register(stmtName, query, nil)
+					ps.log.Debug("Prepared statement registered",
+						"name", stmtName,
+						"query", query[:min(len(query), 50)],
+					)
+				}
+
+			case codec.IsClose(msg):
+				// Close message - remove from cache
+				// Close message format: 'C' + type + name
+				// Type: 'S' = statement, 'P' = portal
+				if len(msg.Payload) > 2 && msg.Payload[0] == 'S' {
+					// Statement close
+					namePos := 1
+					for namePos < len(msg.Payload) && msg.Payload[namePos] != 0 {
+						namePos++
+					}
+					stmtName := string(msg.Payload[1:namePos])
+					ps.poolSession.PreparedStatements().Register(stmtName, "", nil)
+					ps.log.Debug("Prepared statement closed", "name", stmtName)
+				}
+			}
+		}
+
+		// Check cache if enabled
+		if ps.cacheStore != nil && ps.cacheRules != nil && query != "" {
+			// Check if this is a data modification query
+			if isModificationQuery(query) {
+				// Invalidate cache for affected tables
+				tables := extractTablesFromQuery(query)
+				if len(tables) > 0 {
+					ps.log.Debug("Cache invalidation", "tables", tables, "query", query[:min(len(query), 50)])
+					ps.cacheStore.InvalidateTables(tables)
+				}
+			} else if ps.cacheRules.ShouldCache(query) && isSelectQuery(query) {
+				cacheKey = cache.GenerateKey(query).String()
+				// Check cache
+				if cachedData, hit := ps.cacheStore.Get(cacheKey); hit {
+					ps.log.Debug("Cache hit", "query", query[:min(len(query), 50)])
+					// Send cached response to client
+					if err := ps.sendCachedResponse(clientConn, cachedData); err != nil {
+						ps.log.Error("Failed to send cached response", "error", err)
+						// Fall through to normal handling
+					} else {
+						// Log cache hit as a fast query
+						if ps.queryLogger != nil {
+							ps.queryLogger.LogQuery(logger.QueryLogEntry{
+								Timestamp:    queryStartTime,
+								QueryID:      fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
+								Pool:         ps.config.Name,
+								ClientAddr:   ps.clientConn.RemoteAddr().String(),
+								BackendAddr:  "cache",
+								Username:     ps.username,
+								Database:     ps.database,
+								Query:        query,
+								QueryHash:    cacheKey,
+								Duration:     time.Since(queryStartTime),
+								IsCached:     true,
+								RowsReturned: 0,
+							})
+						}
+						// Cache hit served, continue to next message
+						continue
 					}
 				}
 			}
@@ -1463,17 +1602,26 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			return err
 		}
 
+		// Update transaction server connection if needed
+		if ps.transactionInfo != nil && ps.transactionInfo.ServerConnID == 0 && serverConn != nil {
+			ps.transactionInfo.ServerConnID = serverConn.ID()
+		}
+
 		// If this is a cachable query, capture the response
 		if cacheKey != "" {
 			// Forward and capture response
-			if err := r.forwardAndCapture(serverConn.Conn(), clientConn, msg, cacheKey, ps); err != nil {
+			if err := r.forwardAndCapture(serverConn.Conn(), clientConn, msg, cacheKey, ps, queryStartTime); err != nil {
 				return err
 			}
 		} else {
-			// Write message to server normally
+			// Write message to server normally and log query
 			if err := codec.WriteMessage(serverConn.Conn(), msg); err != nil {
 				return err
 			}
+
+			// Log non-cached query (we'll update duration in forwardServerToClient when response completes)
+			ps.currentQuery = query
+			ps.queryStartTime = queryStartTime
 		}
 
 		// Handle extended query protocol (Sync message indicates end of extended query)
@@ -1509,8 +1657,9 @@ func (ps *ProxySession) sendCachedResponse(clientConn net.Conn, data []byte) err
 }
 
 // forwardAndCapture forwards request to server and captures response for caching.
-func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg *common.Message, cacheKey string, ps *ProxySession) error {
+func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg *common.Message, cacheKey string, ps *ProxySession, queryStartTime time.Time) error {
 	codec := ps.codec
+	query := ps.currentQuery
 
 	// Write request to server
 	if err := codec.WriteMessage(serverConn, msg); err != nil {
@@ -1520,6 +1669,7 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 	// Read and capture response
 	// For PostgreSQL, we need to read multiple messages until ReadyForQuery
 	var response bytes.Buffer
+	var rowCount int64
 
 	for {
 		respMsg, err := codec.ReadMessage(serverConn)
@@ -1528,6 +1678,11 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 		}
 
 		respMsg.Direction = common.Backend
+
+		// Count rows in DataRow messages
+		if respMsg.Type == 'D' { // DataRow
+			rowCount++
+		}
 
 		// Add to response buffer
 		response.Write(respMsg.Raw)
@@ -1539,13 +1694,41 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 
 		// Check for end of response
 		if respMsg.Type == 'Z' { // ReadyForQuery
+			// Log query with timing
+			if ps.queryLogger != nil && query != "" {
+				duration := time.Since(queryStartTime)
+				backendAddr := ""
+				if ps.serverConn != nil {
+					backendAddr = ps.serverConn.Conn().RemoteAddr().String()
+				}
+				ps.queryLogger.LogQuery(logger.QueryLogEntry{
+					Timestamp:    queryStartTime,
+					QueryID:      fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
+					Pool:         ps.config.Name,
+					ClientAddr:   ps.clientConn.RemoteAddr().String(),
+					BackendAddr:  backendAddr,
+					Username:     ps.username,
+					Database:     ps.database,
+					Query:        query,
+					QueryHash:    cacheKey,
+					Duration:     duration,
+					RowsReturned: rowCount,
+					IsCached:     false,
+					TransactionID: func() string {
+						if ps.transactionInfo != nil {
+							return fmt.Sprintf("%d", ps.transactionInfo.ID)
+						}
+						return ""
+					}(),
+				})
+			}
 			break
 		}
 	}
 
 	// Store in cache
-	tables := extractTablesFromQuery(ps.poolSession.LastQuery())
-	ttl := ps.cacheRules.GetTTL(ps.poolSession.LastQuery(), 5*time.Minute)
+	tables := extractTablesFromQuery(query)
+	ttl := ps.cacheRules.GetTTL(query, 5*time.Minute)
 	if err := ps.cacheStore.Set(cacheKey, response.Bytes(), tables, ttl); err != nil {
 		ps.log.Debug("Failed to cache response", "error", err)
 	}
@@ -1584,6 +1767,8 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 		return fmt.Errorf("no server connection available")
 	}
 
+	var rowCount int64
+
 	for {
 		// Check context
 		select {
@@ -1600,6 +1785,11 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 
 		msg.Direction = common.Backend
 
+		// Count rows in DataRow messages
+		if msg.Type == 'D' { // DataRow
+			rowCount++
+		}
+
 		// Write message to client
 		if err := codec.WriteMessage(clientConn, msg); err != nil {
 			return err
@@ -1614,6 +1804,46 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 				ps.OnQueryComplete()
 			case 'T', 'E': // In transaction block or failed transaction
 				ps.poolSession.SetInTransaction(true)
+			}
+
+			// Log query completion for non-cached queries
+			if ps.queryLogger != nil && ps.currentQuery != "" {
+				duration := time.Since(ps.queryStartTime)
+				backendAddr := ""
+				if ps.serverConn != nil {
+					backendAddr = ps.serverConn.Conn().RemoteAddr().String()
+				}
+				ps.queryLogger.LogQuery(logger.QueryLogEntry{
+					Timestamp:   ps.queryStartTime,
+					QueryID:     fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
+					Pool:        ps.config.Name,
+					ClientAddr:  ps.clientConn.RemoteAddr().String(),
+					BackendAddr: backendAddr,
+					Username:    ps.username,
+					Database:    ps.database,
+					Query:       ps.currentQuery,
+					QueryHash:   cache.GenerateKey(ps.currentQuery).String(),
+					Duration:    duration,
+					RowsReturned: rowCount,
+					IsCached:    false,
+					TransactionID: func() string {
+						if ps.transactionInfo != nil {
+							return fmt.Sprintf("%d", ps.transactionInfo.ID)
+						}
+						return ""
+					}(),
+				})
+
+				// Reset query tracking
+				ps.currentQuery = ""
+				ps.queryStartTime = time.Time{}
+				rowCount = 0
+			}
+
+			// Update transaction activity if in a transaction
+			if ps.transactionInfo != nil {
+				ps.transactionMgr.UpdateActivity(ps.transactionInfo.ID)
+				ps.transactionMgr.IncrementQueryCount(ps.transactionInfo.ID)
 			}
 		}
 	}

@@ -106,6 +106,9 @@
             case 'queries':
                 loadQueries(content);
                 break;
+            case 'transactions':
+                loadTransactions(content);
+                break;
             case 'config':
                 loadConfig(content);
                 break;
@@ -163,6 +166,8 @@
         statsGrid.appendChild(createStatCard('Active Pools', 'stat-pools', '🗄️'));
         statsGrid.appendChild(createStatCard('Healthy Backends', 'stat-backends', '✅'));
         statsGrid.appendChild(createStatCard('Queries/sec', 'stat-qps', '⚡'));
+        statsGrid.appendChild(createStatCard('Cache Hit Rate', 'stat-cache-hit', '🎯'));
+        statsGrid.appendChild(createStatCard('Active Transactions', 'stat-active-tx', '🔄'));
         container.appendChild(statsGrid);
 
         // Dashboard grid
@@ -189,10 +194,12 @@
     // Fetch overview data
     async function fetchOverviewData() {
         try {
-            const [statsRes, healthRes, poolsRes] = await Promise.all([
+            const [statsRes, healthRes, poolsRes, queriesRes, txRes] = await Promise.all([
                 fetch('/api/v1/stats').catch(() => null),
                 fetch('/api/v1/health').catch(() => null),
-                fetch('/api/v1/pools').catch(() => null)
+                fetch('/api/v1/pools').catch(() => null),
+                fetch('/api/v1/queries').catch(() => null),
+                fetch('/api/v1/transactions').catch(() => null)
             ]);
 
             if (statsRes && statsRes.ok) {
@@ -211,6 +218,21 @@
             if (poolsRes && poolsRes.ok) {
                 const pools = await poolsRes.json();
                 updatePoolStatusContent(pools);
+            }
+
+            // Update query stats on overview
+            if (queriesRes && queriesRes.ok) {
+                const queries = await queriesRes.json();
+                const total = queries.total_queries || 0;
+                const cached = queries.cached_queries || 0;
+                const hitRate = total > 0 ? ((cached / total) * 100).toFixed(1) + '%' : '0%';
+                updateStatElement('stat-cache-hit', hitRate);
+            }
+
+            // Update transaction stats on overview
+            if (txRes && txRes.ok) {
+                const tx = await txRes.json();
+                updateStatElement('stat-active-tx', tx.active_transactions || 0);
             }
         } catch (err) {
             console.error('Failed to fetch overview data:', err);
@@ -369,6 +391,8 @@
         data.pools.forEach(pool => {
             const item = document.createElement('div');
             item.className = 'pool-item';
+            item.style.cursor = 'pointer';
+            item.onclick = () => showPoolDetail(pool.name);
 
             const info = document.createElement('div');
             info.className = 'pool-info';
@@ -414,6 +438,104 @@
             item.appendChild(stats);
             container.appendChild(item);
         });
+    }
+
+    // Show pool detail modal
+    async function showPoolDetail(poolName) {
+        try {
+            const response = await fetch('/api/v1/pools/' + encodeURIComponent(poolName));
+            if (!response.ok) throw new Error('Failed to fetch pool details');
+            const pool = await response.json();
+
+            // Create modal
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+
+            const content = document.createElement('div');
+            content.className = 'modal-content';
+            content.style.cssText = 'background: var(--bg-secondary); border-radius: 12px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow: auto;';
+
+            // Header
+            const header = document.createElement('div');
+            header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
+
+            const title = document.createElement('h2');
+            title.textContent = pool.name || 'Pool Details';
+            title.style.margin = '0';
+
+            const closeBtn = document.createElement('button');
+            closeBtn.textContent = '✕';
+            closeBtn.style.cssText = 'background: none; border: none; color: var(--text-primary); font-size: 20px; cursor: pointer;';
+            closeBtn.onclick = () => modal.remove();
+
+            header.appendChild(title);
+            header.appendChild(closeBtn);
+            content.appendChild(header);
+
+            // Connection stats
+            const connSection = document.createElement('div');
+            connSection.innerHTML = '<h3 style="color: var(--accent); margin-top: 0;">Connection Statistics</h3>';
+
+            const connGrid = document.createElement('div');
+            connGrid.style.cssText = 'display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;';
+
+            const connStats = [
+                { label: 'Client Connections', value: pool.client_connections || 0 },
+                { label: 'Server Connections', value: pool.server_connections || 0 },
+                { label: 'Idle Connections', value: pool.idle_connections || 0 },
+                { label: 'Active Connections', value: pool.active_connections || 0 },
+                { label: 'Waiting Clients', value: pool.waiting_clients || 0 },
+                { label: 'Total Queries', value: pool.total_queries || 0 }
+            ];
+
+            connStats.forEach(stat => {
+                const div = document.createElement('div');
+                div.style.cssText = 'background: var(--bg-tertiary); padding: 12px; border-radius: 8px;';
+                div.innerHTML = '<div style="color: var(--text-secondary); font-size: 12px;">' + stat.label + '</div>' +
+                               '<div style="font-size: 20px; font-weight: 600; margin-top: 4px;">' + stat.value + '</div>';
+                connGrid.appendChild(div);
+            });
+
+            connSection.appendChild(connGrid);
+            content.appendChild(connSection);
+
+            // Prepared Statement Cache
+            if (pool.prepared_stmt_cache) {
+                const stmtSection = document.createElement('div');
+                stmtSection.innerHTML = '<h3 style="color: var(--accent); margin-top: 0;">Prepared Statement Cache</h3>';
+
+                const stmtGrid = document.createElement('div');
+                stmtGrid.style.cssText = 'display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;';
+
+                const stmtStats = [
+                    { label: 'Cache Size', value: pool.prepared_stmt_cache.size || 0 },
+                    { label: 'Hit Rate', value: (pool.prepared_stmt_cache.hit_rate || 0).toFixed(1) + '%' }
+                ];
+
+                stmtStats.forEach(stat => {
+                    const div = document.createElement('div');
+                    div.style.cssText = 'background: var(--bg-tertiary); padding: 12px; border-radius: 8px;';
+                    div.innerHTML = '<div style="color: var(--text-secondary); font-size: 12px;">' + stat.label + '</div>' +
+                                   '<div style="font-size: 20px; font-weight: 600; margin-top: 4px;">' + stat.value + '</div>';
+                    stmtGrid.appendChild(div);
+                });
+
+                stmtSection.appendChild(stmtGrid);
+                content.appendChild(stmtSection);
+            }
+
+            modal.appendChild(content);
+            document.body.appendChild(modal);
+
+            // Close on outside click
+            modal.onclick = (e) => {
+                if (e.target === modal) modal.remove();
+            };
+
+        } catch (err) {
+            showNotification('Error loading pool details: ' + err.message, 'error');
+        }
     }
 
     // Load backends page
@@ -538,18 +660,364 @@
     function loadQueries(container) {
         container.textContent = '';
 
+        // Stats grid for queries
+        const statsGrid = document.createElement('div');
+        statsGrid.className = 'stats-grid';
+        statsGrid.appendChild(createStatCard('Total Queries', 'stat-total-queries', '📊'));
+        statsGrid.appendChild(createStatCard('Slow Queries', 'stat-slow-queries', '🐢'));
+        statsGrid.appendChild(createStatCard('Cached Queries', 'stat-cached-queries', '⚡'));
+        statsGrid.appendChild(createStatCard('Cache Hit Rate', 'stat-cache-hit', '🎯'));
+        container.appendChild(statsGrid);
+
+        // Tabs container
+        const tabsContainer = document.createElement('div');
+        tabsContainer.className = 'tabs';
+
+        // Tab buttons
+        const tabButtons = document.createElement('div');
+        tabButtons.className = 'tab-buttons';
+
+        const overviewBtn = document.createElement('button');
+        overviewBtn.className = 'tab-btn active';
+        overviewBtn.textContent = 'Overview';
+        overviewBtn.onclick = () => switchTab('queries-overview');
+
+        const slowBtn = document.createElement('button');
+        slowBtn.className = 'tab-btn';
+        slowBtn.textContent = 'Slow Queries';
+        slowBtn.onclick = () => switchTab('queries-slow');
+
+        tabButtons.appendChild(overviewBtn);
+        tabButtons.appendChild(slowBtn);
+        tabsContainer.appendChild(tabButtons);
+
+        // Tab content - Overview
+        const overviewTab = document.createElement('div');
+        overviewTab.id = 'tab-queries-overview';
+        overviewTab.className = 'tab-content active';
+
+        const overviewCard = document.createElement('div');
+        overviewCard.className = 'card';
+
+        const overviewTitle = document.createElement('h3');
+        overviewTitle.textContent = 'Query Statistics';
+        overviewCard.appendChild(overviewTitle);
+
+        const overviewContent = document.createElement('div');
+        overviewContent.id = 'queries-content';
+        overviewContent.textContent = 'Loading query statistics...';
+        overviewCard.appendChild(overviewContent);
+
+        overviewTab.appendChild(overviewCard);
+        tabsContainer.appendChild(overviewTab);
+
+        // Tab content - Slow Queries
+        const slowTab = document.createElement('div');
+        slowTab.id = 'tab-queries-slow';
+        slowTab.className = 'tab-content';
+
+        const slowCard = document.createElement('div');
+        slowCard.className = 'card';
+
+        const slowTitle = document.createElement('h3');
+        slowTitle.textContent = 'Slow Queries';
+        slowCard.appendChild(slowTitle);
+
+        const slowContent = document.createElement('div');
+        slowContent.id = 'slow-queries-content';
+        slowContent.textContent = 'Loading slow queries...';
+        slowCard.appendChild(slowContent);
+
+        slowTab.appendChild(slowCard);
+        tabsContainer.appendChild(slowTab);
+
+        container.appendChild(tabsContainer);
+
+        // Add tab styles
+        addTabStyles();
+
+        fetchQueries();
+        fetchSlowQueries();
+    }
+
+    // Switch tab
+    function switchTab(tabId) {
+        // Hide all tabs
+        document.querySelectorAll('.tab-content').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+
+        // Show selected tab
+        const selectedTab = document.getElementById('tab-' + tabId);
+        if (selectedTab) {
+            selectedTab.classList.add('active');
+        }
+
+        // Update button state
+        event.target.classList.add('active');
+    }
+
+    // Add tab styles
+    function addTabStyles() {
+        if (document.getElementById('tab-styles')) return;
+
+        const style = document.createElement('style');
+        style.id = 'tab-styles';
+        style.textContent = `
+            .tabs { margin-top: 20px; }
+            .tab-buttons { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+            .tab-btn { background: none; border: none; padding: 12px 24px; cursor: pointer; color: var(--text-secondary); font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.2s; }
+            .tab-btn:hover { color: var(--text-primary); }
+            .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+            .tab-content { display: none; }
+            .tab-content.active { display: block; }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // Fetch slow queries from API
+    async function fetchSlowQueries() {
+        try {
+            const response = await fetch('/api/v1/queries/slow?limit=50');
+            if (!response.ok) throw new Error('Failed to fetch slow queries');
+            const data = await response.json();
+            updateSlowQueriesContent(data);
+        } catch (err) {
+            const content = document.getElementById('slow-queries-content');
+            if (content) content.textContent = 'Error loading slow queries: ' + err.message;
+        }
+    }
+
+    // Update slow queries content
+    function updateSlowQueriesContent(data) {
+        const container = document.getElementById('slow-queries-content');
+        if (!container) return;
+        container.textContent = '';
+
+        if (!data.slow_queries || data.slow_queries.length === 0) {
+            container.textContent = 'No slow queries found';
+            return;
+        }
+
+        const table = document.createElement('table');
+        table.className = 'data-table';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['Time', 'Duration', 'Query', 'Pool', 'Client'].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        data.slow_queries.forEach(query => {
+            const row = document.createElement('tr');
+
+            const timeCell = document.createElement('td');
+            timeCell.textContent = query.timestamp ? new Date(query.timestamp).toLocaleTimeString() : '-';
+
+            const durationCell = document.createElement('td');
+            durationCell.textContent = (query.duration_ms || 0) + ' ms';
+            durationCell.style.color = 'var(--error)';
+
+            const queryCell = document.createElement('td');
+            queryCell.textContent = (query.query || '-').substring(0, 100) + ((query.query || '').length > 100 ? '...' : '');
+            queryCell.style.maxWidth = '400px';
+            queryCell.style.overflow = 'hidden';
+            queryCell.style.textOverflow = 'ellipsis';
+
+            const poolCell = document.createElement('td');
+            poolCell.textContent = query.pool || '-';
+
+            const clientCell = document.createElement('td');
+            clientCell.textContent = query.client_addr || '-';
+
+            row.appendChild(timeCell);
+            row.appendChild(durationCell);
+            row.appendChild(queryCell);
+            row.appendChild(poolCell);
+            row.appendChild(clientCell);
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+
+    // Fetch queries from API
+    async function fetchQueries() {
+        try {
+            const response = await fetch('/api/v1/queries');
+            if (!response.ok) throw new Error('Failed to fetch queries');
+            const data = await response.json();
+            updateQueriesContent(data);
+        } catch (err) {
+            const content = document.getElementById('queries-content');
+            if (content) content.textContent = 'Error loading queries: ' + err.message;
+        }
+    }
+
+    // Update queries content
+    function updateQueriesContent(data) {
+        // Update stat cards
+        updateStatElement('stat-total-queries', data.total_queries || 0);
+        updateStatElement('stat-slow-queries', data.slow_queries || 0);
+        updateStatElement('stat-cached-queries', data.cached_queries || 0);
+
+        // Calculate cache hit rate
+        const total = data.total_queries || 0;
+        const cached = data.cached_queries || 0;
+        const hitRate = total > 0 ? ((cached / total) * 100).toFixed(1) + '%' : '0%';
+        updateStatElement('stat-cache-hit', hitRate);
+
+        // Update content
+        const container = document.getElementById('queries-content');
+        if (!container) return;
+        container.textContent = '';
+
+        const table = document.createElement('table');
+        table.className = 'data-table';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['Metric', 'Value'].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        const metrics = [
+            { label: 'Total Queries', value: data.total_queries || 0 },
+            { label: 'Slow Queries', value: data.slow_queries || 0 },
+            { label: 'Cached Queries', value: data.cached_queries || 0 },
+            { label: 'Cache Hit Rate', value: hitRate }
+        ];
+
+        metrics.forEach(metric => {
+            const row = document.createElement('tr');
+
+            const labelCell = document.createElement('td');
+            labelCell.textContent = metric.label;
+
+            const valueCell = document.createElement('td');
+            valueCell.textContent = metric.value;
+
+            row.appendChild(labelCell);
+            row.appendChild(valueCell);
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+
+    // Load transactions page
+    function loadTransactions(container) {
+        container.textContent = '';
+
+        // Stats grid for transactions
+        const statsGrid = document.createElement('div');
+        statsGrid.className = 'stats-grid';
+        statsGrid.appendChild(createStatCard('Active Transactions', 'stat-active-tx', '🔄'));
+        statsGrid.appendChild(createStatCard('Total Transactions', 'stat-total-tx', '📈'));
+        statsGrid.appendChild(createStatCard('Aborted Transactions', 'stat-aborted-tx', '❌'));
+        statsGrid.appendChild(createStatCard('Success Rate', 'stat-tx-success', '✅'));
+        container.appendChild(statsGrid);
+
+        // Transaction details card
         const card = document.createElement('div');
         card.className = 'card';
 
         const title = document.createElement('h3');
-        title.textContent = 'Query Statistics';
+        title.textContent = 'Transaction Statistics';
         card.appendChild(title);
 
         const content = document.createElement('div');
-        content.textContent = 'Query analytics coming soon';
+        content.id = 'transactions-content';
+        content.textContent = 'Loading transaction statistics...';
         card.appendChild(content);
 
         container.appendChild(card);
+        fetchTransactions();
+    }
+
+    // Fetch transactions from API
+    async function fetchTransactions() {
+        try {
+            const response = await fetch('/api/v1/transactions');
+            if (!response.ok) throw new Error('Failed to fetch transactions');
+            const data = await response.json();
+            updateTransactionsContent(data);
+        } catch (err) {
+            const content = document.getElementById('transactions-content');
+            if (content) content.textContent = 'Error loading transactions: ' + err.message;
+        }
+    }
+
+    // Update transactions content
+    function updateTransactionsContent(data) {
+        // Update stat cards
+        updateStatElement('stat-active-tx', data.active_transactions || 0);
+        updateStatElement('stat-total-tx', data.total_transactions || 0);
+        updateStatElement('stat-aborted-tx', data.aborted_count || 0);
+
+        // Calculate success rate
+        const total = data.total_transactions || 0;
+        const aborted = data.aborted_count || 0;
+        const successRate = total > 0 ? (((total - aborted) / total) * 100).toFixed(1) + '%' : '100%';
+        updateStatElement('stat-tx-success', successRate);
+
+        // Update content
+        const container = document.getElementById('transactions-content');
+        if (!container) return;
+        container.textContent = '';
+
+        const table = document.createElement('table');
+        table.className = 'data-table';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['Metric', 'Value'].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        const metrics = [
+            { label: 'Active Transactions', value: data.active_transactions || 0 },
+            { label: 'Total Transactions', value: data.total_transactions || 0 },
+            { label: 'Aborted Transactions', value: data.aborted_count || 0 },
+            { label: 'Success Rate', value: successRate }
+        ];
+
+        metrics.forEach(metric => {
+            const row = document.createElement('tr');
+
+            const labelCell = document.createElement('td');
+            labelCell.textContent = metric.label;
+
+            const valueCell = document.createElement('td');
+            valueCell.textContent = metric.value;
+
+            row.appendChild(labelCell);
+            row.appendChild(valueCell);
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        container.appendChild(table);
     }
 
     // Load config page
@@ -608,7 +1076,8 @@
         try {
             const response = await fetch('/api/v1/config/reload', { method: 'POST' });
             if (!response.ok) throw new Error('Reload failed');
-            showNotification('Configuration reloaded successfully', 'success');
+            const data = await response.json();
+            showNotification(data.message || 'Configuration reloaded successfully', 'success');
             refreshCurrentPage();
         } catch (err) {
             showNotification('Failed to reload config: ' + err.message, 'error');
@@ -654,9 +1123,28 @@
             state.eventSource.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
+                    // Update overview page stats
                     if (state.currentPage === 'overview') {
                         updateStatElement('stat-connections', data.total_connections);
+                        updateStatElement('stat-pools', data.active_pools);
                         updateStatElement('stat-qps', data.queries_per_sec);
+                        if (data.cache_hit_rate !== undefined) {
+                            updateStatElement('stat-cache-hit', data.cache_hit_rate + '%');
+                        }
+                        updateStatElement('stat-active-tx', data.active_transactions);
+                    }
+                    // Update queries page stats
+                    if (state.currentPage === 'queries') {
+                        updateStatElement('stat-total-queries', data.total_queries);
+                        updateStatElement('stat-cached-queries', data.cached_queries);
+                        const total = data.total_queries || 0;
+                        const cached = data.cached_queries || 0;
+                        const hitRate = total > 0 ? ((cached / total) * 100).toFixed(1) + '%' : '0%';
+                        updateStatElement('stat-cache-hit', hitRate);
+                    }
+                    // Update transactions page stats
+                    if (state.currentPage === 'transactions') {
+                        updateStatElement('stat-active-tx', data.active_transactions);
                     }
                 } catch (err) {
                     console.error('Failed to parse SSE data:', err);

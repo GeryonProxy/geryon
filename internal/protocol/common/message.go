@@ -58,14 +58,20 @@ type Codec interface {
 	// IsPrepare returns true if this is a prepare statement message.
 	IsPrepare(msg *Message) bool
 
+	// IsBind returns true if this is a bind message.
+	IsBind(msg *Message) bool
+
 	// IsExecute returns true if this is an execute prepared stmt message.
 	IsExecute(msg *Message) bool
 
+	// IsClose returns true if this is a close message.
+	IsClose(msg *Message) bool
+
+	// IsSync returns true if this is a sync message.
+	IsSync(msg *Message) bool
+
 	// ExtractQuery extracts the SQL query string from a query message.
 	ExtractQuery(msg *Message) (string, error)
-
-	// GenerateResetSequence returns messages to reset server state.
-	GenerateResetSequence() []*Message
 
 	// Protocol returns the protocol identifier.
 	Protocol() Protocol

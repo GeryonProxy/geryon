@@ -191,6 +191,87 @@ func (c *PGCodec) extractParseQuery(msg *common.Message) (string, error) {
 	return string(msg.Payload[queryStart:pos]), nil
 }
 
+// ExtractStatementName extracts the statement name from a Parse message.
+func (c *PGCodec) ExtractStatementName(msg *common.Message) (string, error) {
+	if msg.Type != 'P' {
+		return "", fmt.Errorf("not a Parse message")
+	}
+	if len(msg.Payload) < 1 {
+		return "", fmt.Errorf("parse message too short")
+	}
+
+	// Read statement name (null-terminated)
+	pos := 0
+	for pos < len(msg.Payload) && msg.Payload[pos] != 0 {
+		pos++
+	}
+
+	return string(msg.Payload[:pos]), nil
+}
+
+// ExtractPortalName extracts the portal name from a Bind message.
+func (c *PGCodec) ExtractPortalName(msg *common.Message) (string, error) {
+	if msg.Type != 'B' {
+		return "", fmt.Errorf("not a Bind message")
+	}
+	if len(msg.Payload) < 1 {
+		return "", fmt.Errorf("bind message too short")
+	}
+
+	// Bind message: [portal]\0[statement]\0[params...]
+	// Read portal name (null-terminated)
+	pos := 0
+	for pos < len(msg.Payload) && msg.Payload[pos] != 0 {
+		pos++
+	}
+
+	return string(msg.Payload[:pos]), nil
+}
+
+// ExtractBindStatementName extracts the statement name from a Bind message.
+func (c *PGCodec) ExtractBindStatementName(msg *common.Message) (string, error) {
+	if msg.Type != 'B' {
+		return "", fmt.Errorf("not a Bind message")
+	}
+	if len(msg.Payload) < 2 {
+		return "", fmt.Errorf("bind message too short")
+	}
+
+	// Bind message: [portal]\0[statement]\0[params...]
+	// Skip portal name
+	pos := 0
+	for pos < len(msg.Payload) && msg.Payload[pos] != 0 {
+		pos++
+	}
+	if pos >= len(msg.Payload) {
+		return "", fmt.Errorf("bind message missing null terminator")
+	}
+	pos++ // skip null
+
+	// Read statement name (null-terminated)
+	start := pos
+	for pos < len(msg.Payload) && msg.Payload[pos] != 0 {
+		pos++
+	}
+
+	return string(msg.Payload[start:pos]), nil
+}
+
+// IsBind returns true if this is a Bind message.
+func (c *PGCodec) IsBind(msg *common.Message) bool {
+	return msg.Type == 'B'
+}
+
+// IsClose returns true if this is a Close message.
+func (c *PGCodec) IsClose(msg *common.Message) bool {
+	return msg.Type == 'C'
+}
+
+// IsSync returns true if this is a Sync message.
+func (c *PGCodec) IsSync(msg *common.Message) bool {
+	return msg.Type == 'S'
+}
+
 // GenerateResetSequence returns messages to reset server state.
 func (c *PGCodec) GenerateResetSequence() []*common.Message {
 	// Send DISCARD ALL to reset the connection state

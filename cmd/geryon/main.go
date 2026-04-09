@@ -128,7 +128,7 @@ func main() {
 	}
 
 	// Create and start REST API server
-	restServer, err := rest.NewServer(&cfg.Admin.REST, poolMgr, log)
+	restServer, err := rest.NewServer(&cfg.Admin.REST, poolMgr, listeners, log)
 	if err != nil {
 		log.Error("Failed to create REST server", "error", err)
 		os.Exit(1)

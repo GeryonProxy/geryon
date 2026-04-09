@@ -131,12 +131,34 @@ func (c *TDSCodec) IsPrepare(msg *common.Message) bool {
 	return c.isRPCProcedure(msg, "sp_prepare")
 }
 
+// IsBind returns true if this is a bind message.
+func (c *TDSCodec) IsBind(msg *common.Message) bool {
+	// TDS doesn't have a separate bind message
+	// Parameters are sent with sp_execute
+	return false
+}
+
 // IsExecute returns true if this is an execute prepared stmt message.
 func (c *TDSCodec) IsExecute(msg *common.Message) bool {
 	if msg.Type != PacketTypeRPC {
 		return false
 	}
 	return c.isRPCProcedure(msg, "sp_execute")
+}
+
+// IsClose returns true if this is a close statement message.
+func (c *TDSCodec) IsClose(msg *common.Message) bool {
+	// TDS uses sp_unprepare for closing prepared statements
+	if msg.Type != PacketTypeRPC {
+		return false
+	}
+	return c.isRPCProcedure(msg, "sp_unprepare")
+}
+
+// IsSync returns true if this is a sync message.
+func (c *TDSCodec) IsSync(msg *common.Message) bool {
+	// TDS doesn't have a direct equivalent to PostgreSQL's Sync
+	return false
 }
 
 // ExtractQuery extracts the SQL query string from a query message.

@@ -129,9 +129,27 @@ func (c *MySQLCodec) IsPrepare(msg *common.Message) bool {
 	return msg.Type == ComStmtPrepare
 }
 
+// IsBind returns true if this is a bind message (COM_STMT_SEND_LONG_DATA in MySQL).
+func (c *MySQLCodec) IsBind(msg *common.Message) bool {
+	// MySQL uses COM_STMT_SEND_LONG_DATA for parameter binding
+	return msg.Type == ComStmtSendLongData
+}
+
 // IsExecute returns true if this is an execute prepared stmt message.
 func (c *MySQLCodec) IsExecute(msg *common.Message) bool {
 	return msg.Type == ComStmtExecute
+}
+
+// IsClose returns true if this is a close statement message.
+func (c *MySQLCodec) IsClose(msg *common.Message) bool {
+	return msg.Type == ComStmtClose
+}
+
+// IsSync returns true if this is a sync/reset message.
+func (c *MySQLCodec) IsSync(msg *common.Message) bool {
+	// MySQL doesn't have a direct equivalent to PostgreSQL's Sync
+	// COM_STMT_RESET is the closest equivalent
+	return msg.Type == ComStmtReset
 }
 
 // ExtractQuery extracts the SQL query string from a query message.

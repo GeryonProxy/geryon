@@ -27,6 +27,7 @@ type Session struct {
 	bytesIn     atomic.Int64
 	bytesOut    atomic.Int64
 	lastQuery   string
+	stmtTracker *SessionPreparedStatements
 }
 
 // SessionStats contains session statistics.
@@ -53,10 +54,11 @@ var (
 func NewSession(pool *Pool, strategy Strategy) *Session {
 	now := time.Now()
 	s := &Session{
-		id:         sessionIDCounter.Add(1),
-		pool:       pool,
-		strategy:   strategy,
-		startedAt:  now,
+		id:          sessionIDCounter.Add(1),
+		pool:        pool,
+		strategy:    strategy,
+		startedAt:   now,
+		stmtTracker: NewSessionPreparedStatements(pool.PreparedStatementCache()),
 	}
 	s.lastActive.Store(now)
 	s.autoCommit.Store(true)
@@ -216,6 +218,11 @@ func (s *Session) SetLastQuery(query string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastQuery = query
+}
+
+// PreparedStatements returns the session's prepared statement tracker.
+func (s *Session) PreparedStatements() *SessionPreparedStatements {
+	return s.stmtTracker
 }
 
 // Stats returns session statistics.
