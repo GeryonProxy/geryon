@@ -57,8 +57,12 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 	mux.HandleFunc("/api/v1/ready", s.handleReady)
 	mux.HandleFunc("/api/v1/queries", s.handleQueries)
 	mux.HandleFunc("/api/v1/queries/slow", s.handleSlowQueries)
+	mux.HandleFunc("/api/v1/queries/recent", s.handleRecentQueries)
 	mux.HandleFunc("/api/v1/transactions", s.handleTransactions)
+	mux.HandleFunc("/api/v1/transactions/active", s.handleActiveTransactions)
+	mux.HandleFunc("/api/v1/config", s.handleConfig)
 	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
+	mux.HandleFunc("/api/v1/tls/status", s.handleTLSStatus)
 
 	// Prometheus metrics endpoint
 	mux.HandleFunc("/metrics", s.handleMetrics)
@@ -204,33 +208,59 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// handlePools handles pool listing.
+// handlePools handles pool listing and creation.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+	switch r.Method {
+	case http.MethodGet:
+		pools := s.poolMgr.ListPools()
+		poolData := make([]map[string]interface{}, 0, len(pools))
 
-	pools := s.poolMgr.ListPools()
-	poolData := make([]map[string]interface{}, 0, len(pools))
+		for _, p := range pools {
+			stats := p.Stats()
+			poolData = append(poolData, map[string]interface{}{
+				"name":               stats.Name,
+				"body":               p.Codec().Protocol(),
+				"mode":               stats.Mode,
+				"client_connections": stats.ClientConnections,
+				"server_connections": stats.ServerConnections,
+				"idle_connections":   stats.IdleConnections,
+				"active_connections": stats.ActiveConnections,
+				"status":             "online",
+			})
+		}
 
-	for _, p := range pools {
-		stats := p.Stats()
-		poolData = append(poolData, map[string]interface{}{
-			"name":              stats.Name,
-			"body":              p.Codec().Protocol(),
-			"mode":              stats.Mode,
-			"client_connections": stats.ClientConnections,
-			"server_connections": stats.ServerConnections,
-			"idle_connections":  stats.IdleConnections,
-			"active_connections": stats.ActiveConnections,
-			"status":            "online",
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"pools": poolData,
 		})
-	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"pools": poolData,
-	})
+	case http.MethodPost:
+		// Create new pool
+		var req config.PoolConfig
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.Name == "" {
+			http.Error(w, "Pool name is required", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.poolMgr.CreatePool(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+
+		s.log.Info("Pool created via API", "pool", req.Name)
+		writeJSON(w, http.StatusCreated, map[string]interface{}{
+			"status":  "success",
+			"message": "Pool created",
+			"pool":    req.Name,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // handlePoolDetail handles individual pool operations.
@@ -271,6 +301,20 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		// TODO: Update pool configuration
 		http.Error(w, "Not implemented", http.StatusNotImplemented)
+
+	case http.MethodDelete:
+		// Remove the pool
+		if err := s.poolMgr.RemovePool(poolName); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		s.log.Info("Pool deleted via API", "pool", poolName)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":  "success",
+			"message": "Pool deleted",
+			"pool":    poolName,
+		})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -686,4 +730,114 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writeMetric("geryon_transactions_aborted_total", "Total aborted transactions", "counter", abortedTransactions)
 
 	w.Write([]byte(output.String()))
+}
+
+// handleRecentQueries returns recent queries.
+func (s *Server) handleRecentQueries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get limit from query params
+	limitStr := r.URL.Query().Get("limit")
+	limit := 100
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 1000 {
+			limit = n
+		}
+	}
+
+	// Aggregate recent queries from all listeners
+	recentQueries := make([]map[string]interface{}, 0)
+
+	for _, l := range s.listeners {
+		if ql := l.QueryLogger(); ql != nil {
+			// TODO: Implement GetRecentQueries method in QueryLogger
+			_ = ql
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"recent_queries": recentQueries,
+		"limit":          limit,
+		"timestamp":      time.Now().UTC(),
+	})
+}
+
+// handleActiveTransactions returns active transaction details.
+func (s *Server) handleActiveTransactions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	activeTxns := make([]map[string]interface{}, 0)
+
+	for _, l := range s.listeners {
+		if tm := l.TransactionManager(); tm != nil {
+			// TODO: Implement GetActiveTransactions method in TransactionManager
+			_ = tm
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"active_transactions": activeTxns,
+		"count":               len(activeTxns),
+		"timestamp":           time.Now().UTC(),
+	})
+}
+
+// handleConfig returns current configuration.
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Return sanitized configuration (without sensitive data)
+	pools := s.poolMgr.ListPools()
+	poolConfigs := make([]map[string]interface{}, 0, len(pools))
+
+	for _, p := range pools {
+		stats := p.Stats()
+		poolConfigs = append(poolConfigs, map[string]interface{}{
+			"name":     stats.Name,
+			"mode":     stats.Mode,
+			"body":     p.Codec().Protocol(),
+			"backends": stats.BackendCount,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pools":     poolConfigs,
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+// handleTLSStatus returns TLS configuration status.
+func (s *Server) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Check TLS status for all listeners
+	tlsStatus := make([]map[string]interface{}, 0)
+
+	for _, l := range s.listeners {
+		cfg := l.Config()
+		tlsStatus = append(tlsStatus, map[string]interface{}{
+			"pool":       cfg.Name,
+			"tls_mode":   cfg.TLS.Mode,
+			"enabled":    cfg.TLS.Mode != "disable" && cfg.TLS.Mode != "",
+			"cert_file":  cfg.TLS.CertFile,
+			"ca_file":    cfg.TLS.CAFile,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tls_status": tlsStatus,
+		"timestamp":  time.Now().UTC(),
+	})
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
+	"github.com/GeryonProxy/geryon/internal/tlsutil"
 )
 
 // Listener manages incoming client connections for a pool.
@@ -112,7 +113,11 @@ func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.C
 
 // setupTLS configures TLS for the listener.
 func (l *Listener) setupTLS() error {
-	// TODO: Implement TLS setup
+	tlsConfig, err := tlsutil.LoadServerConfig(l.config.TLS)
+	if err != nil {
+		return err
+	}
+	l.tlsConfig = tlsConfig
 	return nil
 }
 
@@ -208,7 +213,7 @@ func (l *Listener) handleConnection(conn net.Conn) {
 	}
 
 	// Create proxy session with cache, query logger, and transaction manager
-	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.log)
+	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.tlsConfig, l.log)
 	if err != nil {
 		l.log.Error("Failed to create session", "error", err)
 		return
@@ -339,6 +344,7 @@ type ProxySession struct {
 	scramState      *auth.SCRAMState
 	cacheStore      *cache.Store
 	cacheRules      *cache.RulesEngine
+	tlsConfig       *tls.Config
 	// Query timing for logging
 	currentQuery    string
 	queryStartTime  time.Time
@@ -349,7 +355,7 @@ var (
 )
 
 // NewProxySession creates a new proxy session.
-func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, log *logger.Logger) (*ProxySession, error) {
+func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, tlsConfig *tls.Config, log *logger.Logger) (*ProxySession, error) {
 	// Create pool strategy
 	strategy, err := pool.DefaultStrategyFactory.CreateStrategy(p)
 	if err != nil {
@@ -372,6 +378,7 @@ func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, user
 		cacheRules:     cacheRules,
 		queryLogger:    queryLogger,
 		transactionMgr: transactionMgr,
+		tlsConfig:      tlsConfig,
 		log:            log,
 	}
 
@@ -456,11 +463,15 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 		code := binary.BigEndian.Uint32(startupData)
 		if code == 80877103 {
 			// SSL Request
-			if ps.config.TLS.Mode != "disable" {
+			if ps.config.TLS.Mode != "disable" && ps.tlsConfig != nil {
 				// Send 'S' to indicate SSL supported
 				ps.clientConn.Write([]byte{'S'})
 				// Wrap connection with TLS
-				// TODO: Implement TLS upgrade
+				tlsConn := tls.Server(ps.clientConn, ps.tlsConfig)
+				if err := tlsConn.HandshakeContext(ctx); err != nil {
+					return fmt.Errorf("TLS handshake failed: %w", err)
+				}
+				ps.clientConn = tlsConn
 			} else {
 				// Send 'N' to indicate SSL not supported
 				ps.clientConn.Write([]byte{'N'})

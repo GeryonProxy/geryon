@@ -38,6 +38,7 @@ type BackendConfig struct {
 	Hosts    []BackendHost `yaml:"hosts"`
 	Database string        `yaml:"database"`
 	Auth     BackendAuth   `yaml:"auth"`
+	TLS      TLSConfig     `yaml:"tls"`
 }
 
 // LimitConfig contains pool limit settings.

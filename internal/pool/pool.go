@@ -2,8 +2,11 @@ package pool
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -355,6 +358,7 @@ type Pool struct {
 	txnCount    atomic.Int64
 	stmtCache   *PreparedStatementCache
 	log         *logger.Logger
+	tlsConfig   *tls.Config
 	ctx         context.Context
 	cancel      context.CancelFunc
 	closeCh     chan struct{}
@@ -402,6 +406,15 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 
 	// Initialize prepared statement cache (default: 1000 statements, 30min TTL)
 	pool.stmtCache = NewPreparedStatementCache(1000, 30*time.Minute)
+
+	// Load backend TLS config if enabled
+	if cfg.Backend.TLS.Mode != "disable" && cfg.Backend.TLS.Mode != "" {
+		pool.tlsConfig, err = loadBackendTLSConfig(cfg.Backend.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load backend TLS config: %w", err)
+		}
+		log.Info("Backend TLS enabled", "pool", cfg.Name, "mode", cfg.Backend.TLS.Mode)
+	}
 
 	// Initialize backends from config
 	for _, host := range cfg.Backend.Hosts {
@@ -526,17 +539,68 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 	return nil, fmt.Errorf("failed to connect to any backend after %d attempts", maxRetries)
 }
 
+// loadBackendTLSConfig loads TLS configuration for backend connections.
+func loadBackendTLSConfig(cfg config.TLSConfig) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// Configure server certificate verification
+	switch cfg.Mode {
+	case "require":
+		tlsConfig.InsecureSkipVerify = true
+	case "verify-ca", "verify-full":
+		tlsConfig.InsecureSkipVerify = false
+	}
+
+	// Load client certificate for mutual TLS
+	if cfg.CertFile != "" && cfg.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	// Load CA for server certificate verification
+	if cfg.CAFile != "" {
+		caCert, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA file: %w", err)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
+}
+
 // tryConnect attempts to connect to a specific backend.
 func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 	addr := backend.Address()
 
 	// Connect with timeout
-	netConn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	var netConn net.Conn
+	var err error
+
+	if p.tlsConfig != nil {
+		// TLS connection
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		netConn, err = tls.DialWithDialer(dialer, "tcp", addr, p.tlsConfig)
+	} else {
+		// Plain TCP connection
+		netConn, err = net.DialTimeout("tcp", addr, 5*time.Second)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	// Set TCP keepalive
+	// Set TCP keepalive (only for non-TLS or if we can access underlying conn)
 	if tcpConn, ok := netConn.(*net.TCPConn); ok {
 		tcpConn.SetKeepAlive(true)
 		tcpConn.SetKeepAlivePeriod(3 * time.Minute)
