@@ -10,6 +10,10 @@ import (
 // envVarPattern matches ${VAR} or ${VAR:-default} syntax.
 var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
+// allowedEnvPrefix lists prefixes of environment variables that can be expanded
+// in config files. This prevents accidental exposure of system secrets.
+var allowedEnvPrefix = "GERYON_"
+
 // Load reads and parses the configuration file.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -17,7 +21,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Expand environment variables
+	// Expand environment variables (restricted to GERYON_* prefix)
 	expanded := expandEnvVars(string(data))
 
 	// Parse YAML
@@ -30,6 +34,8 @@ func Load(path string) (*Config, error) {
 }
 
 // expandEnvVars replaces ${VAR} and ${VAR:-default} with environment values.
+// Only variables prefixed with GERYON_ are expanded for security.
+// Other ${VAR} references are left as-is or replaced with their default.
 func expandEnvVars(input string) string {
 	return envVarPattern.ReplaceAllStringFunc(input, func(match string) string {
 		content := match[2 : len(match)-1] // Remove ${ and }
@@ -37,6 +43,14 @@ func expandEnvVars(input string) string {
 		// Check for default value syntax
 		parts := strings.SplitN(content, ":-", 2)
 		varName := parts[0]
+
+		// Only expand GERYON_* variables for security
+		if !strings.HasPrefix(varName, allowedEnvPrefix) {
+			if len(parts) > 1 {
+				return parts[1]
+			}
+			return match // Leave non-GERYON vars as-is
+		}
 
 		value := os.Getenv(varName)
 		if value == "" && len(parts) > 1 {
@@ -141,15 +155,15 @@ global:
 
 admin:
   rest:
-    listen: "0.0.0.0:8080"
+    listen: "127.0.0.1:8080"
     auth:
       enabled: true
       token: "${GERYON_ADMIN_TOKEN}"
   grpc:
-    listen: "0.0.0.0:9090"
+    listen: "127.0.0.1:9090"
   mcp:
     transport: sse           # stdio | sse
-    listen: "0.0.0.0:8081"
+    listen: "127.0.0.1:8081"
   dashboard:
     enabled: true
     path: "/"               # Served on REST port
@@ -244,5 +258,5 @@ pools:
       max_client_connections: 2000
       max_server_connections: 30
 `
-	return os.WriteFile("geryon.example.yaml", []byte(example), 0644)
+	return os.WriteFile("geryon.example.yaml", []byte(example), 0600)
 }

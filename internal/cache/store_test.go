@@ -135,19 +135,19 @@ func TestStoreInvalidateTable(t *testing.T) {
 }
 
 func TestStoreLRUEviction(t *testing.T) {
-	// Create small cache to force eviction
-	s := NewStore(100, 5*time.Minute)
+	// Create cache that can hold 2 entries (40 bytes) but not 3 (60 bytes)
+	s := NewStore(50, 5*time.Minute)
 
-	// Add entries that exceed capacity
-	s.Set("key1", []byte("value1"), nil, time.Minute) // 6 bytes
-	s.Set("key2", []byte("value2"), nil, time.Minute) // 6 bytes
-	s.Set("key3", []byte("value3"), nil, time.Minute) // 6 bytes
+	// Add 2 entries (40 bytes total, fits)
+	s.Set("key1", []byte("value1-with-20-bytes"), nil, time.Minute)
+	s.Set("key2", []byte("value2-with-20-bytes"), nil, time.Minute)
 
-	// Access key1 to make it recently used
+	// Access key1 to make it most recently used
 	s.Get("key1")
 
-	// Add more entries to trigger eviction
-	s.Set("key4", []byte("value4-with-more-data"), nil, time.Minute)
+	// Add 3rd entry to trigger eviction (60 bytes > 50 max)
+	// key2 should be evicted (least recently used)
+	s.Set("key3", []byte("value3-with-20-bytes"), nil, time.Minute)
 
 	stats := s.Stats()
 	if stats.Evictions == 0 {
@@ -159,13 +159,19 @@ func TestStoreLRUEviction(t *testing.T) {
 	if !hit {
 		t.Error("expected key1 to still exist (recently used)")
 	}
+
+	// key2 should have been evicted
+	_, hit = s.Get("key2")
+	if hit {
+		t.Error("expected key2 to be evicted (least recently used)")
+	}
 }
 
 func TestStoreValueTooLarge(t *testing.T) {
-	s := NewStore(100, 5*time.Minute)
+	s := NewStore(50, 5*time.Minute)
 
-	// Try to set value larger than max memory
-	err := s.Set("key", []byte("this-is-a-very-long-value-that-exceeds-the-maximum-allowed-size-in-the-cache"), nil, time.Minute)
+	// Try to set value larger than max memory (100 bytes > 50 bytes)
+	err := s.Set("key", []byte("this-is-a-very-long-value-that-exceeds-the-maximum-allowed-size-in-the-cache!!"), nil, time.Minute)
 	if err == nil {
 		t.Error("expected error for value too large")
 	}

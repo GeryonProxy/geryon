@@ -8,10 +8,13 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
@@ -32,15 +35,19 @@ type Server struct {
 	listeners  []*proxy.Listener
 	log        *logger.Logger
 	started    bool
+	configPath string
+	reloadFn   func() error
 }
 
 // NewServer creates a new REST API server.
-func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*proxy.Listener, log *logger.Logger) (*Server, error) {
+func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*proxy.Listener, log *logger.Logger, configPath string, reloadFn func() error) (*Server, error) {
 	s := &Server{
-		config:    cfg,
-		poolMgr:   poolMgr,
-		listeners: listeners,
-		log:       log,
+		config:     cfg,
+		poolMgr:    poolMgr,
+		listeners:  listeners,
+		log:        log,
+		configPath: configPath,
+		reloadFn:   reloadFn,
 	}
 
 	mux := http.NewServeMux()
@@ -74,7 +81,7 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 
 	s.httpServer = &http.Server{
 		Addr:         cfg.Listen,
-		Handler:      s.withLogging(s.withCORS(s.withAuth(mux))),
+		Handler:      s.withLogging(s.withRateLimit(s.withSecurityHeaders(s.withCORS(s.withAuth(mux))))),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
@@ -156,12 +163,52 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 	})
 }
 
+// withSecurityHeaders adds security headers to all responses.
+func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isAllowedOrigin checks if an origin is in the allowed list.
+func (s *Server) isAllowedOrigin(origin string) bool {
+	if len(s.config.AllowedOrigins) == 0 {
+		return origin == ""
+	}
+	for _, o := range s.config.AllowedOrigins {
+		if o == "*" || o == origin {
+			return true
+		}
+	}
+	return false
+}
+
 // withCORS adds CORS headers.
 func (s *Server) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		allowed := false
+		if len(s.config.AllowedOrigins) == 0 {
+			// Default: only allow same-origin requests
+			allowed = origin == ""
+		} else {
+			for _, o := range s.config.AllowedOrigins {
+				if o == "*" || o == origin {
+					allowed = true
+					break
+				}
+			}
+		}
+
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -201,11 +248,125 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 	})
 }
 
+// rateLimiter implements a simple token bucket rate limiter per IP.
+type rateLimiter struct {
+	mu        sync.Mutex
+	limiters  map[string]*rate.Limiter
+	lastSeen  map[string]time.Time
+	rate      rate.Limit
+	burst     int
+	maxSize   int
+	cleanupTTL time.Duration
+}
+
+func newRateLimiter(r rate.Limit, burst int) *rateLimiter {
+	rl := &rateLimiter{
+		limiters:  make(map[string]*rate.Limiter),
+		lastSeen:  make(map[string]time.Time),
+		rate:      r,
+		burst:     burst,
+		maxSize:   10000,
+		cleanupTTL: 5 * time.Minute,
+	}
+	go rl.periodicCleanup()
+	return rl
+}
+
+func (rl *rateLimiter) periodicCleanup() {
+	ticker := time.NewTicker(rl.cleanupTTL)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, last := range rl.lastSeen {
+			if now.Sub(last) > rl.cleanupTTL {
+				delete(rl.limiters, ip)
+				delete(rl.lastSeen, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *rateLimiter) GetLimiter(ip string) *rate.Limiter {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	// Evict oldest entry if at capacity
+	if len(rl.limiters) >= rl.maxSize {
+		var oldestIP string
+		var oldestTime time.Time
+		for ip, last := range rl.lastSeen {
+			if oldestIP == "" || last.Before(oldestTime) {
+				oldestIP = ip
+				oldestTime = last
+			}
+		}
+		if oldestIP != "" {
+			delete(rl.limiters, oldestIP)
+			delete(rl.lastSeen, oldestIP)
+		}
+	}
+
+	rl.lastSeen[ip] = time.Now()
+	limiter, ok := rl.limiters[ip]
+	if !ok {
+		limiter = rate.NewLimiter(rl.rate, rl.burst)
+		rl.limiters[ip] = limiter
+	}
+	return limiter
+}
+
+// withRateLimit adds rate limiting middleware per client IP.
+func (s *Server) withRateLimit(next http.Handler) http.Handler {
+	rl := newRateLimiter(10, 20) // 10 req/s, burst 20
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if ip == "" {
+			ip = r.RemoteAddr
+		}
+
+		limiter := rl.GetLimiter(ip)
+		if !limiter.Allow() {
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // writeJSON writes a JSON response.
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+// writeError writes a sanitized error response without leaking internal details.
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]interface{}{"error": msg})
+}
+
+// sanitizeErr returns a short, safe error message.
+// Internal details (file paths, connection strings) are stripped.
+func sanitizeErr(err error) string {
+	msg := err.Error()
+	// Truncate to prevent leaking sensitive context
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	return msg
+}
+
+// poolNameRegex validates pool names: alphanumeric, underscores, hyphens, 1-64 chars.
+var poolNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+// validatePoolName returns true if the pool name is valid.
+func validatePoolName(name string) bool {
+	return poolNameRegex.MatchString(name)
 }
 
 // handlePools handles pool listing and creation.
@@ -236,7 +397,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		// Create new pool
 		var req config.PoolConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
@@ -246,8 +407,43 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if !validatePoolName(req.Name) {
+			writeError(w, http.StatusBadRequest, "Invalid pool name: must be 1-64 alphanumeric characters, underscores, or hyphens")
+			return
+		}
+
+		// Validate body type
+		switch req.Body {
+		case "postgresql", "mysql", "mssql":
+		default:
+			writeError(w, http.StatusBadRequest, "Invalid body type: must be postgresql, mysql, or mssql")
+			return
+		}
+
+		// Validate mode
+		switch req.Mode {
+		case "session", "transaction", "statement":
+		default:
+			writeError(w, http.StatusBadRequest, "Invalid mode: must be session, transaction, or statement")
+			return
+		}
+
+		// Validate at least one backend is configured
+		if len(req.Backend.Hosts) == 0 {
+			writeError(w, http.StatusBadRequest, "At least one backend host is required")
+			return
+		}
+
+		// Validate backend hosts
+		for _, host := range req.Backend.Hosts {
+			if host.Host == "" || host.Port <= 0 || host.Port > 65535 {
+				writeError(w, http.StatusBadRequest, "Invalid backend host/port")
+				return
+			}
+		}
+
 		if err := s.poolMgr.CreatePool(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
+			writeError(w, http.StatusConflict, "Failed to create pool: "+sanitizeErr(err))
 			return
 		}
 
@@ -272,6 +468,11 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	poolName := parts[4]
+	if !validatePoolName(poolName) {
+		writeError(w, http.StatusBadRequest, "Invalid pool name: must be 1-64 alphanumeric characters, underscores, or hyphens")
+		return
+	}
+
 	p := s.poolMgr.GetPool(poolName)
 	if p == nil {
 		http.Error(w, "Pool not found", http.StatusNotFound)
@@ -305,7 +506,7 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		// Remove the pool
 		if err := s.poolMgr.RemovePool(poolName); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Failed to delete pool: "+sanitizeErr(err))
 			return
 		}
 
@@ -445,7 +646,12 @@ func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if len(s.config.AllowedOrigins) > 0 {
+		origin := r.Header.Get("Origin")
+		if s.isAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+	}
 
 	// Flush headers
 	if f, ok := w.(http.Flusher); ok {
@@ -515,13 +721,19 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 
 	s.log.Info("Configuration reload requested via API")
 
-	// TODO: Implement actual config reload
-	// This would require reloading the config file and applying changes
-	// For now, just return success
+	if s.reloadFn != nil {
+		if err := s.reloadFn(); err != nil {
+			writeError(w, http.StatusInternalServerError, "Configuration reload failed: "+sanitizeErr(err))
+			return
+		}
+	} else {
+		writeError(w, http.StatusNotImplemented, "Config reload not configured")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "success",
-		"message":   "Configuration reload initiated",
+		"message":   "Configuration reloaded",
 		"timestamp": time.Now().UTC(),
 	})
 }
@@ -581,7 +793,7 @@ func (s *Server) handleBackendDrain(w http.ResponseWriter, r *http.Request, back
 
 	activeConns, err := targetPool.DrainBackend(backendAddr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to drain backend", http.StatusInternalServerError)
 		return
 	}
 
@@ -618,7 +830,7 @@ func (s *Server) handleBackendCancelDrain(w http.ResponseWriter, r *http.Request
 
 	err := targetPool.CancelDrain(backendAddr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to cancel drain", http.StatusInternalServerError)
 		return
 	}
 

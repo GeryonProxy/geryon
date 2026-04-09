@@ -147,11 +147,12 @@ type ClusterConfig struct {
 
 // AdminRESTConfig contains REST API settings.
 type AdminRESTConfig struct {
-	Listen string         `yaml:"listen"`
-	Auth   RESTAuthConfig `yaml:"auth"`
+	Listen         string         `yaml:"listen"`
+	Auth           RESTAuthConfig `yaml:"auth"`
+	AllowedOrigins []string       `yaml:"allowed_origins"`
 }
 
-// RESTAuthConfig contains REST API authentication settings.
+// RESTAuthConfig contains authentication settings for admin APIs.
 type RESTAuthConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Token   string `yaml:"token"`
@@ -159,19 +160,23 @@ type RESTAuthConfig struct {
 
 // AdminGRPCConfig contains gRPC API settings.
 type AdminGRPCConfig struct {
-	Listen string `yaml:"listen"`
+	Listen string         `yaml:"listen"`
+	Auth   RESTAuthConfig `yaml:"auth"`
 }
 
 // AdminMCPConfig contains MCP server settings.
 type AdminMCPConfig struct {
-	Transport string `yaml:"transport"`
-	Listen    string `yaml:"listen"`
+	Transport string         `yaml:"transport"`
+	Listen    string         `yaml:"listen"`
+	Auth      RESTAuthConfig `yaml:"auth"`
 }
 
 // AdminDashboardConfig contains dashboard settings.
 type AdminDashboardConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Path    string `yaml:"path"`
+	Enabled bool           `yaml:"enabled"`
+	Listen  string         `yaml:"listen"`
+	Path    string         `yaml:"path"`
+	Auth    RESTAuthConfig `yaml:"auth"`
 }
 
 // AdminConfig contains management interface settings.
@@ -200,21 +205,31 @@ func DefaultConfig() *Config {
 		},
 		Admin: AdminConfig{
 			REST: AdminRESTConfig{
-				Listen: "0.0.0.0:8080",
+				Listen: "127.0.0.1:8080",
 				Auth: RESTAuthConfig{
-					Enabled: false,
+					Enabled: true,
 				},
 			},
 			GRPC: AdminGRPCConfig{
-				Listen: "0.0.0.0:9090",
+				Listen: "127.0.0.1:9090",
+				Auth: RESTAuthConfig{
+					Enabled: true,
+				},
 			},
 			MCP: AdminMCPConfig{
 				Transport: "sse",
-				Listen:    "0.0.0.0:8081",
+				Listen:    "127.0.0.1:8081",
+				Auth: RESTAuthConfig{
+					Enabled: true,
+				},
 			},
 			Dashboard: AdminDashboardConfig{
-				Enabled: true,
+				Enabled: false,
+				Listen:  "127.0.0.1:8082",
 				Path:    "/",
+				Auth: RESTAuthConfig{
+					Enabled: true,
+				},
 			},
 		},
 		Cluster: ClusterConfig{
@@ -234,6 +249,27 @@ func DefaultConfig() *Config {
 
 // Validate checks the configuration for errors.
 func Validate(cfg *Config) error {
+	// Validate admin listen addresses
+	for _, addr := range []string{cfg.Admin.REST.Listen, cfg.Admin.GRPC.Listen, cfg.Admin.MCP.Listen} {
+		if addr == "" {
+			return fmt.Errorf("admin listen address cannot be empty")
+		}
+	}
+
+	// Validate auth configuration
+	if cfg.Admin.REST.Auth.Enabled && cfg.Admin.REST.Auth.Token == "" {
+		return fmt.Errorf("REST auth is enabled but no auth token is configured")
+	}
+	if cfg.Admin.GRPC.Auth.Enabled && cfg.Admin.GRPC.Auth.Token == "" {
+		return fmt.Errorf("gRPC auth is enabled but no auth token is configured")
+	}
+	if cfg.Admin.MCP.Auth.Enabled && cfg.Admin.MCP.Auth.Token == "" {
+		return fmt.Errorf("MCP auth is enabled but no auth token is configured")
+	}
+	if cfg.Admin.Dashboard.Auth.Enabled && cfg.Admin.Dashboard.Auth.Token == "" {
+		return fmt.Errorf("Dashboard auth is enabled but no auth token is configured")
+	}
+
 	// Validate pool configurations
 	poolNames := make(map[string]bool)
 	ports := make(map[int]bool)
@@ -264,12 +300,33 @@ func Validate(cfg *Config) error {
 			return fmt.Errorf("pool %s: invalid mode %q, must be session, transaction, or statement", pool.Name, pool.Mode)
 		}
 
+		// Validate limits
+		if pool.Limits.MaxClientConnections < 0 {
+			return fmt.Errorf("pool %s: max_client_connections cannot be negative", pool.Name)
+		}
+		if pool.Limits.MaxServerConnections < 0 {
+			return fmt.Errorf("pool %s: max_server_connections cannot be negative", pool.Name)
+		}
+		if pool.Limits.MinServerConnections < 0 {
+			return fmt.Errorf("pool %s: min_server_connections cannot be negative", pool.Name)
+		}
+
 		// Check for port conflicts
 		if pool.Listen.Port != 0 {
 			if ports[pool.Listen.Port] {
 				return fmt.Errorf("port %d is used by multiple pools", pool.Listen.Port)
 			}
 			ports[pool.Listen.Port] = true
+		}
+	}
+
+	// Validate cluster configuration
+	if cfg.Cluster.Enabled {
+		if cfg.Cluster.NodeID == "" {
+			return fmt.Errorf("cluster is enabled but node_id is not set")
+		}
+		if cfg.Cluster.Raft.Listen == "" {
+			return fmt.Errorf("cluster is enabled but raft.listen is not set")
 		}
 	}
 

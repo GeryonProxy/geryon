@@ -16,7 +16,8 @@ func LoadServerConfig(cfg config.TLSConfig) (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: CipherSuites12(),
 	}
 
 	// Load certificate and key
@@ -64,13 +65,14 @@ func LoadClientConfig(cfg config.TLSConfig) (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: CipherSuites12(),
 	}
 
 	// Configure server certificate verification
 	switch cfg.Mode {
 	case "require":
-		tlsConfig.InsecureSkipVerify = true
+		// Verify against system CAs (InsecureSkipVerify defaults to false)
 	case "verify-ca":
 		tlsConfig.InsecureSkipVerify = false
 	case "verify-full":

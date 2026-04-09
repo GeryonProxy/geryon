@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -117,7 +118,7 @@ func NewQueryLogger(config QueryLogConfig) (*QueryLogger, error) {
 
 	// Open slow query log
 	slowLogPath := filepath.Join(config.Directory, "slow.log")
-	slowLog, err := os.OpenFile(slowLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	slowLog, err := os.OpenFile(slowLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open slow log: %w", err)
 	}
@@ -126,7 +127,7 @@ func NewQueryLogger(config QueryLogConfig) (*QueryLogger, error) {
 	// Open all queries log if enabled
 	if config.LogAllQueries {
 		allLogPath := filepath.Join(config.Directory, "all.log")
-		allLog, err := os.OpenFile(allLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		allLog, err := os.OpenFile(allLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
 			slowLog.Close()
 			return nil, fmt.Errorf("failed to open all log: %w", err)
@@ -137,7 +138,7 @@ func NewQueryLogger(config QueryLogConfig) (*QueryLogger, error) {
 	// Open JSON log if enabled
 	if config.LogJSON {
 		jsonLogPath := filepath.Join(config.Directory, "queries.json")
-		jsonLog, err := os.OpenFile(jsonLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		jsonLog, err := os.OpenFile(jsonLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
 			slowLog.Close()
 			if ql.allLog != nil {
@@ -164,11 +165,19 @@ func (ql *QueryLogger) LogQuery(entry QueryLogEntry) {
 		return
 	}
 
+	// Redact sensitive data
+	entry.Query = redactQuery(entry.Query)
+
 	// Determine if slow
 	entry.IsSlow = entry.Duration >= ql.config.SlowThreshold
 
-	// Buffer the entry
+	// Buffer the entry with hard cap to prevent unbounded growth
+	maxBuf := ql.config.BufferSize * 2 // Hard cap at 2x buffer size
 	ql.bufferMu.Lock()
+	if len(ql.buffer) >= maxBuf {
+		ql.bufferMu.Unlock()
+		return // Drop entry under extreme load
+	}
 	ql.buffer = append(ql.buffer, entry)
 	shouldFlush := len(ql.buffer) >= ql.config.BufferSize
 	ql.bufferMu.Unlock()
@@ -196,7 +205,7 @@ func (ql *QueryLogger) LogQuery(entry QueryLogEntry) {
 
 // writeSlowLog writes to slow query log.
 func (ql *QueryLogger) writeSlowLog(entry QueryLogEntry) {
-	line := fmt.Sprintf("[%s] [%s] [%s] %s - %s (%.2fms) rows=%d client=%s backend=%s\n",
+	line := fmt.Sprintf("[%s] [%s] [%s] %s - %s (%dms) rows=%d client=%s backend=%s\n",
 		entry.Timestamp.Format(time.RFC3339),
 		entry.Pool,
 		entry.Username,
@@ -217,7 +226,7 @@ func (ql *QueryLogger) writeAllLog(entry QueryLogEntry) {
 	if entry.IsCached {
 		cached = " [CACHED]"
 	}
-	line := fmt.Sprintf("[%s]%s [%s] %.2fms: %s\n",
+	line := fmt.Sprintf("[%s]%s [%s] %dms: %s\n",
 		entry.Timestamp.Format(time.RFC3339),
 		cached,
 		entry.Pool,
@@ -313,4 +322,21 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// secretPatterns matches common SQL patterns that may contain credentials.
+var secretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(?:CREATE\s+(?:USER|ROLE)|ALTER\s+(?:USER|ROLE)).*?(?:IDENTIFIED\s+BY|PASSWORD)\s+['"][^'"]*['"]`),
+	regexp.MustCompile(`(?i)(?:SET\s+PASSWORD(?:\s+FOR\s+\S+)?)\s*=\s*['"][^'"]*['"]`),
+	regexp.MustCompile(`(?i)(?:GRANT|REVOKE)\s+.*?ON\s+.*?\s+TO\s+\S+\s+(?:IDENTIFIED\s+BY\s+)?['"][^'"]*['"]`),
+	regexp.MustCompile(`(?i)INSERT\s+INTO\s+\S*(?:credential|secret|password|auth)\S*\s+VALUES\s*\([^)]+\)`),
+	regexp.MustCompile(`(?i)(?:password|secret|token|credential)\s*=\s*['"][^'"]{4,}['"]`),
+}
+
+// redactQuery removes sensitive data from SQL queries.
+func redactQuery(query string) string {
+	for _, pattern := range secretPatterns {
+		query = pattern.ReplaceAllString(query, "[REDACTED]")
+	}
+	return query
 }

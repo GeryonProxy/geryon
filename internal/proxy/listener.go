@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +25,9 @@ import (
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
 )
+
+// MySQL packet size limit (16MB is protocol max)
+const maxMySQLPayload = 16 << 20
 
 // Listener manages incoming client connections for a pool.
 type Listener struct {
@@ -64,7 +69,9 @@ func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.C
 	// Setup query logger if enabled
 	qlConfig := logger.DefaultQueryLogConfig()
 	qlConfig.Enabled = true
-	qlConfig.Directory = "logs/queries/" + cfg.Name
+	// Sanitize pool name to prevent path traversal
+	safeName := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(cfg.Name, "_")
+	qlConfig.Directory = filepath.Join("logs", "queries", safeName)
 	qlConfig.LogAllQueries = false // Set to true for debug mode
 	if queryLogger, err := logger.NewQueryLogger(qlConfig); err == nil {
 		l.queryLogger = queryLogger
@@ -198,6 +205,8 @@ func (l *Listener) acceptLoop() {
 			continue
 		}
 
+		// Set deadlines to prevent slowloris attacks and idle connection buildup
+		conn.SetDeadline(time.Now().Add(5 * time.Minute)) // Overall idle timeout
 		go l.handleConnection(conn)
 	}
 }
@@ -206,8 +215,9 @@ func (l *Listener) acceptLoop() {
 func (l *Listener) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	// Check max connections
-	if l.pool.Stats().ClientConnections >= int64(l.config.Limits.MaxClientConnections) {
+	// Atomically check limit and increment to prevent race condition
+	maxConns := int64(l.config.Limits.MaxClientConnections)
+	if !l.pool.TryIncrementClientCount(maxConns) {
 		l.log.Warn("Max client connections reached", "pool", l.config.Name)
 		return
 	}
@@ -490,7 +500,13 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 	// Parse key-value parameters
 	params := make(map[string]string)
 	pos := 4
+	paramCount := 0
+	const maxStartupParams = 64
+	const maxValueLen = 256
 	for pos < len(startupData)-1 {
+		if paramCount >= maxStartupParams {
+			return fmt.Errorf("too many startup parameters (max %d)", maxStartupParams)
+		}
 		// Find null terminator for key
 		keyStart := pos
 		for pos < len(startupData) && startupData[pos] != 0 {
@@ -513,13 +529,28 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 		val := string(startupData[valStart:pos])
 		pos++ // skip null
 
+		// Validate value length
+		if len(val) > maxValueLen {
+			return fmt.Errorf("startup parameter %q value exceeds max length (%d bytes)", key, maxValueLen)
+		}
+
 		if key != "" {
 			params[key] = val
+			paramCount++
 		}
 	}
 
 	ps.username = params["user"]
 	ps.database = params["database"]
+
+	// Validate username and database for null bytes and control characters
+	for _, s := range []string{ps.username, ps.database} {
+		for i := 0; i < len(s); i++ {
+			if s[i] < 0x20 || s[i] == 0x7F {
+				return fmt.Errorf("invalid character in startup parameter value")
+			}
+		}
+	}
 
 	if ps.username == "" {
 		return fmt.Errorf("no username provided")
@@ -596,7 +627,7 @@ func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.Use
 	// Parse client-first
 	state, err := scramServer.ParseClientFirst(clientFirst)
 	if err != nil {
-		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed: "+err.Error())
+		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed")
 		ps.clientConn.Write(errMsg)
 		return err
 	}
@@ -605,7 +636,7 @@ func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.Use
 	// Generate server-first
 	serverFirst, err := scramServer.GenerateServerFirst(state)
 	if err != nil {
-		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed: "+err.Error())
+		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed")
 		ps.clientConn.Write(errMsg)
 		return err
 	}
@@ -741,6 +772,9 @@ func (ps *ProxySession) forwardAuthFromBackend() error {
 
 		// Read payload
 		payloadLen := int(length) - 4
+		if payloadLen < 0 || payloadLen > maxMySQLPayload {
+			return fmt.Errorf("invalid backend message length: %d", payloadLen)
+		}
 		payload := make([]byte, payloadLen)
 		if payloadLen > 0 {
 			if _, err := io.ReadFull(reader, payload); err != nil {
@@ -807,6 +841,9 @@ func (ps *ProxySession) forwardAuthToBackend() error {
 
 	// Read payload
 	payloadLen := int(length) - 4
+	if payloadLen < 0 || payloadLen > maxMySQLPayload {
+		return fmt.Errorf("invalid client message length: %d", payloadLen)
+	}
 	payload := make([]byte, payloadLen)
 	if payloadLen > 0 {
 		if _, err := io.ReadFull(reader, payload); err != nil {
@@ -853,6 +890,9 @@ func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
 	_ = header[3] // sequence
 
 	// Read handshake packet
+	if length > maxMySQLPayload {
+		return fmt.Errorf("mysql handshake too large: %d bytes", length)
+	}
 	handshakeData := make([]byte, length)
 	if _, err := io.ReadFull(reader, handshakeData); err != nil {
 		return fmt.Errorf("failed to read handshake data: %w", err)
@@ -884,6 +924,9 @@ func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
 	}
 
 	respLength := int(respHeader[0]) | int(respHeader[1])<<8 | int(respHeader[2])<<16
+	if respLength > maxMySQLPayload {
+		return fmt.Errorf("mysql handshake response too large: %d bytes", respLength)
+	}
 	respData := make([]byte, respLength)
 	if _, err := io.ReadFull(ps.clientConn, respData); err != nil {
 		return fmt.Errorf("failed to read response data: %w", err)
@@ -1109,6 +1152,10 @@ func (ps *ProxySession) forwardMySQLAuth() error {
 		length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
 		seq := header[3]
 
+		if length > maxMySQLPayload {
+			return fmt.Errorf("mysql payload too large: %d bytes", length)
+		}
+
 		// Read payload
 		payload := make([]byte, length)
 		if _, err := io.ReadFull(serverReader, payload); err != nil {
@@ -1138,6 +1185,9 @@ func (ps *ProxySession) forwardMySQLAuth() error {
 				}
 
 				clientLength := int(clientHeader[0]) | int(clientHeader[1])<<8 | int(clientHeader[2])<<16
+				if clientLength > maxMySQLPayload {
+					return fmt.Errorf("mysql auth response too large: %d bytes", clientLength)
+				}
 				clientPayload := make([]byte, clientLength)
 				if _, err := io.ReadFull(ps.clientConn, clientPayload); err != nil {
 					return err
@@ -1205,6 +1255,9 @@ func (ps *ProxySession) forwardMSSQLPreLogin() error {
 
 	length := binary.BigEndian.Uint16(header[2:4])
 	payloadLen := int(length) - 8
+	if payloadLen < 0 || payloadLen > maxMySQLPayload {
+		return fmt.Errorf("invalid MSSQL Pre-Login length: %d", payloadLen)
+	}
 
 	payload := make([]byte, payloadLen)
 	if _, err := io.ReadFull(reader, payload); err != nil {
@@ -1232,6 +1285,9 @@ func (ps *ProxySession) forwardMSSQLPreLogin() error {
 
 		respLength := binary.BigEndian.Uint16(respHeader[2:4])
 		respPayloadLen := int(respLength) - 8
+		if respPayloadLen < 0 || respPayloadLen > maxMySQLPayload {
+			return fmt.Errorf("invalid MSSQL Pre-Login response length: %d", respPayloadLen)
+		}
 
 		respPayload := make([]byte, respPayloadLen)
 		if _, err := io.ReadFull(serverReader, respPayload); err != nil {
@@ -1273,6 +1329,9 @@ func (ps *ProxySession) forwardMSSQLLogin7() error {
 
 	length := binary.BigEndian.Uint16(header[2:4])
 	payloadLen := int(length) - 8
+	if payloadLen < 0 || payloadLen > maxMySQLPayload {
+		return fmt.Errorf("invalid MSSQL Login7 length: %d", payloadLen)
+	}
 
 	payload := make([]byte, payloadLen)
 	if _, err := io.ReadFull(reader, payload); err != nil {
@@ -1363,6 +1422,9 @@ func (ps *ProxySession) forwardMSSQLAuthResponse() error {
 
 		length := binary.BigEndian.Uint16(header[2:4])
 		payloadLen := int(length) - 8
+		if payloadLen < 0 || payloadLen > maxMySQLPayload {
+			return fmt.Errorf("invalid MSSQL message length: %d", payloadLen)
+		}
 
 		payload := make([]byte, payloadLen)
 		if _, err := io.ReadFull(serverReader, payload); err != nil {

@@ -224,15 +224,20 @@ func (hc *HealthChecker) checkBackend(bh *BackendHealth) {
 
 // performCheck performs the actual health check.
 func (hc *HealthChecker) performCheck(backend *Backend) error {
-	_, cancel := context.WithTimeout(hc.ctx, hc.timeout)
+	ctx, cancel := context.WithTimeout(hc.ctx, hc.timeout)
 	defer cancel()
 
-	// Try TCP connect first
-	conn, err := net.DialTimeout("tcp", backend.Address(), hc.timeout)
+	// Use context-aware dialer for proper cancellation
+	dialer := net.Dialer{Timeout: hc.timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", backend.Address())
 	if err != nil {
 		return fmt.Errorf("TCP connect failed: %w", err)
 	}
-	conn.Close()
+	defer conn.Close()
+
+	// Set read deadline to prevent hanging on slow backend responses
+	conn.SetReadDeadline(time.Now().Add(hc.timeout))
+	conn.SetWriteDeadline(time.Now().Add(hc.timeout))
 
 	// Protocol-specific health check would go here
 	// For now, we just check TCP connectivity

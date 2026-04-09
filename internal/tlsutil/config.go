@@ -53,8 +53,9 @@ func (c *Config) LoadFromConfig(cfg *config.TLSConfig) error {
 
 	// Create server config
 	serverConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		Certificates:   []tls.Certificate{cert},
+		MinVersion:     tls.VersionTLS12,
+		CipherSuites:   CipherSuites12(),
 	}
 
 	// Set client auth mode
@@ -88,7 +89,8 @@ func (c *Config) LoadFromConfig(cfg *config.TLSConfig) error {
 	clientConfig := &tls.Config{
 		Certificates:       []tls.Certificate{cert},
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: cfg.Mode == "allow" || cfg.Mode == "prefer",
+		CipherSuites:       CipherSuites12(),
+		// InsecureSkipVerify defaults to false; only set for explicitly insecure modes
 	}
 
 	if cfg.CAFile != "" {
@@ -154,6 +156,15 @@ func GenerateSelfSignedCert(host string, validFor time.Duration) ([]byte, []byte
 		return nil, nil, fmt.Errorf("failed to generate private key: %w", err)
 	}
 
+	// Build SANs from the requested host only
+	var dnsNames []string
+	var ipAddresses []net.IP
+	if ip := net.ParseIP(host); ip != nil {
+		ipAddresses = []net.IP{ip}
+	} else {
+		dnsNames = []string{host}
+	}
+
 	// Create certificate template
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
@@ -166,8 +177,8 @@ func GenerateSelfSignedCert(host string, validFor time.Duration) ([]byte, []byte
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
-		DNSNames:              []string{host, "localhost"},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		DNSNames:              dnsNames,
+		IPAddresses:           ipAddresses,
 	}
 
 	// Generate certificate
@@ -339,12 +350,11 @@ func (m TLSMode) String() string {
 	}
 }
 
-// CipherSuites returns recommended TLS cipher suites.
-func CipherSuites() []uint16 {
+// CipherSuites12 returns recommended TLS 1.2 cipher suites.
+// Only TLS 1.2 cipher suites are configurable in Go's crypto/tls;
+// TLS 1.3 uses its own safe defaults.
+func CipherSuites12() []uint16 {
 	return []uint16{
-		tls.TLS_AES_256_GCM_SHA384,
-		tls.TLS_CHACHA20_POLY1305_SHA256,
-		tls.TLS_AES_128_GCM_SHA256,
 		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 		tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,

@@ -3,6 +3,7 @@ package raft
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -93,6 +94,9 @@ const (
 	MsgAppendEntries
 	MsgAppendEntriesResponse
 )
+
+// Maximum raft message payload size (1MB)
+const maxRaftMessageSize = 1 << 20
 
 // VoteRequest represents a request for votes.
 type VoteRequest struct {
@@ -235,12 +239,18 @@ func (n *Node) acceptLoop() {
 func (n *Node) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	decoder := json.NewDecoder(conn)
+	// Set read deadline to prevent slowloris
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
+	decoder := json.NewDecoder(io.LimitReader(conn, maxRaftMessageSize))
 	for {
 		var msg Message
 		if err := decoder.Decode(&msg); err != nil {
 			return
 		}
+
+		// Reset deadline for next read
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
 		n.msgCh <- msg
 	}
@@ -537,6 +547,9 @@ func (n *Node) sendMessage(to string, msgType MessageType, data interface{}) {
 		return
 	}
 	defer conn.Close()
+
+	// Set write deadline to prevent hanging on slow peers
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(msg); err != nil {

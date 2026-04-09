@@ -120,7 +120,7 @@ type SCRAMServer struct {
 // NewSCRAMServer creates a new SCRAM server.
 func NewSCRAMServer(users *UserDatabase) *SCRAMServer {
 	return &SCRAMServer{
-		iterations: 4096,
+		iterations: 10000,
 		users:      users,
 	}
 }
@@ -282,7 +282,7 @@ func GenerateSCRAMHash(password string) (string, error) {
 		return "", fmt.Errorf("failed to generate salt: %w", err)
 	}
 
-	iterations := 4096
+	iterations := 10000
 
 	// SaltedPassword = PBKDF2(HMAC-SHA-256, password, salt, iterations, 32)
 	saltedPassword := pbkdf2([]byte(password), salt, iterations, 32)
@@ -308,34 +308,65 @@ func GenerateSCRAMHash(password string) (string, error) {
 
 // Helper functions
 func parseSCRAMHash(hash string) (storedKey, serverKey, salt []byte, iterations int, err error) {
-	// Format: SCRAM-SHA-256$<iterations>:<salt>:<storedkey>:<serverkey>
+	// Format: SCRAM-SHA-256$<iterations>:<salt>$<storedkey>:<serverkey>
+	// (also supports legacy format with : instead of second $)
 	if !strings.HasPrefix(hash, "SCRAM-SHA-256$") {
 		return nil, nil, nil, 0, fmt.Errorf("unsupported hash format")
 	}
 
 	data := hash[len("SCRAM-SHA-256$"):]
-	parts := strings.Split(data, ":")
-	if len(parts) != 4 {
-		return nil, nil, nil, 0, fmt.Errorf("invalid hash format")
+
+	// Split into three parts: "iter:salt", "storedkey", "serverkey"
+	// Use $ as delimiter between major sections
+	parts := strings.Split(data, "$")
+	if len(parts) != 2 {
+		// Fall back to legacy format: all colon-separated
+		parts = strings.Split(data, ":")
+		if len(parts) != 4 {
+			return nil, nil, nil, 0, fmt.Errorf("invalid hash format")
+		}
+		if _, err := fmt.Sscanf(parts[0], "%d", &iterations); err != nil {
+			return nil, nil, nil, 0, fmt.Errorf("invalid iterations: %w", err)
+		}
+		salt, err = base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil, nil, nil, 0, fmt.Errorf("invalid salt: %w", err)
+		}
+		storedKey, err = base64.StdEncoding.DecodeString(parts[2])
+		if err != nil {
+			return nil, nil, nil, 0, fmt.Errorf("invalid stored key: %w", err)
+		}
+		serverKey, err = base64.StdEncoding.DecodeString(parts[3])
+		if err != nil {
+			return nil, nil, nil, 0, fmt.Errorf("invalid server key: %w", err)
+		}
+		return storedKey, serverKey, salt, iterations, nil
 	}
 
-	// Parse iterations
-	if _, err := fmt.Sscanf(parts[0], "%d", &iterations); err != nil {
+	// New format: "iter:salt$storedkey:serverkey"
+	// Parse iterations and salt from first part
+	iterSaltParts := strings.Split(parts[0], ":")
+	if len(iterSaltParts) != 2 {
+		return nil, nil, nil, 0, fmt.Errorf("invalid iterations/salt format")
+	}
+	if _, err := fmt.Sscanf(iterSaltParts[0], "%d", &iterations); err != nil {
 		return nil, nil, nil, 0, fmt.Errorf("invalid iterations: %w", err)
 	}
-
-	// Decode base64 values
-	salt, err = base64.StdEncoding.DecodeString(parts[1])
+	salt, err = base64.StdEncoding.DecodeString(iterSaltParts[1])
 	if err != nil {
 		return nil, nil, nil, 0, fmt.Errorf("invalid salt: %w", err)
 	}
 
-	storedKey, err = base64.StdEncoding.DecodeString(parts[2])
+	// Parse stored key and server key from second part
+	keyParts := strings.Split(parts[1], ":")
+	if len(keyParts) != 2 {
+		return nil, nil, nil, 0, fmt.Errorf("invalid keys format")
+	}
+	storedKey, err = base64.StdEncoding.DecodeString(keyParts[0])
 	if err != nil {
 		return nil, nil, nil, 0, fmt.Errorf("invalid stored key: %w", err)
 	}
-
-	serverKey, err = base64.StdEncoding.DecodeString(parts[3])
+	serverKey, err = base64.StdEncoding.DecodeString(keyParts[1])
 	if err != nil {
 		return nil, nil, nil, 0, fmt.Errorf("invalid server key: %w", err)
 	}

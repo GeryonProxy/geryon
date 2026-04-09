@@ -281,7 +281,7 @@ func TestServerConnPreparedStatements(t *testing.T) {
 }
 
 func TestWaitQueue(t *testing.T) {
-	wq := NewWaitQueue()
+	wq := NewWaitQueue(100)
 
 	// Test basic signal without waiters
 	mockConn := &ServerConn{id: 1}

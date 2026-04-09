@@ -16,6 +16,9 @@ import (
 // PGCodec implements the PostgreSQL v3 wire protocol.
 type PGCodec struct{}
 
+// MaxPayloadLen is the maximum allowed payload size (16MB).
+const MaxPayloadLen = 1 << 24
+
 // NewCodec creates a new PostgreSQL codec.
 func NewCodec() *PGCodec {
 	return &PGCodec{}
@@ -51,6 +54,12 @@ func (c *PGCodec) ReadMessage(r io.Reader) (*common.Message, error) {
 
 	// Read payload
 	payloadLen := int(length) - 4
+	if payloadLen < 0 {
+		return nil, fmt.Errorf("invalid message length: %d", length)
+	}
+	if payloadLen > MaxPayloadLen {
+		return nil, fmt.Errorf("message too large: %d bytes", payloadLen)
+	}
 	payload := make([]byte, payloadLen)
 	if payloadLen > 0 {
 		if _, err := io.ReadFull(reader, payload); err != nil {

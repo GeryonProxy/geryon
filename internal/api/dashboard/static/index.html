@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geryon Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app">
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>GERYON</h1>
+                <span>Three Bodies. One Proxy.</span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#overview" class="active" data-page="overview">Overview</a></li>
+                <li><a href="#pools" data-page="pools">Pools</a></li>
+                <li><a href="#backends" data-page="backends">Backends</a></li>
+                <li><a href="#connections" data-page="connections">Connections</a></li>
+                <li><a href="#queries" data-page="queries">Queries</a></li>
+                <li><a href="#config" data-page="config">Configuration</a></li>
+            </ul>
+            <div class="version">
+                <span id="version">v0.1.0</span>
+            </div>
+        </nav>
+
+        <main class="main-content">
+            <header class="header">
+                <h2 id="page-title">Overview</h2>
+                <div class="status">
+                    <span class="status-indicator online"></span>
+                    <span id="node-status">Connected</span>
+                </div>
+            </header>
+
+            <div id="content">
+                <!-- Overview Page -->
+                <div id="page-overview" class="page active">
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <h3>Active Pools</h3>
+                            <div class="metric-value" id="metric-pools">-</div>
+                        </div>
+                        <div class="metric-card">
+                            <h3>Total Connections</h3>
+                            <div class="metric-value" id="metric-connections">-</div>
+                        </div>
+                        <div class="metric-card">
+                            <h3>Queries/sec</h3>
+                            <div class="metric-value" id="metric-qps">-</div>
+                        </div>
+                        <div class="metric-card">
+                            <h3>Cache Hit Rate</h3>
+                            <div class="metric-value" id="metric-cache">-</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h3>Pool Status</h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Pool</th>
+                                    <th>Type</th>
+                                    <th>Mode</th>
+                                    <th>Clients</th>
+                                    <th>Servers</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pools-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Pools Page -->
+                <div id="page-pools" class="page">
+                    <div class="section">
+                        <div class="section-header">
+                            <h3>Connection Pools</h3>
+                            <button class="btn btn-primary" id="btn-create-pool">Create Pool</button>
+                        </div>
+                        <div id="pools-list"></div>
+                    </div>
+                </div>
+
+                <!-- Backends Page -->
+                <div id="page-backends" class="page">
+                    <div class="section">
+                        <h3>Backend Servers</h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Address</th>
+                                    <th>Pool</th>
+                                    <th>Role</th>
+                                    <th>Health</th>
+                                    <th>Connections</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="backends-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Connections Page -->
+                <div id="page-connections" class="page">
+                    <div class="section">
+                        <h3>Active Connections</h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Client</th>
+                                    <th>Pool</th>
+                                    <th>Backend</th>
+                                    <th>State</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody id="connections-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Queries Page -->
+                <div id="page-queries" class="page">
+                    <div class="section">
+                        <h3>Query Statistics</h3>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <h3>Total Queries</h3>
+                                <div class="metric-value" id="metric-total-queries">-</div>
+                            </div>
+                            <div class="metric-card">
+                                <h3>Total Transactions</h3>
+                                <div class="metric-value" id="metric-total-tx">-</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Config Page -->
+                <div id="page-config" class="page">
+                    <div class="section">
+                        <div class="section-header">
+                            <h3>Configuration</h3>
+                            <button class="btn btn-primary" id="btn-reload-config">Reload</button>
+                        </div>
+                        <pre id="config-display" class="code-block"></pre>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

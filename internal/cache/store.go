@@ -277,18 +277,32 @@ type Rule struct {
 
 // RulesEngine manages cache rules.
 type RulesEngine struct {
-	rules []Rule
+	rules     []Rule
+	maxRules  int
+	maxPatternLen int
 }
 
 // NewRulesEngine creates a new rules engine.
 func NewRulesEngine() *RulesEngine {
 	return &RulesEngine{
-		rules: make([]Rule, 0),
+		rules:         make([]Rule, 0),
+		maxRules:      100,
+		maxPatternLen: 1024,
 	}
 }
 
 // AddRule adds a cache rule.
 func (e *RulesEngine) AddRule(pattern string, ttl time.Duration, cache bool) error {
+	// Bound pattern length to prevent ReDoS
+	if len(pattern) > e.maxPatternLen {
+		return fmt.Errorf("pattern too long: %d > %d", len(pattern), e.maxPatternLen)
+	}
+
+	// Bound number of rules
+	if len(e.rules) >= e.maxRules {
+		return fmt.Errorf("too many cache rules: %d >= %d", len(e.rules), e.maxRules)
+	}
+
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return fmt.Errorf("invalid pattern: %w", err)

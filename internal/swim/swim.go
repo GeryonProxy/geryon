@@ -11,6 +11,9 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 )
 
+// Maximum gossip message size (64KB, matches receive buffer)
+const maxGossipMessageSize = 65536
+
 // Protocol implements the SWIM gossip protocol for node discovery.
 type Protocol struct {
 	mu       sync.RWMutex
@@ -231,6 +234,12 @@ func (p *Protocol) receiveLoop() {
 				return
 			}
 			p.logger.Debug("Failed to read packet", "error", err)
+			continue
+		}
+
+		// Bound message size to prevent excessive memory allocation
+		if n > maxGossipMessageSize {
+			p.logger.Debug("Gossip message too large", "size", n, "from", addr)
 			continue
 		}
 
@@ -558,6 +567,12 @@ func (p *Protocol) selectRandomMember() *Member {
 
 // updateMember updates member information.
 func (p *Protocol) updateMember(id, addr string, state MemberState, incarnation uint64) {
+	// Validate address format to prevent injection via gossip
+	if addr != "" && !isValidAddress(addr) {
+		p.logger.Debug("Invalid member address", "id", id, "addr", addr)
+		return
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -659,4 +674,10 @@ func randomInt(n int) int {
 		return 0
 	}
 	return int(time.Now().UnixNano() % int64(n))
+}
+
+// isValidAddress checks if an address is a valid host:port.
+func isValidAddress(addr string) bool {
+	_, _, err := net.SplitHostPort(addr)
+	return err == nil
 }

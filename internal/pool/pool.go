@@ -11,9 +11,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GeryonProxy/geryon/internal/cache"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
+	"github.com/GeryonProxy/geryon/internal/tokenizer"
+	"github.com/GeryonProxy/geryon/internal/tlsutil"
 )
 
 // PoolMode defines the connection pooling strategy.
@@ -55,15 +58,16 @@ func ParsePoolMode(s string) (PoolMode, error) {
 
 // Backend represents a backend database server.
 type Backend struct {
-	Host       string
-	Port       int
-	Role       string // primary or replica
-	Weight     int
-	Database   string
-	Healthy    atomic.Bool
-	LastCheck  time.Time // Exported for API access
-	Draining   atomic.Bool // true if backend is being drained
-	drainStart time.Time
+	Host          string
+	Port          int
+	Role          string // primary or replica
+	Weight        int
+	Database      string
+	Healthy       atomic.Bool
+	LastCheck     time.Time // Exported for API access
+	Draining      atomic.Bool // true if backend is being drained
+	drainStart    time.Time
+	ConnCount     atomic.Int64 // Active connections to this backend
 }
 
 // Address returns the backend address.
@@ -121,6 +125,10 @@ func (s *ServerConn) MarkIdle() {
 
 // Close closes the server connection.
 func (s *ServerConn) Close() error {
+	// Decrement backend connection counter
+	if s.backend != nil {
+		s.backend.ConnCount.Add(-1)
+	}
 	if s.conn != nil {
 		return s.conn.Close()
 	}
@@ -274,6 +282,7 @@ func (p *serverConnPool) closeAll() {
 type WaitQueue struct {
 	mu      sync.Mutex
 	waiters []chan *ServerConn
+	maxSize int
 	metrics waitQueueMetrics
 }
 
@@ -282,10 +291,14 @@ type waitQueueMetrics struct {
 	totalTimeouts atomic.Uint64
 }
 
-// NewWaitQueue creates a new wait queue.
-func NewWaitQueue() *WaitQueue {
+// NewWaitQueue creates a new wait queue with a maximum capacity.
+func NewWaitQueue(maxSize int) *WaitQueue {
+	if maxSize <= 0 {
+		maxSize = 1000 // Default cap
+	}
 	return &WaitQueue{
 		waiters: make([]chan *ServerConn, 0),
+		maxSize: maxSize,
 	}
 }
 
@@ -294,6 +307,10 @@ func (wq *WaitQueue) Wait(ctx context.Context, timeout time.Duration) (*ServerCo
 	ch := make(chan *ServerConn, 1)
 
 	wq.mu.Lock()
+	if len(wq.waiters) >= wq.maxSize {
+		wq.mu.Unlock()
+		return nil, fmt.Errorf("connection queue full (max %d)", wq.maxSize)
+	}
 	wq.waiters = append(wq.waiters, ch)
 	wq.mu.Unlock()
 
@@ -359,6 +376,7 @@ type Pool struct {
 	queryCount    atomic.Int64
 	txnCount      atomic.Int64
 	stmtCache     *PreparedStatementCache
+	queryCache    *cache.Store
 	log           *logger.Logger
 	tlsConfig     *tls.Config
 	ctx           context.Context
@@ -381,6 +399,9 @@ type PoolStats struct {
 	BackendCount          int           `json:"backend_count"`
 	PreparedStmtCacheSize int           `json:"prepared_stmt_cache_size"`
 	PreparedStmtHitRate   float64       `json:"prepared_stmt_hit_rate"`
+	QueryCacheEntries     int           `json:"query_cache_entries"`
+	QueryCacheMemoryUsed  int64         `json:"query_cache_memory_used"`
+	QueryCacheHitRate     float64       `json:"query_cache_hit_rate"`
 }
 
 // NewPool creates a new connection pool.
@@ -400,7 +421,7 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 		backends:    make([]*Backend, 0),
 		replicas:    make([]*Backend, 0),
 		serverConns: newServerConnPool(cfg.Limits.MinServerConnections, cfg.Limits.MaxServerConnections),
-		waitQueue:   NewWaitQueue(),
+		waitQueue:   NewWaitQueue(1000),
 		log:         log,
 		ctx:         ctx,
 		cancel:      cancel,
@@ -409,6 +430,17 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 
 	// Initialize prepared statement cache (default: 1000 statements, 30min TTL)
 	pool.stmtCache = NewPreparedStatementCache(1000, 30*time.Minute)
+
+	// Initialize query result cache if enabled
+	if cfg.Cache.Enabled {
+		cacheSize := int64(100 * 1024 * 1024) // 100MB default
+		if cfg.Cache.MaxMemory != "" {
+			// Parse max memory (e.g., "100MB", "1GB")
+			// Simplified: just use default for now
+		}
+		pool.queryCache = cache.NewStore(cacheSize, 5*time.Minute)
+		log.Info("Query cache enabled", "pool", cfg.Name)
+	}
 
 	// Load backend TLS config if enabled
 	if cfg.Backend.TLS.Mode != "disable" && cfg.Backend.TLS.Mode != "" {
@@ -545,13 +577,14 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 // loadBackendTLSConfig loads TLS configuration for backend connections.
 func loadBackendTLSConfig(cfg config.TLSConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: tlsutil.CipherSuites12(),
 	}
 
 	// Configure server certificate verification
 	switch cfg.Mode {
 	case "require":
-		tlsConfig.InsecureSkipVerify = true
+		// Verify against system CAs (InsecureSkipVerify defaults to false)
 	case "verify-ca", "verify-full":
 		tlsConfig.InsecureSkipVerify = false
 	}
@@ -625,6 +658,7 @@ func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 	// Mark backend as healthy on successful connection
 	backend.Healthy.Store(true)
 	backend.LastCheck = time.Now()
+	backend.ConnCount.Add(1)
 
 	return conn, nil
 }
@@ -685,6 +719,21 @@ func (p *Pool) IncrementClientCount() {
 	p.clientCount.Add(1)
 }
 
+// TryIncrementClientCount atomically checks limit and increments.
+// Returns false if the connection limit would be exceeded.
+func (p *Pool) TryIncrementClientCount(max int64) bool {
+	for {
+		current := p.clientCount.Load()
+		if current >= max {
+			return false
+		}
+		if p.clientCount.CompareAndSwap(current, current+1) {
+			return true
+		}
+		// Retry on CAS failure
+	}
+}
+
 // DecrementClientCount decrements the client connection counter.
 func (p *Pool) DecrementClientCount() {
 	p.clientCount.Add(-1)
@@ -711,6 +760,17 @@ func (p *Pool) Stats() PoolStats {
 		stmtHitRate = stmtStats.HitRate
 	}
 
+	// Get query cache stats
+	var queryCacheEntries int
+	var queryCacheMemory int64
+	var queryCacheHitRate float64
+	if p.queryCache != nil {
+		qcStats := p.queryCache.Stats()
+		queryCacheEntries = qcStats.Entries
+		queryCacheMemory = qcStats.MemoryUsed
+		queryCacheHitRate = qcStats.HitRate
+	}
+
 	return PoolStats{
 		Name:                  p.name,
 		Mode:                  p.mode.String(),
@@ -724,12 +784,55 @@ func (p *Pool) Stats() PoolStats {
 		BackendCount:          len(p.backends),
 		PreparedStmtCacheSize: stmtCacheSize,
 		PreparedStmtHitRate:   stmtHitRate,
+		QueryCacheEntries:     queryCacheEntries,
+		QueryCacheMemoryUsed:  queryCacheMemory,
+		QueryCacheHitRate:     queryCacheHitRate,
 	}
 }
 
 // PreparedStatementCache returns the prepared statement cache.
 func (p *Pool) PreparedStatementCache() *PreparedStatementCache {
 	return p.stmtCache
+}
+
+// QueryCache returns the query result cache.
+func (p *Pool) QueryCache() *cache.Store {
+	return p.queryCache
+}
+
+// GetCachedResult checks the query cache for a result.
+func (p *Pool) GetCachedResult(query string, params []byte) ([]byte, bool) {
+	if p.queryCache == nil {
+		return nil, false
+	}
+
+	// Generate cache key
+	key := fmt.Sprintf("%s:%x", query, params)
+	return p.queryCache.Get(key)
+}
+
+// SetCachedResult stores a result in the query cache.
+func (p *Pool) SetCachedResult(query string, params []byte, result []byte, ttl time.Duration) error {
+	if p.queryCache == nil {
+		return nil
+	}
+
+	// Generate cache key
+	key := fmt.Sprintf("%s:%x", query, params)
+
+	// Extract tables from query for invalidation
+	tables := tokenizer.ExtractTables(query)
+
+	return p.queryCache.Set(key, result, tables, ttl)
+}
+
+// InvalidateCache invalidates cached results for a table.
+func (p *Pool) InvalidateCache(table string) {
+	if p.queryCache == nil {
+		return
+	}
+
+	p.queryCache.InvalidateTable(table)
 }
 
 // Close closes the pool and all its connections.
@@ -789,6 +892,8 @@ func (p *Pool) checkSingleBackend(backend *Backend) {
 		}
 		return
 	}
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	conn.Close()
 
 	// Mark as healthy if it was unhealthy

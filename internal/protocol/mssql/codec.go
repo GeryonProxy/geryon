@@ -13,6 +13,9 @@ import (
 // TDSCodec implements the TDS 7.4+ protocol.
 type TDSCodec struct{}
 
+// MaxPayloadLen is the maximum allowed payload size (16MB).
+const MaxPayloadLen = 1 << 24
+
 // NewCodec creates a new TDS codec.
 func NewCodec() *TDSCodec {
 	return &TDSCodec{}
@@ -53,6 +56,12 @@ func (c *TDSCodec) ReadMessage(r io.Reader) (*common.Message, error) {
 	}
 
 	payloadLen := int(length) - 8
+	if payloadLen < 0 {
+		return nil, fmt.Errorf("invalid TDS packet length: %d", length)
+	}
+	if payloadLen > MaxPayloadLen {
+		return nil, fmt.Errorf("TDS packet too large: %d bytes", payloadLen)
+	}
 	payload := make([]byte, payloadLen)
 	if payloadLen > 0 {
 		if _, err := io.ReadFull(reader, payload); err != nil {
