@@ -305,6 +305,108 @@ geryon --generate-password       # Generate SCRAM-SHA-256 hash
 geryon --generate-cert           # Generate self-signed TLS cert
 ```
 
+## REST API Reference
+
+The REST API provides full management capabilities. Default endpoint: `http://localhost:8080`
+
+### Pools
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/pools` | List all pools |
+| `POST` | `/api/v1/pools` | Create new pool |
+| `GET` | `/api/v1/pools/{name}` | Get pool details |
+| `PUT` | `/api/v1/pools/{name}` | Update pool (TODO) |
+| `DELETE` | `/api/v1/pools/{name}` | Delete pool |
+
+**Create Pool Example:**
+```bash
+curl -X POST http://localhost:8080/api/v1/pools \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "new-pool",
+    "body": "postgresql",
+    "mode": "transaction",
+    "listen": {"host": "0.0.0.0", "port": 5433},
+    "backend": {
+      "hosts": [{"host": "db.internal", "port": 5432, "role": "primary"}],
+      "database": "myapp"
+    },
+    "limits": {
+      "max_client_connections": 1000,
+      "max_server_connections": 100
+    }
+  }'
+```
+
+### Backends
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/backends` | List all backends |
+| `POST` | `/api/v1/backends/{address}/drain` | Start draining backend |
+| `POST` | `/api/v1/backends/{address}/cancel-drain` | Cancel draining |
+
+**Drain Backend Example:**
+```bash
+curl -X POST http://localhost:8080/api/v1/backends/db.internal:5432/drain
+```
+
+### Connections
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/connections` | List active connections |
+
+### Queries
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/queries` | Query statistics |
+| `GET` | `/api/v1/queries/slow` | Slow query list |
+| `GET` | `/api/v1/queries/recent` | Recent queries |
+
+### Transactions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/transactions` | Transaction stats |
+| `GET` | `/api/v1/transactions/active` | Active transactions |
+
+### Stats & Monitoring
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/stats` | Global statistics |
+| `GET` | `/api/v1/stats/stream` | SSE streaming stats |
+| `GET` | `/metrics` | Prometheus metrics |
+
+**SSE Stats Stream:**
+```bash
+curl -N http://localhost:8080/api/v1/stats/stream
+# Returns: data: {"total_connections":42,"active_pools":3,...}
+```
+
+### Configuration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/config` | View current config |
+| `POST` | `/api/v1/config/reload` | Reload configuration |
+
+### TLS
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/tls/status` | TLS status per pool |
+
+### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/health` | Health check |
+| `GET` | `/api/v1/ready` | Readiness probe |
+
 ## MCP Integration
 
 Geryon includes a built-in [MCP](https://modelcontextprotocol.io) server for AI-assisted database management, compatible with Claude Code, Claude Desktop, and other MCP clients.
