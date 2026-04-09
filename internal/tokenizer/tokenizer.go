@@ -193,3 +193,106 @@ func normalizeParameters(query string) string {
 	// Already using ? style, no change needed
 	return query
 }
+
+// RewriteResult holds the result of query rewriting.
+type RewriteResult struct {
+	Query       string
+	Target      string // "primary" or "replica"
+	WasRewritten bool
+}
+
+// RewriteEngine manages query rewriting rules.
+type RewriteEngine struct {
+	forcePrimary      map[string]bool // Patterns that must go to primary
+	forceReplica      map[string]bool // Patterns that can go to replica
+	preferReplica     bool            // Whether to prefer replicas for reads
+}
+
+// NewRewriteEngine creates a new query rewrite engine.
+func NewRewriteEngine(preferReplica bool) *RewriteEngine {
+	return &RewriteEngine{
+		forcePrimary:  make(map[string]bool),
+		forceReplica:  make(map[string]bool),
+		preferReplica: preferReplica,
+	}
+}
+
+// AddForcePrimaryPattern adds a pattern that must route to primary.
+func (e *RewriteEngine) AddForcePrimaryPattern(pattern string) {
+	e.forcePrimary[pattern] = true
+}
+
+// AddForceReplicaPattern adds a pattern that can route to replica.
+func (e *RewriteEngine) AddForceReplicaPattern(pattern string) {
+	e.forceReplica[pattern] = true
+}
+
+// ShouldRouteToPrimary determines if query should route to primary.
+func (e *RewriteEngine) ShouldRouteToPrimary(query string, inTransaction bool) bool {
+	// All writes go to primary
+	queryType, _ := ClassifyQuery(query)
+	if IsWriteQuery(queryType) {
+		return true
+	}
+
+	// In transaction, all queries go to primary
+	if inTransaction {
+		return true
+	}
+
+	// Check force primary patterns
+	normalized := NormalizeQuery(query)
+	for pattern := range e.forcePrimary {
+		if strings.Contains(normalized, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+
+	// SELECT queries can go to replica
+	return false
+}
+
+// RewriteQuery potentially rewrites a query for optimization.
+func (e *RewriteEngine) RewriteQuery(query string) *RewriteResult {
+	result := &RewriteResult{
+		Query:        query,
+		WasRewritten: false,
+	}
+
+	// Remove SQL comments
+	query = removeComments(query)
+
+	// Normalize whitespace
+	query = NormalizeQuery(query)
+
+	result.Query = query
+	return result
+}
+
+// removeComments removes SQL comments from query.
+func removeComments(query string) string {
+	// Remove single-line comments (-- comment)
+	query = regexp.MustCompile(`--[^\n]*`).ReplaceAllString(query, "")
+
+	// Remove multi-line comments (/* comment */)
+	query = regexp.MustCompile(`/\*.*?\*/`).ReplaceAllString(query, "")
+
+	return query
+}
+
+// AddHint adds a routing hint to the query.
+func AddHint(query string, hint string) string {
+	return "/* " + hint + " */ " + query
+}
+
+// ExtractHint extracts routing hints from query.
+func ExtractHint(query string) (string, string) {
+	// Check for /* hint */ at the start
+	re := regexp.MustCompile(`^/\*\s*(.+?)\s*\*/\s*`)
+	matches := re.FindStringSubmatch(query)
+	if len(matches) > 1 {
+		// Return hint and query without hint
+		return matches[1], re.ReplaceAllString(query, "")
+	}
+	return "", query
+}

@@ -55,13 +55,15 @@ func ParsePoolMode(s string) (PoolMode, error) {
 
 // Backend represents a backend database server.
 type Backend struct {
-	Host      string
-	Port      int
-	Role      string // primary or replica
-	Weight    int
-	Database  string
-	Healthy   atomic.Bool
-	lastCheck time.Time
+	Host       string
+	Port       int
+	Role       string // primary or replica
+	Weight     int
+	Database   string
+	Healthy    atomic.Bool
+	LastCheck  time.Time // Exported for API access
+	Draining   atomic.Bool // true if backend is being drained
+	drainStart time.Time
 }
 
 // Address returns the backend address.
@@ -343,25 +345,26 @@ func (wq *WaitQueue) Signal(conn *ServerConn) bool {
 
 // Pool manages a set of backend connections for a single listen endpoint.
 type Pool struct {
-	mu          sync.RWMutex
-	name        string
-	config      *config.PoolConfig
-	mode        PoolMode
-	codec       common.Codec
-	backends    []*Backend
-	primary     *Backend
-	replicas    []*Backend
-	serverConns *serverConnPool
-	waitQueue   *WaitQueue
-	clientCount atomic.Int64
-	queryCount  atomic.Int64
-	txnCount    atomic.Int64
-	stmtCache   *PreparedStatementCache
-	log         *logger.Logger
-	tlsConfig   *tls.Config
-	ctx         context.Context
-	cancel      context.CancelFunc
-	closeCh     chan struct{}
+	mu            sync.RWMutex
+	name          string
+	config        *config.PoolConfig
+	mode          PoolMode
+	codec         common.Codec
+	backends      []*Backend
+	primary       *Backend
+	replicas      []*Backend
+	serverConns   *serverConnPool
+	waitQueue     *WaitQueue
+	clientCount   atomic.Int64
+	queryCount    atomic.Int64
+	txnCount      atomic.Int64
+	stmtCache     *PreparedStatementCache
+	log           *logger.Logger
+	tlsConfig     *tls.Config
+	ctx           context.Context
+	cancel        context.CancelFunc
+	closeCh       chan struct{}
+	healthTicker  *time.Ticker
 }
 
 // PoolStats contains pool statistics.
@@ -621,7 +624,7 @@ func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 
 	// Mark backend as healthy on successful connection
 	backend.Healthy.Store(true)
-	backend.lastCheck = time.Now()
+	backend.LastCheck = time.Now()
 
 	return conn, nil
 }
@@ -631,24 +634,24 @@ func (p *Pool) selectBackendWithFallback() *Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Try primary first if healthy
-	if p.primary != nil && p.primary.Healthy.Load() {
+	// Try primary first if healthy and not draining
+	if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
 		return p.primary
 	}
 
 	// Try replicas with round-robin
 	if len(p.replicas) > 0 {
-		// Simple round-robin: find first healthy replica
+		// Simple round-robin: find first healthy replica that is not draining
 		for _, replica := range p.replicas {
-			if replica.Healthy.Load() {
+			if replica.Healthy.Load() && !replica.Draining.Load() {
 				return replica
 			}
 		}
 	}
 
-	// Fallback: try any backend
+	// Fallback: try any backend that is not draining
 	for _, backend := range p.backends {
-		if backend.Healthy.Load() {
+		if backend.Healthy.Load() && !backend.Draining.Load() {
 			return backend
 		}
 	}
@@ -733,6 +736,179 @@ func (p *Pool) PreparedStatementCache() *PreparedStatementCache {
 func (p *Pool) Close() error {
 	p.cancel()
 	close(p.closeCh)
+	if p.healthTicker != nil {
+		p.healthTicker.Stop()
+	}
 	p.serverConns.closeAll()
 	return nil
+}
+
+// StartHealthChecks starts the background health checking.
+func (p *Pool) StartHealthChecks(interval time.Duration) {
+	p.healthTicker = time.NewTicker(interval)
+	go func() {
+		for {
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-p.healthTicker.C:
+				p.checkBackendHealth()
+			}
+		}
+	}()
+	p.log.Info("Health checks started", "pool", p.name, "interval", interval)
+}
+
+// checkBackendHealth checks the health of all backends.
+func (p *Pool) checkBackendHealth() {
+	p.mu.RLock()
+	backends := make([]*Backend, len(p.backends))
+	copy(backends, p.backends)
+	p.mu.RUnlock()
+
+	for _, backend := range backends {
+		go p.checkSingleBackend(backend)
+	}
+}
+
+// checkSingleBackend checks the health of a single backend.
+func (p *Pool) checkSingleBackend(backend *Backend) {
+	addr := backend.Address()
+
+	// Try to establish a connection
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		wasHealthy := backend.Healthy.Load()
+		backend.Healthy.Store(false)
+		if wasHealthy {
+			p.log.Warn("Backend health check failed",
+				"pool", p.name,
+				"backend", addr,
+				"error", err,
+			)
+		}
+		return
+	}
+	conn.Close()
+
+	// Mark as healthy if it was unhealthy
+	wasHealthy := backend.Healthy.Load()
+	backend.Healthy.Store(true)
+	backend.LastCheck = time.Now()
+	if !wasHealthy {
+		p.log.Info("Backend became healthy",
+			"pool", p.name,
+			"backend", addr,
+		)
+	}
+}
+
+// GetBackends returns a copy of the backend list.
+func (p *Pool) GetBackends() []*Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	backends := make([]*Backend, len(p.backends))
+	copy(backends, p.backends)
+	return backends
+}
+
+// GetPrimary returns the primary backend.
+func (p *Pool) GetPrimary() *Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.primary
+}
+
+// GetReplicas returns the replica backends.
+func (p *Pool) GetReplicas() []*Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	replicas := make([]*Backend, len(p.replicas))
+	copy(replicas, p.replicas)
+	return replicas
+}
+
+// DrainBackend marks a backend for draining and returns the number of active connections.
+func (p *Pool) DrainBackend(backendAddr string) (int, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, backend := range p.backends {
+		if backend.Address() == backendAddr {
+			if backend.Draining.Load() {
+				return 0, fmt.Errorf("backend %s is already draining", backendAddr)
+			}
+			backend.Draining.Store(true)
+			backend.drainStart = time.Now()
+			backend.Healthy.Store(false) // Mark unhealthy to prevent new connections
+
+			// Count active connections to this backend
+			activeCount := 0
+			for _, conn := range p.serverConns.active {
+				if conn.backend.Address() == backendAddr {
+					activeCount++
+				}
+			}
+
+			p.log.Info("Backend draining started",
+				"pool", p.name,
+				"backend", backendAddr,
+				"active_connections", activeCount,
+			)
+			return activeCount, nil
+		}
+	}
+
+	return 0, fmt.Errorf("backend %s not found", backendAddr)
+}
+
+// CancelDrain cancels draining for a backend.
+func (p *Pool) CancelDrain(backendAddr string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, backend := range p.backends {
+		if backend.Address() == backendAddr {
+			if !backend.Draining.Load() {
+				return fmt.Errorf("backend %s is not draining", backendAddr)
+			}
+			backend.Draining.Store(false)
+			backend.Healthy.Store(true) // Restore health
+
+			p.log.Info("Backend draining cancelled",
+				"pool", p.name,
+				"backend", backendAddr,
+			)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("backend %s not found", backendAddr)
+}
+
+// IsDraining returns true if a backend is being drained.
+func (p *Pool) IsDraining(backendAddr string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	for _, backend := range p.backends {
+		if backend.Address() == backendAddr {
+			return backend.Draining.Load()
+		}
+	}
+	return false
+}
+
+// GetDrainingBackends returns list of backends currently being drained.
+func (p *Pool) GetDrainingBackends() []*Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	draining := make([]*Backend, 0)
+	for _, backend := range p.backends {
+		if backend.Draining.Load() {
+			draining = append(draining, backend)
+		}
+	}
+	return draining
 }

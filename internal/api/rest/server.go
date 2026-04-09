@@ -328,9 +328,26 @@ func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement connection tracking
+	// Aggregate connections from all pools
+	connections := make([]map[string]interface{}, 0)
+	for _, l := range s.listeners {
+		// Get connection info from listener
+		connCount := l.SessionCount()
+		pool := l.Pool()
+		if pool != nil {
+			stats := pool.Stats()
+			connections = append(connections, map[string]interface{}{
+				"pool":         stats.Name,
+				"client_count": connCount,
+				"server_count": stats.ServerConnections,
+				"idle_count":   stats.IdleConnections,
+				"active_count": stats.ActiveConnections,
+			})
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"connections": []interface{}{},
+		"connections": connections,
 	})
 }
 
@@ -341,9 +358,23 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement backend tracking
+	// Aggregate backends from all pools
+	backends := make([]map[string]interface{}, 0)
+	for _, p := range s.poolMgr.ListPools() {
+		for _, b := range p.GetBackends() {
+			backends = append(backends, map[string]interface{}{
+				"pool":       p.Name(),
+				"address":    b.Address(),
+				"role":       b.Role,
+				"healthy":    b.Healthy.Load(),
+				"draining":   b.Draining.Load(),
+				"last_check": b.LastCheck,
+			})
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"backends": []interface{}{},
+		"backends": backends,
 	})
 }
 
@@ -502,7 +533,7 @@ func (s *Server) handleBackendAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse path: /api/v1/backends/{address}/drain
+	// Parse path: /api/v1/backends/{address}/{action}
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 6 {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -514,14 +545,88 @@ func (s *Server) handleBackendAction(w http.ResponseWriter, r *http.Request) {
 
 	s.log.Info("Backend action requested", "address", backendAddr, "action", action)
 
-	// TODO: Implement actual backend actions
-	// This would require draining connections from a specific backend
+	switch action {
+	case "drain":
+		s.handleBackendDrain(w, r, backendAddr)
+	case "cancel-drain":
+		s.handleBackendCancelDrain(w, r, backendAddr)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"status":  "error",
+			"message": "Unknown action: " + action,
+		})
+	}
+}
+
+// handleBackendDrain initiates draining for a backend.
+func (s *Server) handleBackendDrain(w http.ResponseWriter, r *http.Request, backendAddr string) {
+	// Find the pool that has this backend
+	var targetPool *pool.Pool
+	for _, p := range s.poolMgr.ListPools() {
+		for _, b := range p.GetBackends() {
+			if b.Address() == backendAddr {
+				targetPool = p
+				break
+			}
+		}
+		if targetPool != nil {
+			break
+		}
+	}
+
+	if targetPool == nil {
+		http.Error(w, "Backend not found", http.StatusNotFound)
+		return
+	}
+
+	activeConns, err := targetPool.DrainBackend(backendAddr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":              "success",
+		"backend":             backendAddr,
+		"action":              "drain",
+		"active_connections":  activeConns,
+		"message":             "Draining initiated for " + backendAddr,
+		"timestamp":           time.Now().UTC(),
+	})
+}
+
+// handleBackendCancelDrain cancels draining for a backend.
+func (s *Server) handleBackendCancelDrain(w http.ResponseWriter, r *http.Request, backendAddr string) {
+	// Find the pool that has this backend
+	var targetPool *pool.Pool
+	for _, p := range s.poolMgr.ListPools() {
+		for _, b := range p.GetBackends() {
+			if b.Address() == backendAddr {
+				targetPool = p
+				break
+			}
+		}
+		if targetPool != nil {
+			break
+		}
+	}
+
+	if targetPool == nil {
+		http.Error(w, "Backend not found", http.StatusNotFound)
+		return
+	}
+
+	err := targetPool.CancelDrain(backendAddr)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "success",
 		"backend":   backendAddr,
-		"action":    action,
-		"message":   "Action " + action + " initiated for " + backendAddr,
+		"action":    "cancel-drain",
+		"message":   "Drain cancelled for " + backendAddr,
 		"timestamp": time.Now().UTC(),
 	})
 }
