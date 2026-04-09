@@ -1,6 +1,6 @@
 module github.com/GeryonProxy/geryon
 
-go 1.26.2
+go 1.26.1
 
 require (
 	golang.org/x/term v0.36.0
