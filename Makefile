@@ -16,7 +16,7 @@ clean:
 	rm -rf bin/
 
 docker:
-	docker build -t geryonproxy/geryon:$(VERSION) .
+	docker build -t ghcr.io/geryonproxy/geryon:$(VERSION) .
 
 release:
 	mkdir -p bin

@@ -60,6 +60,9 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 	mux.HandleFunc("/api/v1/transactions", s.handleTransactions)
 	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
 
+	// Prometheus metrics endpoint
+	mux.HandleFunc("/metrics", s.handleMetrics)
+
 	// Dashboard routes
 	if err := s.setupDashboard(mux); err != nil {
 		return nil, fmt.Errorf("failed to setup dashboard: %w", err)
@@ -582,4 +585,105 @@ func (s *Server) handleSlowQueries(w http.ResponseWriter, r *http.Request) {
 		"limit":        limit,
 		"timestamp":    time.Now().UTC(),
 	})
+}
+
+// handleMetrics returns Prometheus-compatible metrics.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+
+	var output strings.Builder
+
+	// Helper function to write metric
+	writeMetric := func(name, help, metricType string, value interface{}, labels ...string) {
+		output.WriteString(fmt.Sprintf("# HELP %s %s\n", name, help))
+		output.WriteString(fmt.Sprintf("# TYPE %s %s\n", name, metricType))
+		if len(labels) > 0 && len(labels)%2 == 0 {
+			labelPairs := make([]string, 0, len(labels)/2)
+			for i := 0; i < len(labels); i += 2 {
+				labelPairs = append(labelPairs, fmt.Sprintf("%s=\"%s\"", labels[i], labels[i+1]))
+			}
+			output.WriteString(fmt.Sprintf("%s{%s} %v\n", name, strings.Join(labelPairs, ","), value))
+		} else {
+			output.WriteString(fmt.Sprintf("%s %v\n", name, value))
+		}
+	}
+
+	// Pool metrics
+	pools := s.poolMgr.ListPools()
+	writeMetric("geryon_pools_total", "Total number of pools", "gauge", len(pools))
+
+	var totalClientConns int64
+	var totalServerConns int64
+	var totalQueries int64
+	var totalTransactions int64
+
+	for _, p := range pools {
+		stats := p.Stats()
+		poolName := stats.Name
+
+		writeMetric("geryon_pool_client_connections", "Client connections per pool", "gauge",
+			stats.ClientConnections, "pool", poolName)
+		writeMetric("geryon_pool_server_connections", "Server connections per pool", "gauge",
+			stats.ServerConnections, "pool", poolName)
+		writeMetric("geryon_pool_idle_connections", "Idle connections per pool", "gauge",
+			stats.IdleConnections, "pool", poolName)
+		writeMetric("geryon_pool_active_connections", "Active connections per pool", "gauge",
+			stats.ActiveConnections, "pool", poolName)
+		writeMetric("geryon_pool_waiting_clients", "Waiting clients per pool", "gauge",
+			stats.WaitingClients, "pool", poolName)
+		writeMetric("geryon_pool_total_queries", "Total queries per pool", "counter",
+			stats.TotalQueries, "pool", poolName)
+		writeMetric("geryon_pool_total_transactions", "Total transactions per pool", "counter",
+			stats.TotalTransactions, "pool", poolName)
+
+		// Prepared statement cache metrics
+		writeMetric("geryon_pool_prepared_cache_size", "Prepared statement cache size", "gauge",
+			stats.PreparedStmtCacheSize, "pool", poolName)
+		writeMetric("geryon_pool_prepared_cache_hit_rate", "Prepared statement cache hit rate", "gauge",
+			fmt.Sprintf("%.2f", stats.PreparedStmtHitRate), "pool", poolName)
+
+		totalClientConns += stats.ClientConnections
+		totalServerConns += int64(stats.ServerConnections)
+		totalQueries += stats.TotalQueries
+		totalTransactions += stats.TotalTransactions
+	}
+
+	// Global metrics
+	writeMetric("geryon_connections_total", "Total client connections", "gauge", totalClientConns)
+	writeMetric("geryon_server_connections_total", "Total server connections", "gauge", totalServerConns)
+	writeMetric("geryon_queries_total", "Total queries processed", "counter", totalQueries)
+	writeMetric("geryon_transactions_total", "Total transactions processed", "counter", totalTransactions)
+
+	// Query log metrics
+	var totalSlowQueries int64
+	var totalCachedQueries int64
+	for _, l := range s.listeners {
+		if ql := l.QueryLogger(); ql != nil {
+			stats := ql.GetStats(time.Now().Add(-24 * time.Hour))
+			totalSlowQueries += int64(stats.SlowQueries)
+			totalCachedQueries += int64(stats.CachedQueries)
+		}
+	}
+	writeMetric("geryon_slow_queries_total", "Total slow queries", "counter", totalSlowQueries)
+	writeMetric("geryon_cached_queries_total", "Total cached queries", "counter", totalCachedQueries)
+
+	// Transaction metrics
+	var activeTransactions int
+	var abortedTransactions int
+	for _, l := range s.listeners {
+		if tm := l.TransactionManager(); tm != nil {
+			stats := tm.GetStats()
+			activeTransactions += stats.ActiveCount
+			abortedTransactions += stats.AbortedCount
+		}
+	}
+	writeMetric("geryon_transactions_active", "Active transactions", "gauge", activeTransactions)
+	writeMetric("geryon_transactions_aborted_total", "Total aborted transactions", "counter", abortedTransactions)
+
+	w.Write([]byte(output.String()))
 }

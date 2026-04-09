@@ -49,7 +49,7 @@ func (m *Manager) CreatePool(cfg *config.PoolConfig) error {
 		return fmt.Errorf("unknown body type: %s", cfg.Body)
 	}
 
-	pool, err := NewPool(cfg, codec)
+	pool, err := NewPool(cfg, codec, m.logger)
 	if err != nil {
 		return fmt.Errorf("failed to create pool %s: %w", cfg.Name, err)
 	}

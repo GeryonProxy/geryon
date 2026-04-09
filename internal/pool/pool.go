@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GeryonProxy/geryon/internal/config"
+	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
 )
 
@@ -51,12 +52,13 @@ func ParsePoolMode(s string) (PoolMode, error) {
 
 // Backend represents a backend database server.
 type Backend struct {
-	Host     string
-	Port     int
-	Role     string // primary or replica
-	Weight   int
-	Database string
-	Healthy  atomic.Bool
+	Host      string
+	Port      int
+	Role      string // primary or replica
+	Weight    int
+	Database  string
+	Healthy   atomic.Bool
+	lastCheck time.Time
 }
 
 // Address returns the backend address.
@@ -352,6 +354,7 @@ type Pool struct {
 	queryCount  atomic.Int64
 	txnCount    atomic.Int64
 	stmtCache   *PreparedStatementCache
+	log         *logger.Logger
 	ctx         context.Context
 	cancel      context.CancelFunc
 	closeCh     chan struct{}
@@ -374,7 +377,7 @@ type PoolStats struct {
 }
 
 // NewPool creates a new connection pool.
-func NewPool(cfg *config.PoolConfig, codec common.Codec) (*Pool, error) {
+func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*Pool, error) {
 	mode, err := ParsePoolMode(cfg.Mode)
 	if err != nil {
 		return nil, err
@@ -391,6 +394,7 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec) (*Pool, error) {
 		replicas:    make([]*Backend, 0),
 		serverConns: newServerConnPool(cfg.Limits.MinServerConnections, cfg.Limits.MaxServerConnections),
 		waitQueue:   NewWaitQueue(),
+		log:         log,
 		ctx:         ctx,
 		cancel:      cancel,
 		closeCh:     make(chan struct{}),
@@ -478,20 +482,64 @@ func (p *Pool) Release(conn *ServerConn) {
 	p.serverConns.release(conn)
 }
 
-// createServerConn creates a new server connection.
+// createServerConn creates a new server connection with retry and failover.
 func (p *Pool) createServerConn() (*ServerConn, error) {
 	if len(p.backends) == 0 {
 		return nil, fmt.Errorf("no backends available")
 	}
 
-	// Select a backend (primary for now)
-	backend := p.selectBackend()
+	// Try backends with retry logic
+	maxRetries := 3
+	baseDelay := 100 * time.Millisecond
 
-	// Connect to backend
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Select a backend
+		backend := p.selectBackendWithFallback()
+		if backend == nil {
+			return nil, fmt.Errorf("no healthy backends available")
+		}
+
+		// Try to connect
+		conn, err := p.tryConnect(backend)
+		if err == nil {
+			return conn, nil
+		}
+
+		// Mark backend as unhealthy temporarily
+		backend.Healthy.Store(false)
+		p.log.Warn("Backend connection failed, marking unhealthy",
+			"backend", backend.Address(),
+			"error", err,
+			"attempt", attempt+1,
+		)
+
+		// Wait before retry with exponential backoff
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<attempt)
+			if delay > 2*time.Second {
+				delay = 2 * time.Second
+			}
+			time.Sleep(delay)
+		}
+	}
+
+	return nil, fmt.Errorf("failed to connect to any backend after %d attempts", maxRetries)
+}
+
+// tryConnect attempts to connect to a specific backend.
+func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 	addr := backend.Address()
-	netConn, err := net.DialTimeout("tcp", addr, 5*time.Second) // TODO: configurable
+
+	// Connect with timeout
+	netConn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to backend %s: %w", addr, err)
+		return nil, err
+	}
+
+	// Set TCP keepalive
+	if tcpConn, ok := netConn.(*net.TCPConn); ok {
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(3 * time.Minute)
 	}
 
 	// TODO: Perform backend authentication
@@ -507,7 +555,41 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 	}
 	conn.lastUsedAt.Store(time.Now())
 
+	// Mark backend as healthy on successful connection
+	backend.Healthy.Store(true)
+	backend.lastCheck = time.Now()
+
 	return conn, nil
+}
+
+// selectBackendWithFallback selects a healthy backend, preferring primary.
+func (p *Pool) selectBackendWithFallback() *Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	// Try primary first if healthy
+	if p.primary != nil && p.primary.Healthy.Load() {
+		return p.primary
+	}
+
+	// Try replicas with round-robin
+	if len(p.replicas) > 0 {
+		// Simple round-robin: find first healthy replica
+		for _, replica := range p.replicas {
+			if replica.Healthy.Load() {
+				return replica
+			}
+		}
+	}
+
+	// Fallback: try any backend
+	for _, backend := range p.backends {
+		if backend.Healthy.Load() {
+			return backend
+		}
+	}
+
+	return nil
 }
 
 // selectBackend selects a backend server.
