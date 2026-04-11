@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/GeryonProxy/geryon/internal/logger"
 )
 
 func TestLoad(t *testing.T) {
@@ -630,5 +633,215 @@ func BenchmarkExpandEnvVars(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = expandEnvVars(input)
+	}
+}
+
+// TestParseSimpleListItem tests the parseSimpleListItem function
+func TestParseSimpleListItem(t *testing.T) {
+	tests := []struct {
+		name           string
+		section        []string
+		value          string
+		indent         int
+		expectPeers    int
+		expectJoins    int
+		expectErr      bool
+	}{
+		{
+			name:        "cluster_raft_peers",
+			section:     []string{"cluster", "raft", "peers"},
+			value:       "node1:7000",
+			indent:      6, // indent/2 = 3, parent = "cluster.raft.peers" (depth >= len)
+			expectPeers: 1,
+			expectJoins: 0,
+			expectErr:   false,
+		},
+		{
+			name:        "cluster_gossip_join",
+			section:     []string{"cluster", "gossip", "join"},
+			value:       "node2:7001",
+			indent:      6,
+			expectPeers: 0,
+			expectJoins: 1,
+			expectErr:   false,
+		},
+		{
+			name:        "auth_users",
+			section:     []string{"auth", "users"},
+			value:       "username",
+			indent:      4,
+			expectPeers: 0,
+			expectJoins: 0,
+			expectErr:   false,
+		},
+		{
+			name:        "pools_section",
+			section:     []string{"pools"},
+			value:       "pool1",
+			indent:      2,
+			expectPeers: 0,
+			expectJoins: 0,
+			expectErr:   false,
+		},
+		{
+			name:        "unknown_section",
+			section:     []string{"unknown", "section"},
+			value:       "value",
+			indent:      4,
+			expectPeers: 0,
+			expectJoins: 0,
+			expectErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &parserState{
+				cfg:             &Config{},
+				currentSection:  tt.section,
+			}
+			// Initialize Cluster config
+			state.cfg.Cluster.Raft.Peers = []string{}
+			state.cfg.Cluster.Gossip.Join = []string{}
+
+			err := parseSimpleListItem(state, tt.value, tt.indent, 1)
+
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if len(state.cfg.Cluster.Raft.Peers) != tt.expectPeers {
+				t.Errorf("Raft.Peers length = %d, want %d", len(state.cfg.Cluster.Raft.Peers), tt.expectPeers)
+			}
+			if len(state.cfg.Cluster.Gossip.Join) != tt.expectJoins {
+				t.Errorf("Gossip.Join length = %d, want %d", len(state.cfg.Cluster.Gossip.Join), tt.expectJoins)
+			}
+
+			// Verify values were added
+			if tt.expectPeers > 0 && state.cfg.Cluster.Raft.Peers[0] != tt.value {
+				t.Errorf("Raft.Peers[0] = %q, want %q", state.cfg.Cluster.Raft.Peers[0], tt.value)
+			}
+			if tt.expectJoins > 0 && state.cfg.Cluster.Gossip.Join[0] != tt.value {
+				t.Errorf("Gossip.Join[0] = %q, want %q", state.cfg.Cluster.Gossip.Join[0], tt.value)
+			}
+		})
+	}
+}
+
+// TestWatcherComputeHash tests the computeHash function
+func TestWatcherComputeHash(t *testing.T) {
+	// Create a temp config file
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "test.yaml")
+	content := []byte("global:\n  log_level: debug\n")
+	if err := os.WriteFile(configPath, content, 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	log, _ := logger.New("error", "json")
+	w := NewWatcher(configPath, 5*time.Second, log)
+
+	hash1, err := w.computeHash()
+	if err != nil {
+		t.Fatalf("computeHash failed: %v", err)
+	}
+	if len(hash1) == 0 {
+		t.Error("hash should not be empty")
+	}
+
+	// Compute again - should get same hash
+	hash2, err := w.computeHash()
+	if err != nil {
+		t.Fatalf("computeHash failed on second call: %v", err)
+	}
+
+	// Hashes should be identical for same content
+	if string(hash1) != string(hash2) {
+		t.Error("hashes should be identical for same content")
+	}
+
+	// Modify file
+	newContent := []byte("global:\n  log_level: info\n")
+	if err := os.WriteFile(configPath, newContent, 0644); err != nil {
+		t.Fatalf("Failed to modify test config: %v", err)
+	}
+
+	// Compute again - should get different hash
+	hash3, err := w.computeHash()
+	if err != nil {
+		t.Fatalf("computeHash failed after modification: %v", err)
+	}
+
+	if string(hash1) == string(hash3) {
+		t.Error("hashes should be different after file modification")
+	}
+}
+
+// TestWatcherCheck tests the check function
+func TestWatcherCheck(t *testing.T) {
+	// Create a temp config file
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "test.yaml")
+	content := []byte(`
+global:
+  log_level: debug
+admin:
+  rest:
+    auth:
+      enabled: false
+  grpc:
+    auth:
+      enabled: false
+  mcp:
+    auth:
+      enabled: false
+  dashboard:
+    auth:
+      enabled: false
+pools:
+  - name: test-pool
+    listen:
+      host: 127.0.0.1
+      port: 5432
+    body: postgresql
+    mode: transaction
+`)
+	if err := os.WriteFile(configPath, content, 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	log, _ := logger.New("error", "json")
+	w := NewWatcher(configPath, 5*time.Second, log)
+
+	// First check should load initial config
+	err := w.check()
+	if err != nil {
+		t.Errorf("first check failed: %v", err)
+	}
+
+	// Second check without changes should return nil (no error, no change)
+	err = w.check()
+	if err != nil {
+		t.Errorf("second check (no changes) failed: %v", err)
+	}
+
+	// Modify file with invalid content
+	invalidContent := []byte("invalid: yaml: content: [")
+	if err := os.WriteFile(configPath, invalidContent, 0644); err != nil {
+		t.Fatalf("Failed to modify test config: %v", err)
+	}
+
+	// Check should fail with invalid config
+	err = w.check()
+	if err == nil {
+		t.Error("check should fail with invalid config")
 	}
 }
