@@ -308,3 +308,93 @@ func TestAppendLengthEncodedInt(t *testing.T) {
 		t.Errorf("appendLengthEncodedInt(300) = %v, want 3 bytes starting with 0xfc", buf)
 	}
 }
+
+// TestCodec_IsStartup tests the IsStartup function
+func TestCodec_IsStartup(t *testing.T) {
+	c := NewCodec()
+
+	tests := []struct {
+		name string
+		msg  *common.Message
+		want bool
+	}{
+		{
+			name: "ssl_request_pattern",
+			msg:  &common.Message{Payload: []byte{0x20, 0x00, 0x00, 0x00}},
+			want: true,
+		},
+		{
+			name: "too_short",
+			msg:  &common.Message{Payload: []byte{0x20, 0x00}},
+			want: false,
+		},
+		{
+			name: "not_ssl_request",
+			msg:  &common.Message{Payload: []byte{0x00, 0x00, 0x00, 0x00}},
+			want: false,
+		},
+		{
+			name: "empty_payload",
+			msg:  &common.Message{Payload: []byte{}},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := c.IsStartup(tt.msg)
+			if got != tt.want {
+				t.Errorf("IsStartup() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCreateAuthSwitchRequest tests the CreateAuthSwitchRequest function
+func TestCreateAuthSwitchRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		pluginName string
+		authData   []byte
+		wantLen    int
+		wantFirst  byte
+	}{
+		{
+			name:       "mysql_native_password",
+			pluginName: "mysql_native_password",
+			authData:   []byte{0x01, 0x02, 0x03, 0x04},
+			wantLen:    len("mysql_native_password") + 1 + 4 + 1, // plugin + null + authData + status byte
+			wantFirst:  0xfe,
+		},
+		{
+			name:       "caching_sha2_password",
+			pluginName: "caching_sha2_password",
+			authData:   []byte("random_auth_data"),
+			wantLen:    len("caching_sha2_password") + 1 + 16 + 1,
+			wantFirst:  0xfe,
+		},
+		{
+			name:       "empty_auth_data",
+			pluginName: "test_plugin",
+			authData:   []byte{},
+			wantLen:    len("test_plugin") + 1 + 0 + 1,
+			wantFirst:  0xfe,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CreateAuthSwitchRequest(tt.pluginName, tt.authData)
+			if result[0] != tt.wantFirst {
+				t.Errorf("first byte = 0x%02x, want 0x%02x", result[0], tt.wantFirst)
+			}
+			if len(result) != tt.wantLen {
+				t.Errorf("length = %d, want %d", len(result), tt.wantLen)
+			}
+			// Verify plugin name is in result
+			if !bytes.Contains(result, []byte(tt.pluginName)) {
+				t.Error("result should contain plugin name")
+			}
+		})
+	}
+}

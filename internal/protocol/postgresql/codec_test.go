@@ -375,3 +375,88 @@ func TestCreateParameterStatus(t *testing.T) {
 		t.Error("ParameterStatus should start with S")
 	}
 }
+
+// TestCodec_ExtractBindStatementName tests the ExtractBindStatementName function
+func TestCodec_ExtractBindStatementName(t *testing.T) {
+	c := NewCodec()
+
+	tests := []struct {
+		name        string
+		msg         *common.Message
+		want        string
+		expectError bool
+	}{
+		{
+			name: "valid_bind",
+			msg: &common.Message{
+				Type:    'B',
+				Payload: []byte("portal\x00stmt_name\x00"),
+			},
+			want:        "stmt_name",
+			expectError: false,
+		},
+		{
+			name: "empty_portal",
+			msg: &common.Message{
+				Type:    'B',
+				Payload: []byte("\x00stmt_name\x00"),
+			},
+			want:        "stmt_name",
+			expectError: false,
+		},
+		{
+			name: "wrong_message_type",
+			msg: &common.Message{
+				Type:    'Q',
+				Payload: []byte("data"),
+			},
+			want:        "",
+			expectError: true,
+		},
+		{
+			name: "too_short",
+			msg: &common.Message{
+				Type:    'B',
+				Payload: []byte{0},
+			},
+			want:        "",
+			expectError: true,
+		},
+		{
+			name: "missing_null_terminator",
+			msg: &common.Message{
+				Type:    'B',
+				Payload: []byte("portal"),
+			},
+			want:        "",
+			expectError: true,
+		},
+		{
+			name: "only_portal_no_statement",
+			msg: &common.Message{
+				Type:    'B',
+				Payload: []byte("portal\x00"),
+			},
+			want:        "",
+			expectError: false, // empty statement name is valid
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := c.ExtractBindStatementName(tt.msg)
+			if tt.expectError {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if result != tt.want {
+					t.Errorf("ExtractBindStatementName() = %q, want %q", result, tt.want)
+				}
+			}
+		})
+	}
+}
