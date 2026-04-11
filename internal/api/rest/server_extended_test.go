@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -665,5 +666,148 @@ func TestServer_Auth_WrongToken(t *testing.T) {
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("Status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// Test handleStatsStream endpoint
+func TestServer_StatsStream(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(nil)
+
+	// Test with POST (should fail)
+	resp, err := http.Post("http://"+s.listener.Addr().String()+"/api/v1/stats/stream", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST Status = %d, want 405", resp.StatusCode)
+	}
+}
+
+// Test handleReady endpoint
+func TestServer_Ready(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(nil)
+
+	// Test GET /api/v1/ready - returns 200 when ready (server starts ready)
+	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/ready")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Server is ready by default after starting
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	// Test POST (should fail)
+	resp2, err := http.Post("http://"+s.listener.Addr().String()+"/api/v1/ready", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST Status = %d, want 405", resp2.StatusCode)
+	}
+}
+
+// Test handleHealth endpoint
+func TestServer_Health(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(nil)
+
+	// Test GET /api/v1/health
+	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/health")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	// Test POST (should fail)
+	resp2, err := http.Post("http://"+s.listener.Addr().String()+"/api/v1/health", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST Status = %d, want 405", resp2.StatusCode)
+	}
+}
+
+// Test handlePoolDetail with not found
+func TestServer_PoolDetail_NotFound(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(context.Background())
+
+	// Test GET /pools/nonexistent
+	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/pools/nonexistent")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Status = %d, want 404", resp.StatusCode)
 	}
 }
