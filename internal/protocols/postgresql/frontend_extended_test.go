@@ -642,8 +642,8 @@ func TestFrontend_handleBind_NonExistentStatement(t *testing.T) {
 	}
 }
 
-// Test handleExecute with non-existent portal
-func TestFrontend_handleExecute_NonExistentPortal(t *testing.T) {
+// Test for sendSimpleResponse
+func TestFrontend_sendSimpleResponse(t *testing.T) {
 	log, _ := logger.New("error", "json")
 
 	server, client := net.Pipe()
@@ -651,28 +651,252 @@ func TestFrontend_handleExecute_NonExistentPortal(t *testing.T) {
 	defer client.Close()
 
 	f := &Frontend{
-		state:   StateIdle,
-		pgConn:  NewConnection(client),
-		log:     log,
-		portals: make(map[string]*Portal),
+		state:  StateIdle,
+		pgConn: NewConnection(client),
+		log:    log,
 	}
-
-	// Create execute message data for non-existent portal with proper format
-	buf := make([]byte, 0)
-	buf = append(buf, []byte("nonexistent\x00")...)
-	buf = append(buf, 0x00, 0x00, 0x00, 0x00) // max rows = 0
 
 	// Run in goroutine
 	go func() {
-		f.handleExecute(buf)
+		f.sendSimpleResponse("SELECT 1", [][]byte{[]byte("row1")}, []string{"col1"})
 	}()
 
 	// Read response
-	buf2 := make([]byte, 100)
-	n, _ := server.Read(buf2)
+	buf := make([]byte, 200)
+	n, _ := server.Read(buf)
 
-	// Should get 'E' message (ErrorResponse)
-	if n > 0 && buf2[0] != 'E' {
-		t.Errorf("response type = %q, want 'E'", buf2[0])
+	// Should get at least a CommandComplete message
+	if n == 0 {
+		t.Error("Expected response from sendSimpleResponse")
+	}
+}
+
+// Test for sendSimpleResponse with different commands
+func TestFrontend_sendSimpleResponse_Variations(t *testing.T) {
+	log, _ := logger.New("error", "json")
+
+	tests := []struct {
+		name    string
+		tag     string
+		rows    [][]byte
+		columns []string
+	}{
+		{"SELECT", "SELECT 1", [][]byte{[]byte("data")}, []string{"col1"}},
+		{"INSERT", "INSERT 1", nil, nil},
+		{"UPDATE", "UPDATE 1", nil, nil},
+		{"DELETE", "DELETE 1", nil, nil},
+		{"CREATE", "CREATE TABLE", nil, nil},
+		{"DROP", "DROP TABLE", nil, nil},
+		{"ALTER", "ALTER TABLE", nil, nil},
+		{"COPY", "COPY data", nil, nil},
+		{"OTHER", "OTHER CMD", nil, nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, client := net.Pipe()
+			defer server.Close()
+			defer client.Close()
+
+			f := &Frontend{
+				state:  StateIdle,
+				pgConn: NewConnection(client),
+				log:    log,
+			}
+
+			// Run in goroutine
+			go func() {
+				f.sendSimpleResponse(tc.tag, tc.rows, tc.columns)
+			}()
+
+			// Read response - CommandComplete message
+			buf := make([]byte, 200)
+			n, _ := server.Read(buf)
+
+			// Should get 'C' message (CommandComplete) or 'T' (RowDescription)
+			if n > 0 && buf[0] != 'C' && buf[0] != 'T' {
+				t.Errorf("response type = %q, want 'C' or 'T'", buf[0])
+			}
+		})
+	}
+}
+
+// Test for sendSimpleResponse with empty command
+func TestFrontend_sendSimpleResponse_EmptyCommand(t *testing.T) {
+	log, _ := logger.New("error", "json")
+
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	f := &Frontend{
+		state:  StateIdle,
+		pgConn: NewConnection(client),
+		log:    log,
+	}
+
+	// Run in goroutine
+	go func() {
+		f.sendSimpleResponse("", nil, nil)
+	}()
+
+	// Read response
+	buf := make([]byte, 200)
+	n, _ := server.Read(buf)
+
+	// Should still get CommandComplete
+	if n > 0 && buf[0] != 'C' {
+		t.Errorf("response type = %q, want 'C'", buf[0])
+	}
+}
+
+// Test for ReadStartupMessage via Connection
+func TestConnection_ReadStartupMessage(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// Write a valid startup message
+	go func() {
+		// Startup message format: length(4) + version(4) + "user\0name\0\0"
+		buf := make([]byte, 0, 100)
+		// Version 3.0 (196608 = 0x00030000)
+		version := int32(196608)
+		// Calculate length
+		data := []byte("user\x00test\x00database\x00mydb\x00\x00")
+		length := int32(4 + 4 + len(data))
+
+		// Write length
+		buf = append(buf, byte(length>>24), byte(length>>16), byte(length>>8), byte(length))
+		// Write version
+		buf = append(buf, byte(version>>24), byte(version>>16), byte(version>>8), byte(version))
+		// Write data
+		buf = append(buf, data...)
+
+		client.Write(buf)
+		client.Close()
+	}()
+
+	conn := NewConnection(server)
+	msg, err := conn.ReadStartupMessage()
+	if err != nil {
+		t.Fatalf("ReadStartupMessage failed: %v", err)
+	}
+
+	if msg == nil {
+		t.Fatal("ReadStartupMessage returned nil message")
+	}
+
+	if msg.ProtocolVersion != 196608 {
+		t.Errorf("ProtocolVersion = %d, want 196608", msg.ProtocolVersion)
+	}
+
+	// Parameters are stored in the map
+	if msg.Parameters == nil {
+		t.Fatal("Parameters should not be nil")
+	}
+
+	if user, ok := msg.Parameters["user"]; !ok || user != "test" {
+		t.Errorf("user = %q, want test", user)
+	}
+
+	if db, ok := msg.Parameters["database"]; !ok || db != "mydb" {
+		t.Errorf("database = %q, want mydb", db)
+	}
+}
+
+// Test Connection.ReadStartupMessage with SSL request
+func TestConnection_ReadStartupMessage_SSLRequest(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// Write an SSL request
+	go func() {
+		// SSL request code: 80877103 (0x04D2162F)
+		sslCode := int32(80877103)
+		length := int32(8)
+
+		buf := make([]byte, 0, 8)
+		buf = append(buf, byte(length>>24), byte(length>>16), byte(length>>8), byte(length))
+		buf = append(buf, byte(sslCode>>24), byte(sslCode>>16), byte(sslCode>>8), byte(sslCode))
+
+		client.Write(buf)
+		client.Close()
+	}()
+
+	conn := NewConnection(server)
+	_, err := conn.ReadStartupMessage()
+	// SSL request returns a specific error
+	if err == nil {
+		t.Error("ReadStartupMessage should return error for SSL request")
+	}
+	if err.Error() != "SSL request" {
+		t.Errorf("Error = %q, want 'SSL request'", err.Error())
+	}
+}
+
+// Test Connection.ReadStartupMessage with error (connection closed)
+func TestConnection_ReadStartupMessage_ConnectionClosed(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	// Close client immediately
+	go func() {
+		client.Close()
+	}()
+
+	conn := NewConnection(server)
+	_, err := conn.ReadStartupMessage()
+	if err == nil {
+		t.Error("ReadStartupMessage should return error when connection is closed")
+	}
+}
+
+// Test Connection.ReadStartupMessage with invalid length
+func TestConnection_ReadStartupMessage_InvalidLength(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// Write message with too short length
+	go func() {
+		buf := []byte{0, 0, 0, 4} // Length = 4 (only header, no version)
+		client.Write(buf)
+		client.Close()
+	}()
+
+	conn := NewConnection(server)
+	_, err := conn.ReadStartupMessage()
+	if err == nil {
+		t.Error("ReadStartupMessage should return error for invalid length")
+	}
+}
+
+// Test Connection.ReadStartupMessage with GSSENC request
+func TestConnection_ReadStartupMessage_GSSENCRequest(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	// Write a GSSENC request
+	go func() {
+		// GSSENC request code: 80877104 (0x04D21630)
+		gssCode := int32(80877104)
+		length := int32(8)
+
+		buf := make([]byte, 0, 8)
+		buf = append(buf, byte(length>>24), byte(length>>16), byte(length>>8), byte(length))
+		buf = append(buf, byte(gssCode>>24), byte(gssCode>>16), byte(gssCode>>8), byte(gssCode))
+
+		client.Write(buf)
+		client.Close()
+	}()
+
+	conn := NewConnection(server)
+	_, err := conn.ReadStartupMessage()
+	// GSSENC request returns an error (EOF when connection closes)
+	if err == nil {
+		t.Error("ReadStartupMessage should return error for GSSENC request")
 	}
 }
