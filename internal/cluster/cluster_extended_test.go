@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 )
 
@@ -538,5 +539,134 @@ func TestCluster_ShareBackendHealth(t *testing.T) {
 
 	// Should not panic
 	c.ShareBackendHealth("backend1", true)
+}
+
+// Test coordinator handleMemberFailed
+func TestCoordinator_handleMemberFailed(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	coord, err := NewCoordinator(&config.ClusterConfig{
+		Enabled: true,
+		NodeID:  "node-1",
+	}, t.TempDir(), log)
+	if err != nil {
+		t.Fatalf("Failed to create coordinator: %v", err)
+	}
+
+	// Add a member first
+	coord.members["node-2"] = &MemberInfo{NodeID: "node-2", Address: "127.0.0.1:7947", State: MemberAlive}
+
+	// Should not panic
+	coord.handleMemberFailed("node-2")
+
+	// Verify member state
+	if coord.members["node-2"].State != MemberDead {
+		t.Error("Member state should be MemberDead")
+	}
+}
+
+// Test handleMemberRecovered
+func TestCoordinator_handleMemberRecovered(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	coord, err := NewCoordinator(&config.ClusterConfig{
+		Enabled: true,
+		NodeID:  "node-1",
+	}, t.TempDir(), log)
+	if err != nil {
+		t.Fatalf("Failed to create coordinator: %v", err)
+	}
+
+	// Add a member first
+	coord.members["node-2"] = &MemberInfo{NodeID: "node-2", Address: "127.0.0.1:7947", State: MemberDead}
+
+	// Should not panic
+	coord.handleMemberRecovered("node-2")
+
+	// Verify member state
+	if coord.members["node-2"].State != MemberAlive {
+		t.Error("Member state should be MemberAlive")
+	}
+}
+
+// Test handleMetadataMessage
+func TestCoordinator_handleMetadataMessage(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	coord, err := NewCoordinator(&config.ClusterConfig{
+		Enabled: true,
+		NodeID:  "node-1",
+	}, t.TempDir(), log)
+	if err != nil {
+		t.Fatalf("Failed to create coordinator: %v", err)
+	}
+
+	// Add a member first
+	coord.members["node-2"] = &MemberInfo{NodeID: "node-2", Address: "127.0.0.1:7947"}
+
+	// Should not panic - takes nodeID and data bytes
+	coord.handleMetadataMessage("node-2", []byte("test metadata"))
+}
+
+// Test handleCommand - only tests that don't require raft
+func TestCoordinator_handleCommand(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	coord, err := NewCoordinator(&config.ClusterConfig{
+		Enabled: true,
+		NodeID:  "node-1",
+	}, t.TempDir(), log)
+	if err != nil {
+		t.Fatalf("Failed to create coordinator: %v", err)
+	}
+
+	// Just verify the coordinator was created
+	if coord == nil {
+		t.Error("Coordinator should not be nil")
+	}
+	// Note: handleCommand requires initialized raft cluster to test properly
+}
+
+// Test convertToRaftCommand
+func TestCoordinator_convertToRaftCommand(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	coord, err := NewCoordinator(&config.ClusterConfig{
+		Enabled: true,
+		NodeID:  "node-1",
+	}, t.TempDir(), log)
+	if err != nil {
+		t.Fatalf("Failed to create coordinator: %v", err)
+	}
+
+	// Test valid command type
+	cmd := ClusterCommand{
+		Type: CmdUpdatePoolConfig,
+		Data: []byte("test data"),
+	}
+
+	raftCmd, err := coord.convertToRaftCommand(cmd)
+	if err != nil {
+		t.Fatalf("convertToRaftCommand failed: %v", err)
+	}
+	if raftCmd.Type != 1 { // CmdPoolConfigUpdate = 1 (after CmdNoOp = 0)
+		t.Errorf("raftCmd.Type = %v, want 1", raftCmd.Type)
+	}
+
+	// Test unknown command type (CmdReloadConfig is not in the switch)
+	cmd2 := ClusterCommand{Type: CmdReloadConfig}
+	_, err = coord.convertToRaftCommand(cmd2)
+	if err == nil {
+		t.Error("convertToRaftCommand should return error for unknown command type")
+	}
+}
+
+// Test joinPeers
+func TestCluster_joinPeers(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	c := New(Config{
+		NodeID:     "node-1",
+		ListenAddr: "127.0.0.1:0",
+		Peers:      []string{"127.0.0.1:7947", "127.0.0.1:7948"},
+		Logger:     log,
+	})
+
+	// Should not panic (will fail to connect but shouldn't crash)
+	c.joinPeers()
 }
 
