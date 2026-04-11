@@ -1207,3 +1207,91 @@ func TestHandleShowQuery_Variables(t *testing.T) {
 		t.Error("handleShowQuery wrote nothing")
 	}
 }
+
+// Test handleStmtPrepare
+func TestHandleStmtPrepare(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Prepare statement with query "SELECT 1"
+	query := "SELECT 1"
+	err := f.handleStmtPrepare([]byte(query))
+
+	if err != nil {
+		t.Errorf("handleStmtPrepare failed: %v", err)
+	}
+
+	// Should create a statement
+	if len(f.stmts) != 1 {
+		t.Errorf("Expected 1 statement, got %d", len(f.stmts))
+	}
+
+	// Check that something was written
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleStmtPrepare wrote nothing")
+	}
+}
+
+// Test handleStmtExecute with valid statement
+func TestHandleStmtExecute_Valid(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// First prepare a statement
+	f.stmts[1] = &PreparedStatement{ID: 1, Query: "SELECT 1"}
+
+	// Execute statement ID 1 (4 bytes little endian)
+	data := []byte{0x01, 0x00, 0x00, 0x00}
+	err := f.handleStmtExecute(data)
+
+	if err != nil {
+		t.Errorf("handleStmtExecute failed: %v", err)
+	}
+
+	// Check that something was written
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleStmtExecute wrote nothing")
+	}
+}
+
+// Test handleStmtExecute with unknown statement
+func TestHandleStmtExecute_Unknown(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Execute unknown statement ID 99 (4 bytes little endian)
+	data := []byte{0x63, 0x00, 0x00, 0x00}
+	err := f.handleStmtExecute(data)
+
+	if err != nil {
+		t.Errorf("handleStmtExecute should not fail for unknown statement: %v", err)
+	}
+
+	// Should write error response
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleStmtExecute should write error for unknown statement")
+	}
+}
+
+// Test handleStmtExecute with short data
+func TestHandleStmtExecute_ShortData(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Execute with too short data
+	data := []byte{0x01, 0x00}
+	err := f.handleStmtExecute(data)
+
+	if err != nil {
+		t.Errorf("handleStmtExecute should not fail with short data: %v", err)
+	}
+
+	// Should write error response
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleStmtExecute should write error for short data")
+	}
+}
