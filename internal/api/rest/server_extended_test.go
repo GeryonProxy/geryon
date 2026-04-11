@@ -467,6 +467,176 @@ func TestServer_Auth_WrongTokenType(t *testing.T) {
 	}
 }
 
+// TestValidatePoolConfig tests the validatePoolConfig function
+func TestValidatePoolConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *config.PoolConfig
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "empty_name",
+			cfg:     &config.PoolConfig{Name: ""},
+			wantErr: true,
+			errMsg:  "pool name is required",
+		},
+		{
+			name: "invalid_body",
+			cfg: &config.PoolConfig{
+				Name: "test",
+				Body: "invalid",
+			},
+			wantErr: true,
+			errMsg:  "invalid body type",
+		},
+		{
+			name: "invalid_mode",
+			cfg: &config.PoolConfig{
+				Name: "test",
+				Body: "postgresql",
+				Mode: "invalid",
+			},
+			wantErr: true,
+			errMsg:  "invalid mode",
+		},
+		{
+			name: "invalid_port_zero",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "postgresql",
+				Mode:   "transaction",
+				Listen: config.ListenConfig{Port: 0},
+			},
+			wantErr: true,
+			errMsg:  "invalid port",
+		},
+		{
+			name: "invalid_port_too_high",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "postgresql",
+				Mode:   "transaction",
+				Listen: config.ListenConfig{Port: 70000},
+			},
+			wantErr: true,
+			errMsg:  "invalid port",
+		},
+		{
+			name: "no_backend_hosts",
+			cfg: &config.PoolConfig{
+				Name:    "test",
+				Body:    "postgresql",
+				Mode:    "transaction",
+				Listen:  config.ListenConfig{Port: 5432},
+				Backend: config.BackendConfig{Hosts: []config.BackendHost{}},
+			},
+			wantErr: true,
+			errMsg:  "at least one backend host is required",
+		},
+		{
+			name: "empty_backend_host",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "postgresql",
+				Mode:   "transaction",
+				Listen: config.ListenConfig{Port: 5432},
+				Backend: config.BackendConfig{
+					Hosts: []config.BackendHost{{Host: "", Port: 5432}},
+				},
+			},
+			wantErr: true,
+			errMsg:  "backend host cannot be empty",
+		},
+		{
+			name: "invalid_backend_port",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "postgresql",
+				Mode:   "transaction",
+				Listen: config.ListenConfig{Port: 5432},
+				Backend: config.BackendConfig{
+					Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 0}},
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid backend port",
+		},
+		{
+			name: "invalid_backend_role",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "postgresql",
+				Mode:   "transaction",
+				Listen: config.ListenConfig{Port: 5432},
+				Backend: config.BackendConfig{
+					Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "invalid"}},
+				},
+			},
+			wantErr: true,
+			errMsg:  "invalid backend role",
+		},
+		{
+			name: "valid_postgresql",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "postgresql",
+				Mode:   "transaction",
+				Listen: config.ListenConfig{Port: 5432},
+				Backend: config.BackendConfig{
+					Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid_mysql",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "mysql",
+				Mode:   "session",
+				Listen: config.ListenConfig{Port: 3306},
+				Backend: config.BackendConfig{
+					Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 3306, Role: "replica"}},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid_mssql",
+			cfg: &config.PoolConfig{
+				Name:   "test",
+				Body:   "mssql",
+				Mode:   "statement",
+				Listen: config.ListenConfig{Port: 1433},
+				Backend: config.BackendConfig{
+					Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 1433, Role: "primary"}},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePoolConfig(tt.cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("error = %q, should contain %q", err.Error(), tt.errMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // Test auth with wrong token
 func TestServer_Auth_WrongToken(t *testing.T) {
 	log, _ := logger.New("debug", "json")
