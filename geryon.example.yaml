@@ -8,15 +8,15 @@ global:
 
 admin:
   rest:
-    listen: "0.0.0.0:8080"
+    listen: "127.0.0.1:8080"
     auth:
       enabled: true
       token: "${GERYON_ADMIN_TOKEN}"
   grpc:
-    listen: "0.0.0.0:9090"
+    listen: "127.0.0.1:9090"
   mcp:
     transport: sse           # stdio | sse
-    listen: "0.0.0.0:8081"
+    listen: "127.0.0.1:8081"
   dashboard:
     enabled: true
     path: "/"               # Served on REST port
@@ -41,7 +41,7 @@ auth:
   mode: interception         # passthrough | interception
   users:
     - username: "app"
-      password: "SCRAM-SHA-256$4096:salt:storedkey:serverkey"
+      password_hash: "SCRAM-SHA-256$4096:salt:storedkey:serverkey"
       max_connections: 1000
       allowed_pools: ["*"]
 

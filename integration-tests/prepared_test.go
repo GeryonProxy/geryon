@@ -76,7 +76,7 @@ type pgMessage struct {
 }
 
 func newPGConn(host, port, user, database string) (*pgConn, error) {
-	addr := fmt.Sprintf("%s:%s", host, port)
+	addr := net.JoinHostPort(host, port)
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect: %w", err)

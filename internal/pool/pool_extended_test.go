@@ -2753,3 +2753,375 @@ func TestContextWithTransactionTimeout_WithTimeout(t *testing.T) {
 		t.Errorf("context error = %v, want DeadlineExceeded", newCtx.Err())
 	}
 }
+
+// Tests for uncovered functions
+
+func TestNewBackend(t *testing.T) {
+	b := NewBackend("localhost", 5432, "primary", 100)
+	if b == nil {
+		t.Fatal("NewBackend returned nil")
+	}
+	if b.Host != "localhost" {
+		t.Errorf("Host = %q, want localhost", b.Host)
+	}
+	if b.Port != 5432 {
+		t.Errorf("Port = %d, want 5432", b.Port)
+	}
+	if b.Role != "primary" {
+		t.Errorf("Role = %q, want primary", b.Role)
+	}
+	if b.Weight != 100 {
+		t.Errorf("Weight = %d, want 100", b.Weight)
+	}
+}
+
+func TestManager_UpdatePoolConfig(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	mgr := NewManager(log)
+
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 5432,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	err := mgr.CreatePool(cfg)
+	if err != nil {
+		t.Fatalf("CreatePool failed: %v", err)
+	}
+
+	// Update config with safe changes
+	newCfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 5432,
+		},
+		Limits: config.LimitConfig{
+			MaxClientConnections: 5000,
+			MaxServerConnections: 200,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	err = mgr.UpdatePoolConfig("test", newCfg)
+	if err != nil {
+		t.Errorf("UpdatePoolConfig failed: %v", err)
+	}
+}
+
+func TestManager_UpdatePoolConfig_NotFound(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	mgr := NewManager(log)
+
+	cfg := &config.PoolConfig{
+		Name: "nonexistent",
+		Body: "postgresql",
+		Mode: "transaction",
+	}
+
+	err := mgr.UpdatePoolConfig("nonexistent", cfg)
+	if err == nil {
+		t.Error("UpdatePoolConfig should fail for non-existent pool")
+	}
+}
+
+func TestPool_UpdateConfig(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 5432,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Valid config update (safe fields only)
+	newCfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 5432,
+		},
+		Limits: config.LimitConfig{
+			MaxClientConnections: 2000,
+			MaxServerConnections: 100,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	err = p.UpdateConfig(newCfg)
+	if err != nil {
+		t.Errorf("UpdateConfig failed: %v", err)
+	}
+
+	if p.config.Limits.MaxClientConnections != 2000 {
+		t.Errorf("MaxClientConnections = %d, want 2000", p.config.Limits.MaxClientConnections)
+	}
+}
+
+func TestPool_UpdateConfig_UnsafeChange(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 5432,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Try to change body (unsafe)
+	newCfg := &config.PoolConfig{
+		Name: "test",
+		Body: "mysql", // Changed
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 5432,
+		},
+	}
+
+	err = p.UpdateConfig(newCfg)
+	if err == nil {
+		t.Error("UpdateConfig should fail for unsafe changes")
+	}
+}
+
+func TestPool_UpdateBackends(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts: []config.BackendHost{
+				{Host: "old", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Update backends
+	newCfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Backend: config.BackendConfig{
+			Database: "testdb",
+			Hosts: []config.BackendHost{
+				{Host: "new", Port: 5433, Role: "primary"},
+			},
+		},
+	}
+
+	p.updateBackends(newCfg)
+
+	if len(p.backends) != 1 {
+		t.Errorf("backends length = %d, want 1", len(p.backends))
+	}
+}
+
+func TestPool_StartHealthChecks(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Health: config.HealthConfig{
+			CheckInterval: "100ms",
+			CheckQuery:    "SELECT 1",
+			MaxFailures:   3,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Should not panic
+	p.StartHealthChecks(100 * time.Millisecond)
+
+	// Clean up
+	if p.healthTicker != nil {
+		p.healthTicker.Stop()
+	}
+}
+
+func TestPool_CancelDrain(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Cancel drain for non-draining backend should not panic
+	p.CancelDrain("localhost:5432")
+}
+
+func TestPool_IsDraining(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Should return false for non-draining backend
+	if p.IsDraining("localhost:5432") {
+		t.Error("IsDraining should return false for non-draining backend")
+	}
+}
+
+func TestTransactionManager_GetActiveTransactions(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	tm := NewTransactionManager(time.Minute, time.Second, log)
+
+	// Initially should be empty
+	txns := tm.GetActiveTransactions()
+	if len(txns) != 0 {
+		t.Errorf("GetActiveTransactions length = %d, want 0", len(txns))
+	}
+}
+
+func TestTransactionManager_GetTransactionDetails(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	tm := NewTransactionManager(time.Minute, time.Second, log)
+
+	// Should return nil for non-existent transaction
+	info := tm.GetTransactionDetails(999)
+	if info != nil {
+		t.Errorf("GetTransactionDetails should return nil for non-existent, got %v", info)
+	}
+}
+
+func TestTransactionStatus_String(t *testing.T) {
+	tests := []struct {
+		status   TransactionStatus
+		expected string
+	}{
+		{TxnActive, "active"},
+		{TxnIdle, "idle"},
+		{TxnAborted, "aborted"},
+		{TxnCommitted, "committed"},
+		{TransactionStatus(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		result := tt.status.String()
+		if result != tt.expected {
+			t.Errorf("TransactionStatus(%d).String() = %q, want %q", tt.status, result, tt.expected)
+		}
+	}
+}
+
+func TestPool_updateBackendLists(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// Clear and re-add backends
+	p.backends = []*Backend{
+		{Host: "primary", Port: 5432, Role: "primary"},
+		{Host: "replica1", Port: 5433, Role: "replica"},
+	}
+
+	p.updateBackendLists()
+
+	if p.primary == nil {
+		t.Error("primary should not be nil")
+	}
+	if len(p.replicas) != 1 {
+		t.Errorf("replicas length = %d, want 1", len(p.replicas))
+	}
+}
+

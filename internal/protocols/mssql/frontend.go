@@ -3,6 +3,7 @@ package mssql
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/GeryonProxy/geryon/internal/auth"
 	"github.com/GeryonProxy/geryon/internal/logger"
@@ -300,7 +302,16 @@ func (f *Frontend) handleLogin() error {
 	f.clientPID = login.ClientPID
 	f.database = login.Database
 
-	// Authenticate
+	// Check for Windows Authentication (SSPI/NTLM)
+	if len(login.SSPI) > 0 || len(login.SSPILong) > 0 {
+		// NTLM Passthrough: Forward to backend
+		if err := f.handleWindowsAuth(login); err != nil {
+			return fmt.Errorf("windows auth failed: %w", err)
+		}
+		return nil
+	}
+
+	// SQL Server Authentication (username/password)
 	user := f.userDB.GetUser(login.Username)
 	if user == nil {
 		return f.errorLogin(18456, "Login failed for user")
@@ -320,6 +331,116 @@ func (f *Frontend) handleLogin() error {
 
 	// Send final done
 	return f.sendDone(0, 0, 0)
+}
+
+// handleWindowsAuth handles NTLM/Windows Authentication passthrough.
+// This forwards the authentication tokens to the backend SQL Server.
+func (f *Frontend) handleWindowsAuth(login *Login) error {
+	f.log.Debug("Windows Authentication (NTLM) detected", "hostname", login.HostName)
+
+	// Get a backend connection
+	ctx := context.Background()
+	backend, err := f.pool.Acquire(ctx)
+	if err != nil {
+		return f.errorLogin(18456, "Cannot connect to backend server")
+	}
+	defer f.pool.Release(backend)
+
+	// Forward the TDS7 login packet with SSPI data to backend
+	// The backend will handle the NTLM challenge-response
+	if err := f.forwardWindowsAuthToBackend(login, backend); err != nil {
+		return f.errorLogin(18456, "Windows authentication failed")
+	}
+
+	f.state = StateReady
+	f.user = &auth.User{Username: login.HostName + "\\" + login.HostName} // Placeholder for Windows user
+
+	// Send success response to client
+	if err := f.sendLoginAck(); err != nil {
+		return err
+	}
+
+	if err := f.sendEnvChange("DATABASE", f.database); err != nil {
+		return err
+	}
+
+	return f.sendDone(0, 0, 0)
+}
+
+// forwardWindowsAuthToBackend forwards Windows auth tokens to backend.
+func (f *Frontend) forwardWindowsAuthToBackend(login *Login, backend *pool.ServerConn) error {
+	// Rebuild TDS7 login packet with SSPI data
+	loginPacket := f.buildTDS7LoginPacket(login)
+
+	// Send to backend
+	if _, err := backend.Conn().Write(loginPacket); err != nil {
+		return err
+	}
+
+	// Read response from backend
+	buf := make([]byte, 4096)
+	n, err := backend.Conn().Read(buf)
+	if err != nil {
+		return err
+	}
+
+	// Forward backend response to client
+	if _, err := f.conn.Write(buf[:n]); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// buildTDS7LoginPacket rebuilds the TDS7 login packet for forwarding.
+func (f *Frontend) buildTDS7LoginPacket(login *Login) []byte {
+	// This is a simplified implementation
+	// In production, you'd rebuild the exact packet structure
+
+	// Header: Type (1 byte) + Status (1 byte) + Length (2 bytes) +
+	//         SPID (2 bytes) + Packet (1 byte) + Window (1 byte) = 8 bytes
+	header := make([]byte, 8)
+	header[0] = PackTDS7Login
+	header[1] = 0x01 // Status EOM
+
+	// For NTLM passthrough, we forward the original SSPI data
+	// The backend SQL Server will handle the NTLM challenge-response
+
+	// Build variable-length data
+	var data []byte
+
+	// Fixed part (86 bytes)
+	fixed := make([]byte, 86)
+	binary.LittleEndian.PutUint32(fixed[0:4], login.Length)
+	binary.LittleEndian.PutUint32(fixed[4:8], login.TDSVersion)
+	binary.LittleEndian.PutUint32(fixed[8:12], login.PacketSize)
+	binary.LittleEndian.PutUint32(fixed[12:16], login.ClientProgVer)
+	binary.LittleEndian.PutUint32(fixed[16:20], login.ClientPID)
+	binary.LittleEndian.PutUint32(fixed[20:24], login.ConnectionID)
+	fixed[24] = login.OptionFlags1
+	fixed[25] = login.OptionFlags2
+	fixed[26] = login.TypeFlags
+	fixed[27] = login.OptionFlags3
+	binary.LittleEndian.PutUint32(fixed[28:32], uint32(login.ClientTimeZone))
+	binary.LittleEndian.PutUint32(fixed[32:36], login.ClientLCID)
+	copy(fixed[36:42], login.ClientID[:])
+
+	// Variable offsets and lengths would go here...
+	// For SSPI passthrough, we include the SSPI token
+
+	data = append(data, fixed...)
+
+	// Add SSPI token if present
+	if len(login.SSPILong) > 0 {
+		data = append(data, login.SSPILong...)
+	} else if len(login.SSPI) > 0 {
+		data = append(data, login.SSPI...)
+	}
+
+	// Update length in header
+	binary.LittleEndian.PutUint16(header[2:4], uint16(len(data)+8))
+
+	return append(header, data...)
 }
 
 // Login represents a TDS7 login packet.
@@ -800,9 +921,119 @@ func (f *Frontend) sendRow(values []interface{}) error {
 }
 
 // handleRPC handles RPC requests.
+// handleRPC handles RPC (Remote Procedure Call) requests.
+// This includes sp_prepare, sp_execute, sp_unprepare for prepared statements.
 func (f *Frontend) handleRPC(data []byte) error {
-	// Simplified RPC handling
+	if len(data) < 8 {
+		return fmt.Errorf("RPC packet too short")
+	}
+
+	// Parse RPC header
+	// Name length (2 bytes) + Name (variable) + Options (2 bytes) + Parameters
+	offset := 0
+
+	// Read procedure name length
+	nameLen := binary.LittleEndian.Uint16(data[offset:offset+2])
+	offset += 2
+
+	// Read procedure name (Unicode)
+	if offset+int(nameLen)*2 > len(data) {
+		return fmt.Errorf("RPC name exceeds packet length")
+	}
+
+	procName := f.decodeUnicode(data[offset : offset+int(nameLen)*2])
+	offset += int(nameLen) * 2
+
+	// Skip options (2 bytes)
+	offset += 2
+
+	f.log.Debug("MSSQL RPC", "procedure", procName)
+
+	// Handle specific stored procedures
+	switch procName {
+	case "sp_prepare":
+		return f.handleSPPrepare(data[offset:])
+	case "sp_execute":
+		return f.handleSPExecute(data[offset:])
+	case "sp_unprepare":
+		return f.handleSPUnprepare(data[offset:])
+	case "sp_reset_connection":
+		return f.handleSPResetConnection()
+	default:
+		// Generic RPC handling
+		return f.sendDone(0, 0, 0)
+	}
+}
+
+// handleSPPrepare handles sp_prepare RPC for prepared statements.
+// sp_prepare @handle OUTPUT, @params, @stmt [, @options]
+func (f *Frontend) handleSPPrepare(data []byte) error {
+	// Simplified implementation - parse parameters and assign a handle
+	stmtID := f.nextPreparedStmtID()
+
+	f.log.Debug("sp_prepare", "stmt_id", stmtID)
+
+	// Return the statement handle to client
+	// Format: result set with handle value
+	if err := f.sendPreparedStmtHandle(stmtID); err != nil {
+		return err
+	}
+
+	return f.sendDone(0, 0, 1)
+}
+
+// handleSPExecute handles sp_execute RPC for executing prepared statements.
+// sp_execute @handle [, @param1 [, @param2 ...]]
+func (f *Frontend) handleSPExecute(data []byte) error {
+	// Parse parameters to get the statement handle
+	// For now, return a simple result
 	return f.sendDone(0, 0, 0)
+}
+
+// handleSPUnprepare handles sp_unprepare RPC for releasing prepared statements.
+// sp_unprepare @handle
+func (f *Frontend) handleSPUnprepare(data []byte) error {
+	// Release the prepared statement
+	return f.sendDone(0, 0, 0)
+}
+
+// handleSPResetConnection handles sp_reset_connection for connection reset.
+func (f *Frontend) handleSPResetConnection() error {
+	// Reset connection state
+	f.log.Debug("sp_reset_connection")
+	return f.sendDone(0, 0, 0)
+}
+
+// nextPreparedStmtID generates a unique prepared statement ID.
+func (f *Frontend) nextPreparedStmtID() int32 {
+	// Use a simple counter (in production, use atomic counter)
+	return int32(time.Now().UnixNano() % 1000000)
+}
+
+// sendPreparedStmtHandle sends the prepared statement handle to the client.
+func (f *Frontend) sendPreparedStmtHandle(handle int32) error {
+	// Build return value token
+	data := make([]byte, 0, 32)
+
+	// Token type: RETURNVALUE (0xAC)
+	data = append(data, 0xAC)
+
+	// Ordinal (2 bytes) - parameter position
+	data = append(data, 0x01, 0x00)
+
+	// Parameter name length (1 byte)
+	data = append(data, 0x00) // No name for return value
+
+	// Status (1 byte) - OUTPUT parameter
+	data = append(data, 0x01)
+
+	// Type info: INT (0x38)
+	data = append(data, 0x38)
+
+	// Value
+	data = append(data, byte(handle), byte(handle>>8), byte(handle>>16), byte(handle>>24))
+
+	return f.writePacket(PackReply, StatusEOM, data)
 }
 
 // handleAttention handles attention (cancel) requests.

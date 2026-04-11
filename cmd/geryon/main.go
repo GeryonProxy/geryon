@@ -26,6 +26,8 @@ import (
 )
 
 var version = "dev"
+var commit = "unknown"
+var date = "unknown"
 
 // cfgHolder holds the current configuration atomically for safe concurrent access
 // during SIGHUP hot-reload. Always use cfgHolder.Load() to read, cfgHolder.Store() to write.

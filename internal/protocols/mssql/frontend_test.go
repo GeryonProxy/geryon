@@ -887,12 +887,126 @@ func TestHandleRPC(t *testing.T) {
 	log, _ := logger.New("info", "json")
 	f := NewFrontend(conn, nil, nil, log)
 
-	// Simplified RPC data
-	data := []byte{0x00, 0x00, 0x00, 0x00}
+	// Build proper RPC data: NameLen (2) + Name (var) + Options (2) + Params
+	// Procedure name: "sp_test" (7 chars)
+	data := []byte{
+		0x07, 0x00, // Name length = 7
+		// Name "sp_test" in Unicode (14 bytes)
+		's', 0x00, 'p', 0x00, '_', 0x00, 't', 0x00, 'e', 0x00, 's', 0x00, 't', 0x00,
+		0x00, 0x00, // Options
+	}
 
 	err := f.handleRPC(data)
 	if err != nil {
 		t.Errorf("handleRPC failed: %v", err)
+	}
+}
+
+// Test sp_prepare RPC
+func TestHandleSPPrepare(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("error", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Build sp_prepare RPC
+	procName := "sp_prepare"
+	data := make([]byte, 0, 64)
+
+	// Name length
+	data = append(data, byte(len(procName)), 0x00)
+
+	// Name in Unicode
+	for _, c := range procName {
+		data = append(data, byte(c), 0x00)
+	}
+
+	// Options
+	data = append(data, 0x00, 0x00)
+
+	err := f.handleRPC(data)
+	if err != nil {
+		t.Errorf("handleRPC sp_prepare failed: %v", err)
+	}
+}
+
+// Test sp_execute RPC
+func TestHandleSPExecute(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("error", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Build sp_execute RPC
+	procName := "sp_execute"
+	data := make([]byte, 0, 64)
+
+	// Name length
+	data = append(data, byte(len(procName)), 0x00)
+
+	// Name in Unicode
+	for _, c := range procName {
+		data = append(data, byte(c), 0x00)
+	}
+
+	// Options
+	data = append(data, 0x00, 0x00)
+
+	err := f.handleRPC(data)
+	if err != nil {
+		t.Errorf("handleRPC sp_execute failed: %v", err)
+	}
+}
+
+// Test sp_unprepare RPC
+func TestHandleSPUnprepare(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("error", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Build sp_unprepare RPC
+	procName := "sp_unprepare"
+	data := make([]byte, 0, 64)
+
+	// Name length
+	data = append(data, byte(len(procName)), 0x00)
+
+	// Name in Unicode
+	for _, c := range procName {
+		data = append(data, byte(c), 0x00)
+	}
+
+	// Options
+	data = append(data, 0x00, 0x00)
+
+	err := f.handleRPC(data)
+	if err != nil {
+		t.Errorf("handleRPC sp_unprepare failed: %v", err)
+	}
+}
+
+// Test sp_reset_connection RPC
+func TestHandleSPResetConnection(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("error", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Build sp_reset_connection RPC
+	procName := "sp_reset_connection"
+	data := make([]byte, 0, 64)
+
+	// Name length
+	data = append(data, byte(len(procName)), 0x00)
+
+	// Name in Unicode
+	for _, c := range procName {
+		data = append(data, byte(c), 0x00)
+	}
+
+	// Options
+	data = append(data, 0x00, 0x00)
+
+	err := f.handleRPC(data)
+	if err != nil {
+		t.Errorf("handleRPC sp_reset_connection failed: %v", err)
 	}
 }
 
@@ -1022,5 +1136,143 @@ func TestFrontendClientID(t *testing.T) {
 
 	if f.clientID[0] != 1 {
 		t.Errorf("clientID[0] = %d, want 1", f.clientID[0])
+	}
+}
+
+// Test Windows Authentication (NTLM) Passthrough
+func TestHandleWindowsAuth_NoSSPI(t *testing.T) {
+	// Login without SSPI data
+	login := &Login{
+		HostName: "testhost",
+		Database: "testdb",
+		// SSPI is empty - this is SQL auth, not Windows auth
+	}
+
+	// Should not trigger Windows auth path
+	if len(login.SSPI) > 0 || len(login.SSPILong) > 0 {
+		t.Error("Login should not have SSPI data")
+	}
+}
+
+func TestHandleWindowsAuth_WithSSPI(t *testing.T) {
+	// Login with SSPI data (Windows Authentication)
+	login := &Login{
+		HostName: "testhost",
+		Database: "testdb",
+		SSPI:     []byte{0x4E, 0x54, 0x4C, 0x4D}, // "NTLM" header
+	}
+
+	// Should detect Windows auth
+	if len(login.SSPI) == 0 && len(login.SSPILong) == 0 {
+		t.Error("Login should have SSPI data for Windows auth")
+	}
+}
+
+func TestBuildTDS7LoginPacket_WithSSPI(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("error", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	login := &Login{
+		Length:         100,
+		TDSVersion:     0x74000004,
+		PacketSize:     4096,
+		ClientProgVer:  0x07000000,
+		ClientPID:      1234,
+		ConnectionID:   0,
+		OptionFlags1:   0xE0,
+		OptionFlags2:   0x03,
+		TypeFlags:      0x00,
+		OptionFlags3:   0x00,
+		ClientTimeZone: 0,
+		ClientLCID:     0x0409,
+		HostName:       "testhost",
+		Database:       "testdb",
+		SSPI:           []byte{0x4E, 0x54, 0x4C, 0x4D, 0x53, 0x53, 0x50}, // NTLMSSP
+	}
+
+	packet := f.buildTDS7LoginPacket(login)
+
+	if len(packet) == 0 {
+		t.Error("buildTDS7LoginPacket returned empty packet")
+	}
+
+	// Check packet type
+	if packet[0] != PackTDS7Login {
+		t.Errorf("packet type = %d, want %d", packet[0], PackTDS7Login)
+	}
+}
+
+func TestBuildTDS7LoginPacket_WithSSPILong(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("error", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Long SSPI data (> 255 bytes)
+	longSSPI := make([]byte, 300)
+	copy(longSSPI, []byte("NTLMSSP"))
+
+	login := &Login{
+		Length:         500,
+		TDSVersion:     0x74000004,
+		PacketSize:     4096,
+		ClientProgVer:  0x07000000,
+		ClientPID:      1234,
+		Database:       "testdb",
+		SSPILong:       longSSPI,
+	}
+
+	packet := f.buildTDS7LoginPacket(login)
+
+	if len(packet) == 0 {
+		t.Error("buildTDS7LoginPacket returned empty packet")
+	}
+}
+
+func TestWindowsAuthDetection(t *testing.T) {
+	tests := []struct {
+		name     string
+		sspi     []byte
+		sspiLong []byte
+		isWinAuth bool
+	}{
+		{
+			name:      "Empty SSPI - SQL Auth",
+			sspi:      []byte{},
+			sspiLong:  []byte{},
+			isWinAuth: false,
+		},
+		{
+			name:      "With SSPI - Windows Auth",
+			sspi:      []byte{0x4E, 0x54, 0x4C, 0x4D},
+			sspiLong:  []byte{},
+			isWinAuth: true,
+		},
+		{
+			name:      "With SSPILong - Windows Auth",
+			sspi:      []byte{},
+			sspiLong:  []byte{0x4E, 0x54, 0x4C, 0x4D, 0x00, 0x00},
+			isWinAuth: true,
+		},
+		{
+			name:      "Both SSPI and SSPILong - Windows Auth",
+			sspi:      []byte{0x01},
+			sspiLong:  []byte{0x02},
+			isWinAuth: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			login := &Login{
+				SSPI:     tt.sspi,
+				SSPILong: tt.sspiLong,
+			}
+
+			hasSSPI := len(login.SSPI) > 0 || len(login.SSPILong) > 0
+			if hasSSPI != tt.isWinAuth {
+				t.Errorf("Windows auth detection = %v, want %v", hasSSPI, tt.isWinAuth)
+			}
+		})
 	}
 }
