@@ -3125,3 +3125,74 @@ func TestPool_updateBackendLists(t *testing.T) {
 	}
 }
 
+// Test TransactionManager checkTimeouts
+func TestTransactionManager_checkTimeouts(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	tm := NewTransactionManager(
+		100*time.Millisecond, // Very short timeout
+		50*time.Millisecond,  // Very short idle timeout
+		log,
+	)
+
+	// Register a transaction
+	info := tm.Register(1, 100)
+	if info == nil {
+		t.Fatal("Register should return non-nil info")
+	}
+	txnID := info.ID
+
+	// Wait for timeout
+	time.Sleep(150 * time.Millisecond)
+
+	// Check timeouts - this should mark the transaction as aborted
+	tm.checkTimeouts()
+
+	// Give time for status update
+	time.Sleep(10 * time.Millisecond)
+
+	// Get transaction info
+	updatedInfo := tm.Get(txnID)
+	if updatedInfo == nil {
+		t.Fatal("Transaction should exist")
+	}
+
+	// Status should be TxnAborted due to timeout
+	if updatedInfo.Status != TxnAborted {
+		t.Errorf("Status = %v, want TxnAborted", updatedInfo.Status)
+	}
+}
+
+// Test TransactionManager checkTimeouts with idle timeout
+func TestTransactionManager_checkTimeouts_Idle(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	tm := NewTransactionManager(
+		1*time.Hour,         // Long transaction timeout
+		50*time.Millisecond, // Short idle timeout
+		log,
+	)
+
+	// Register a transaction
+	info := tm.Register(1, 100)
+	txnID := info.ID
+
+	// Wait for idle timeout
+	time.Sleep(100 * time.Millisecond)
+
+	// Check timeouts - this should mark the transaction as idle
+	tm.checkTimeouts()
+
+	// Give time for status update
+	time.Sleep(10 * time.Millisecond)
+
+	// Get transaction info
+	updatedInfo := tm.Get(txnID)
+	if updatedInfo == nil {
+		t.Fatal("Transaction should exist")
+	}
+
+	// Status should be TxnIdle due to idle timeout
+	if updatedInfo.Status != TxnIdle {
+		t.Errorf("Status = %v, want TxnIdle", updatedInfo.Status)
+	}
+}
+
