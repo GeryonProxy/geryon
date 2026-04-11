@@ -301,6 +301,13 @@ func (sps *SessionPreparedStatements) SetServerName(name, serverName string) {
 	sps.serverIDs[name] = serverName
 }
 
+// Add adds a prepared statement with auto-generated name (simplified tracking).
+func (sps *SessionPreparedStatements) Add(query string) string {
+	name := GenerateStmtID()
+	sps.Register(name, query, nil)
+	return name
+}
+
 // Close removes all session-specific mappings.
 func (sps *SessionPreparedStatements) Close() {
 	sps.mu.Lock()

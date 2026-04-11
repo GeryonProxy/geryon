@@ -99,6 +99,26 @@ func (m *Manager) RemovePool(name string) error {
 	return nil
 }
 
+// UpdatePoolConfig updates pool configuration dynamically.
+// Only safe-to-change fields can be updated without restart.
+func (m *Manager) UpdatePoolConfig(name string, cfg *config.PoolConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pool, exists := m.pools[name]
+	if !exists {
+		return fmt.Errorf("pool %s not found", name)
+	}
+
+	// Update the pool configuration
+	if err := pool.UpdateConfig(cfg); err != nil {
+		return fmt.Errorf("failed to update pool %s: %w", name, err)
+	}
+
+	m.logger.Info("Updated pool configuration", "name", name)
+	return nil
+}
+
 // Close closes all pools.
 func (m *Manager) Close() error {
 	m.mu.Lock()

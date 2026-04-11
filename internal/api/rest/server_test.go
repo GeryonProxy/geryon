@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/GeryonProxy/geryon/internal/config"
@@ -539,5 +540,441 @@ func TestServer_AuthEnabled_RejectsWithoutToken(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestServer_isAllowedOrigin(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+
+	tests := []struct {
+		name     string
+		origins  []string
+		origin   string
+		expected bool
+	}{
+		{"empty allowed, empty origin", []string{}, "", true},
+		{"empty allowed, some origin", []string{}, "http://example.com", false},
+		{"wildcard", []string{"*"}, "http://example.com", true},
+		{"exact match", []string{"http://example.com"}, "http://example.com", true},
+		{"no match", []string{"http://example.com"}, "http://other.com", false},
+		{"multiple origins match", []string{"http://a.com", "http://b.com"}, "http://b.com", true},
+		{"multiple origins no match", []string{"http://a.com", "http://b.com"}, "http://c.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.AdminRESTConfig{
+				Listen:         "127.0.0.1:0",
+				Auth:           config.RESTAuthConfig{Enabled: false},
+				AllowedOrigins: tt.origins,
+			}
+			s, err := NewServer(cfg, nil, nil, log, "", nil)
+			if err != nil {
+				t.Fatalf("NewServer failed: %v", err)
+			}
+
+			got := s.isAllowedOrigin(tt.origin)
+			if got != tt.expected {
+				t.Errorf("isAllowedOrigin(%q) = %v, want %v", tt.origin, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestServer_Start_AlreadyStarted(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, err := NewServer(cfg, nil, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// First start
+	if err := s.Start(); err != nil {
+		t.Fatalf("First Start failed: %v", err)
+	}
+	defer s.Stop(nil)
+
+	// Second start should fail
+	if err := s.Start(); err == nil {
+		t.Error("Second Start should have failed")
+	}
+}
+
+func TestServer_Stop_NotStarted(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, err := NewServer(cfg, nil, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Stop when not started should not error
+	if err := s.Stop(nil); err != nil {
+		t.Errorf("Stop when not started failed: %v", err)
+	}
+}
+
+func TestValidatePoolName_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"valid_pool_123", true},
+		{"Pool-Name-With-Dashes", true},
+		{"a", true},           // minimum length
+		{"ab", true},          // 2 chars
+		{"_underscore_start", true},
+		{"", false},           // empty
+		{"pool with spaces", false},
+		{"pool/invalid", false},
+		{"pool;drop", false},
+		{"pool<invalid>", false},
+		{"pool&invalid", false},
+		{"pool|invalid", false},
+		{"pool'invalid", false},
+		{`pool"invalid`, false},
+		{"pool\x00invalid", false}, // null character
+	}
+
+	for _, tc := range tests {
+		got := validatePoolName(tc.name)
+		if got != tc.want {
+			t.Errorf("validatePoolName(%q) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestWriteJSON_EdgeCases(t *testing.T) {
+	t.Run("nil data", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		writeJSON(rr, http.StatusOK, nil)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Status = %d, want %d", rr.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("empty map", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		writeJSON(rr, http.StatusOK, map[string]string{})
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Status = %d, want %d", rr.Code, http.StatusOK)
+		}
+	})
+}
+
+func TestWriteError_EdgeCases(t *testing.T) {
+	t.Run("empty message", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		writeError(rr, http.StatusBadRequest, "")
+
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("Status = %d, want %d", rr.Code, http.StatusBadRequest)
+		}
+
+		var data map[string]string
+		if err := json.Unmarshal(rr.Body.Bytes(), &data); err != nil {
+			t.Fatalf("JSON decode failed: %v", err)
+		}
+		if data["error"] != "" {
+			t.Errorf("error = %q, want empty", data["error"])
+		}
+	})
+
+	t.Run("special characters", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		writeError(rr, http.StatusInternalServerError, "error with special chars: <>&'")
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("Status = %d, want %d", rr.Code, http.StatusInternalServerError)
+		}
+	})
+}
+
+func TestSanitizeErr_EdgeCases(t *testing.T) {
+	t.Run("exactly 200 chars", func(t *testing.T) {
+		msg := strings.Repeat("x", 200)
+		got := sanitizeErr(fmt.Errorf("%s", msg))
+		if len(got) != 200 {
+			t.Errorf("Length = %d, want 200", len(got))
+		}
+	})
+
+	t.Run("empty error", func(t *testing.T) {
+		got := sanitizeErr(fmt.Errorf(""))
+		if got != "" {
+			t.Errorf("msg = %q, want empty", got)
+		}
+	})
+
+	t.Run("error with newlines", func(t *testing.T) {
+		got := sanitizeErr(fmt.Errorf("line1\nline2\nline3"))
+		if got != "line1\nline2\nline3" {
+			t.Errorf("msg = %q, want unchanged", got)
+		}
+	})
+}
+
+// Test rateLimiter GetLimiter with eviction
+func TestRateLimiter_GetLimiter_Eviction(t *testing.T) {
+	rl := newRateLimiter(2, 5)
+	rl.maxSize = 2 // Set max size to 2 for testing eviction
+
+	// Get limiters for 3 different IPs (should trigger eviction)
+	l1 := rl.GetLimiter("10.0.0.1")
+	l2 := rl.GetLimiter("10.0.0.2")
+	l3 := rl.GetLimiter("10.0.0.3")
+
+	// All should be non-nil
+	if l1 == nil {
+		t.Error("l1 should not be nil")
+	}
+	if l2 == nil {
+		t.Error("l2 should not be nil")
+	}
+	if l3 == nil {
+		t.Error("l3 should not be nil")
+	}
+
+	// Should have 2 limiters (one evicted)
+	if len(rl.limiters) != 2 {
+		t.Errorf("len(limiters) = %d, want 2", len(rl.limiters))
+	}
+}
+
+// Test rateLimiter GetLimiter returns same limiter for same IP
+func TestRateLimiter_GetLimiter_SameIP(t *testing.T) {
+	rl := newRateLimiter(10, 5)
+
+	l1 := rl.GetLimiter("10.0.0.1")
+	l2 := rl.GetLimiter("10.0.0.1")
+
+	if l1 != l2 {
+		t.Error("Same IP should return same limiter")
+	}
+}
+
+// Test handlePoolDetail
+func TestHandlePoolDetail_NotFound(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	// Create a pool manager with no pools
+	pm := pool.NewManager(log)
+	s.poolMgr = pm
+
+	// Test with non-existent pool - need to set up request path
+	req := httptest.NewRequest("GET", "/api/v1/pools/nonexistent", nil)
+	req.URL.Path = "/api/v1/pools/nonexistent"
+	rr := httptest.NewRecorder()
+
+	s.handlePoolDetail(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// Test handleSlowQueries
+func TestHandleSlowQueries(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/queries/slow", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleSlowQueries(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+
+	if _, ok := data["slow_queries"]; !ok {
+		t.Error("response should contain slow_queries")
+	}
+}
+
+// Test handleRecentQueries
+func TestHandleRecentQueries(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/queries/recent", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleRecentQueries(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+
+	if _, ok := data["recent_queries"]; !ok {
+		t.Error("response should contain recent_queries")
+	}
+}
+
+// Test handleActiveTransactions
+func TestHandleActiveTransactions(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/transactions/active", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleActiveTransactions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+
+	if _, ok := data["active_transactions"]; !ok {
+		t.Error("response should contain active_transactions")
+	}
+}
+
+// Test handleBackendDrain
+func TestHandleBackendDrain_NotFound(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	// Create a pool manager with no pools
+	pm := pool.NewManager(log)
+	s.poolMgr = pm
+
+	// Test with non-existent backend
+	req := httptest.NewRequest("POST", "/api/v1/backends/127.0.0.1:5432/drain", nil)
+	rr := httptest.NewRecorder()
+	s.handleBackendDrain(rr, req, "127.0.0.1:5432")
+
+	// Should return not found status
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// Test handleBackendCancelDrain
+func TestHandleBackendCancelDrain_NotFound(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	// Create a pool manager with no pools
+	pm := pool.NewManager(log)
+	s.poolMgr = pm
+
+	// Test with non-existent backend
+	req := httptest.NewRequest("POST", "/api/v1/backends/127.0.0.1:5432/cancel-drain", nil)
+	rr := httptest.NewRecorder()
+	s.handleBackendCancelDrain(rr, req, "127.0.0.1:5432")
+
+	// Should return not found status
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// Test handleBackendAction
+func TestHandleBackendAction_InvalidMethod(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	// Test with PUT (not POST)
+	req := httptest.NewRequest("PUT", "/api/v1/backends/action", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleBackendAction(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+// Test handleConnections
+func TestHandleConnections_InvalidMethod(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	// Test with POST (not GET)
+	req := httptest.NewRequest("POST", "/api/v1/connections", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleConnections(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+// Test handleConfig
+func TestHandleConfig_InvalidMethod(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+
+	// Test with DELETE (not GET or POST)
+	req := httptest.NewRequest("DELETE", "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleConfig(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
 	}
 }

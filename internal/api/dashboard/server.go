@@ -337,8 +337,33 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 
 // handleConnections returns connection information.
 func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
-	// TODO: implement connection tracking
-	s.writeJSON(w, map[string]any{"connections": []any{}})
+	var connections []map[string]any
+
+	for _, p := range s.poolMgr.ListPools() {
+		stats := p.Stats()
+
+		// Add pool-level connection info
+		poolConn := map[string]any{
+			"pool_name":          stats.Name,
+			"client_connections": stats.ClientConnections,
+			"server_connections": stats.ServerConnections,
+			"idle_connections":   stats.IdleConnections,
+			"active_connections": stats.ActiveConnections,
+			"waiting_clients":    stats.WaitingClients,
+		}
+		connections = append(connections, poolConn)
+
+		// Get active transactions if available
+		if stats.ActiveTransactions > 0 {
+			txnConn := map[string]any{
+				"pool_name":           stats.Name,
+				"active_transactions": stats.ActiveTransactions,
+			}
+			connections = append(connections, txnConn)
+		}
+	}
+
+	s.writeJSON(w, map[string]any{"connections": connections})
 }
 
 // handleQueries returns query statistics.

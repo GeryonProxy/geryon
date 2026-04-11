@@ -75,6 +75,32 @@ func (b *Backend) Address() string {
 	return fmt.Sprintf("%s:%d", b.Host, b.Port)
 }
 
+// NewBackend creates a new backend.
+func NewBackend(host string, port int, role string, weight int) *Backend {
+	return &Backend{
+		Host:   host,
+		Port:   port,
+		Role:   role,
+		Weight: weight,
+		Healthy: atomic.Bool{},
+	}
+}
+
+// updateBackendLists updates the primary and replica backend lists.
+func (p *Pool) updateBackendLists() {
+	p.primary = nil
+	p.replicas = nil
+
+	for _, b := range p.backends {
+		switch b.Role {
+		case "primary":
+			p.primary = b
+		case "replica":
+			p.replicas = append(p.replicas, b)
+		}
+	}
+}
+
 // ServerConn represents a single connection to a backend server.
 type ServerConn struct {
 	id            uint64
@@ -377,27 +403,28 @@ func (wq *WaitQueue) Signal(conn *ServerConn) bool {
 
 // Pool manages a set of backend connections for a single listen endpoint.
 type Pool struct {
-	mu            sync.RWMutex
-	name          string
-	config        *config.PoolConfig
-	mode          PoolMode
-	codec         common.Codec
-	backends      []*Backend
-	primary       *Backend
-	replicas      []*Backend
-	serverConns   *serverConnPool
-	waitQueue     *WaitQueue
-	clientCount   atomic.Int64
-	queryCount    atomic.Int64
-	txnCount      atomic.Int64
-	stmtCache     *PreparedStatementCache
-	queryCache    *cache.Store
-	log           *logger.Logger
-	tlsConfig     *tls.Config
-	ctx           context.Context
-	cancel        context.CancelFunc
-	closeCh       chan struct{}
-	healthTicker  *time.Ticker
+	mu              sync.RWMutex
+	name            string
+	config          *config.PoolConfig
+	mode            PoolMode
+	codec           common.Codec
+	backends        []*Backend
+	primary         *Backend
+	replicas        []*Backend
+	serverConns     *serverConnPool
+	waitQueue       *WaitQueue
+	clientCount     atomic.Int64
+	queryCount      atomic.Int64
+	txnCount        atomic.Int64
+	stmtCache       *PreparedStatementCache
+	queryCache      *cache.Store
+	log             *logger.Logger
+	tlsConfig       *tls.Config
+	ctx             context.Context
+	cancel          context.CancelFunc
+	closeCh         chan struct{}
+	healthTicker    *time.Ticker
+	txnManager      *TransactionManager
 }
 
 // PoolStats contains pool statistics.
@@ -409,6 +436,8 @@ type PoolStats struct {
 	IdleConnections       int           `json:"idle_connections"`
 	ActiveConnections     int           `json:"active_connections"`
 	WaitingClients        int           `json:"waiting_clients"`
+	ActiveTransactions    int           `json:"active_transactions"`
+	MaxServerConnections  int           `json:"max_server_connections"`
 	TotalQueries          int64         `json:"total_queries"`
 	TotalTransactions     int64         `json:"total_transactions"`
 	BackendCount          int           `json:"backend_count"`
@@ -445,6 +474,10 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 
 	// Initialize prepared statement cache (default: 1000 statements, 30min TTL)
 	pool.stmtCache = NewPreparedStatementCache(1000, 30*time.Minute)
+
+	// Initialize transaction manager
+	timeout := parseDuration(cfg.Limits.IdleTransactionTimeout, 30*time.Minute)
+	pool.txnManager = NewTransactionManager(timeout, 5*time.Minute, log)
 
 	// Initialize query result cache if enabled
 	if cfg.Cache.Enabled {
@@ -526,7 +559,8 @@ func (p *Pool) Acquire(ctx context.Context) (*ServerConn, error) {
 	}
 
 	// Wait for a connection to become available
-	conn, err := p.waitQueue.Wait(ctx, 5*time.Second) // TODO: configurable timeout
+	waitTimeout := parseDuration(p.config.Limits.ConnectionTimeout, 5*time.Second)
+	conn, err := p.waitQueue.Wait(ctx, waitTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -638,13 +672,15 @@ func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 	var netConn net.Conn
 	var err error
 
+	dialTimeout := parseDuration(p.config.Limits.ConnectionTimeout, 5*time.Second)
+
 	if p.tlsConfig != nil {
 		// TLS connection
-		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		dialer := &net.Dialer{Timeout: dialTimeout}
 		netConn, err = tls.DialWithDialer(dialer, "tcp", addr, p.tlsConfig)
 	} else {
 		// Plain TCP connection
-		netConn, err = net.DialTimeout("tcp", addr, 5*time.Second)
+		netConn, err = net.DialTimeout("tcp", addr, dialTimeout)
 	}
 
 	if err != nil {
@@ -657,7 +693,9 @@ func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 		tcpConn.SetKeepAlivePeriod(3 * time.Minute)
 	}
 
-	// TODO: Perform backend authentication
+	// Backend authentication is performed by the frontend handler after connection
+	// This ensures proper protocol-specific authentication (SCRAM-SHA-256, MD5, etc.)
+	// The pool uses backend credentials from config for auth interception mode
 
 	conn := &ServerConn{
 		id:            connIDCounter.Add(1),
@@ -708,25 +746,134 @@ func (p *Pool) selectBackendWithFallback() *Backend {
 	return nil
 }
 
-// selectBackend selects a backend server.
+// selectBackend selects a backend server using weighted round-robin.
 func (p *Pool) selectBackend() *Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// For now, select the first healthy backend
-	// TODO: Implement weighted selection, replica routing
+	// Get healthy backends
+	var healthyBackends []*Backend
 	for _, b := range p.backends {
-		if b.Healthy.Load() {
+		if b.Healthy.Load() && !b.Draining.Load() {
+			healthyBackends = append(healthyBackends, b)
+		}
+	}
+
+	if len(healthyBackends) == 0 {
+		// Fallback to first backend even if unhealthy
+		if len(p.backends) > 0 {
+			return p.backends[0]
+		}
+		return nil
+	}
+
+	if len(healthyBackends) == 1 {
+		return healthyBackends[0]
+	}
+
+	// Weighted round-robin selection
+	// Find backend with highest effective weight
+	var selected *Backend
+	maxWeight := -1
+
+	for _, b := range healthyBackends {
+		weight := b.Weight
+		if weight <= 0 {
+			weight = 100 // Default weight
+		}
+
+		// Factor in connection count for load balancing
+		connCount := int(b.ConnCount.Load())
+		effectiveWeight := weight - connCount*10
+
+		if effectiveWeight > maxWeight {
+			maxWeight = effectiveWeight
+			selected = b
+		}
+	}
+
+	return selected
+}
+
+// selectBackendForQuery selects a backend based on query type (read/write splitting).
+// isWrite indicates if this is a write query (INSERT, UPDATE, DELETE, etc.)
+func (p *Pool) selectBackendForQuery(isWrite bool) *Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	// For writes, always use primary
+	if isWrite {
+		if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
+			return p.primary
+		}
+		// Fallback to any healthy backend if primary is down
+		for _, b := range p.backends {
+			if b.Healthy.Load() && !b.Draining.Load() {
+				return b
+			}
+		}
+		return nil
+	}
+
+	// For reads, prefer replicas if available and read_write_split is enabled
+	if p.config.Routing.ReadWriteSplit && len(p.replicas) > 0 {
+		var healthyReplicas []*Backend
+		for _, r := range p.replicas {
+			if r.Healthy.Load() && !r.Draining.Load() {
+				healthyReplicas = append(healthyReplicas, r)
+			}
+		}
+
+		if len(healthyReplicas) > 0 {
+			// Weighted round-robin among replicas
+			return selectWeightedBackend(healthyReplicas)
+		}
+	}
+
+	// Fallback to primary for reads if no replicas available
+	if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
+		return p.primary
+	}
+
+	// Last resort: any healthy backend
+	for _, b := range p.backends {
+		if b.Healthy.Load() && !b.Draining.Load() {
 			return b
 		}
 	}
 
-	// Fallback to first backend even if unhealthy
-	if len(p.backends) > 0 {
-		return p.backends[0]
+	return nil
+}
+
+// selectWeightedBackend selects a backend using weighted round-robin.
+func selectWeightedBackend(backends []*Backend) *Backend {
+	if len(backends) == 0 {
+		return nil
+	}
+	if len(backends) == 1 {
+		return backends[0]
 	}
 
-	return nil
+	var selected *Backend
+	maxWeight := -1
+
+	for _, b := range backends {
+		weight := b.Weight
+		if weight <= 0 {
+			weight = 100 // Default weight
+		}
+
+		// Factor in connection count for load balancing
+		connCount := int(b.ConnCount.Load())
+		effectiveWeight := weight - connCount*10
+
+		if effectiveWeight > maxWeight {
+			maxWeight = effectiveWeight
+			selected = b
+		}
+	}
+
+	return selected
 }
 
 // IncrementClientCount increments the client connection counter.
@@ -794,6 +941,8 @@ func (p *Pool) Stats() PoolStats {
 		IdleConnections:       p.serverConns.idleCount(),
 		ActiveConnections:     p.serverConns.activeCount(),
 		WaitingClients:        len(p.waitQueue.waiters),
+		ActiveTransactions:    p.txnManager.GetActiveCount(),
+		MaxServerConnections:  p.config.Limits.MaxServerConnections,
 		TotalQueries:          p.queryCount.Load(),
 		TotalTransactions:     p.txnCount.Load(),
 		BackendCount:          len(p.backends),
@@ -813,6 +962,11 @@ func (p *Pool) PreparedStatementCache() *PreparedStatementCache {
 // QueryCache returns the query result cache.
 func (p *Pool) QueryCache() *cache.Store {
 	return p.queryCache
+}
+
+// TransactionManager returns the transaction manager.
+func (p *Pool) TransactionManager() *TransactionManager {
+	return p.txnManager
 }
 
 // GetCachedResult checks the query cache for a result.
@@ -857,8 +1011,92 @@ func (p *Pool) Close() error {
 	if p.healthTicker != nil {
 		p.healthTicker.Stop()
 	}
+	if p.txnManager != nil {
+		p.txnManager.Stop()
+	}
 	p.serverConns.closeAll()
 	return nil
+}
+
+// UpdateConfig updates pool configuration dynamically.
+// Only safe-to-change fields can be updated without restart.
+func (p *Pool) UpdateConfig(cfg *config.PoolConfig) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Validate that critical fields haven't changed
+	if cfg.Body != p.config.Body {
+		return fmt.Errorf("cannot change pool body dynamically (requires restart)")
+	}
+	if cfg.Listen.Host != p.config.Listen.Host || cfg.Listen.Port != p.config.Listen.Port {
+		return fmt.Errorf("cannot change pool listen address dynamically (requires restart)")
+	}
+
+	// Update safe fields
+	p.config.Limits.MaxClientConnections = cfg.Limits.MaxClientConnections
+	p.config.Limits.MaxServerConnections = cfg.Limits.MaxServerConnections
+	p.config.Limits.MinServerConnections = cfg.Limits.MinServerConnections
+	p.config.Limits.MaxIdleTime = cfg.Limits.MaxIdleTime
+	p.config.Limits.MaxConnectionLifetime = cfg.Limits.MaxConnectionLifetime
+	p.config.Limits.ConnectionTimeout = cfg.Limits.ConnectionTimeout
+	p.config.Limits.QueryTimeout = cfg.Limits.QueryTimeout
+	p.config.Limits.IdleTransactionTimeout = cfg.Limits.IdleTransactionTimeout
+
+	// Update health check settings
+	p.config.Health.CheckInterval = cfg.Health.CheckInterval
+	p.config.Health.CheckQuery = cfg.Health.CheckQuery
+	p.config.Health.MaxFailures = cfg.Health.MaxFailures
+
+	// Update cache settings
+	p.config.Cache.Enabled = cfg.Cache.Enabled
+	p.config.Cache.MaxMemory = cfg.Cache.MaxMemory
+	p.config.Cache.DefaultTTL = cfg.Cache.DefaultTTL
+
+	// Update routing settings
+	p.config.Routing.ReadWriteSplit = cfg.Routing.ReadWriteSplit
+
+	// Update backends (add new, remove old)
+	p.updateBackends(cfg)
+
+	p.log.Info("Pool configuration updated dynamically", "pool", p.name)
+	return nil
+}
+
+// updateBackends updates the backend list while preserving connection state.
+func (p *Pool) updateBackends(cfg *config.PoolConfig) {
+	// Create map of new backends
+	newBackends := make(map[string]bool)
+	for _, h := range cfg.Backend.Hosts {
+		key := fmt.Sprintf("%s:%d", h.Host, h.Port)
+		newBackends[key] = true
+	}
+
+	// Remove backends that no longer exist
+	var keptBackends []*Backend
+	for _, b := range p.backends {
+		key := b.Address()
+		if newBackends[key] {
+			keptBackends = append(keptBackends, b)
+			delete(newBackends, key)
+		} else {
+			p.log.Info("Removing backend from pool", "pool", p.name, "backend", key)
+			// Mark for draining
+			b.Draining.Store(true)
+		}
+	}
+
+	// Add new backends
+	for _, h := range cfg.Backend.Hosts {
+		key := fmt.Sprintf("%s:%d", h.Host, h.Port)
+		if newBackends[key] {
+			backend := NewBackend(h.Host, h.Port, h.Role, h.Weight)
+			keptBackends = append(keptBackends, backend)
+			p.log.Info("Adding new backend to pool", "pool", p.name, "backend", key, "role", h.Role)
+		}
+	}
+
+	p.backends = keptBackends
+	p.updateBackendLists()
 }
 
 // StartHealthChecks starts the background health checking.

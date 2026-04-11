@@ -32,6 +32,13 @@ go test -race ./internal/protocol/postgresql/
 
 # Run single test
 go test -race -run TestPoolMode ./internal/pool/
+
+# Run benchmarks
+go test -bench=. ./benchmarks/
+go test -bench=. ./internal/tokenizer/
+
+# Run integration tests (requires running databases)
+go test -v ./integration-tests/
 ```
 
 ### Lint
@@ -69,9 +76,19 @@ Geryon implements three database protocol handlers ("Bodies"):
 | MySQL | `internal/protocols/mysql/` | 3306 | Handshake v10 |
 | MSSQL | `internal/protocols/mssql/` | 1433 | TDS 7.4+ |
 
-Each body has two layers:
-- **Protocol layer** (`internal/protocol/{postgresql,mysql,mssql}/`): Wire protocol codec, message parsing/serialization
-- **Frontend layer** (`internal/protocols/{postgresql,mysql,mssql}/`): Connection handling, authentication, command processing
+### Protocol vs Protocols
+The codebase uses two distinct layers for database protocol handling:
+
+- **`internal/protocol/` (singular)** — Low-level wire protocol codecs:
+  - Message framing, parsing, serialization
+  - Binary protocol implementation
+  - No connection state logic
+
+- **`internal/protocols/` (plural)** — High-level protocol frontend handlers:
+  - Connection state machines
+  - Authentication handling
+  - Command processing
+  - Integrates with pool manager
 
 ### Pooling Modes
 Three pooling strategies implemented in `internal/pool/`:
@@ -94,7 +111,8 @@ internal/
 │   ├── session.go   # Session tracking for session mode
 │   ├── transaction.go # Transaction boundary detection
 │   ├── routing.go   # Read/write splitting, backend selection
-│   └── health.go    # Backend health checking
+│   ├── health.go    # Backend health checking
+│   └── reset.go     # Connection state reset for reuse
 ├── protocol/        # Wire protocol codecs (low-level)
 │   ├── common/      # Shared message types
 │   ├── postgresql/  # PostgreSQL codec
@@ -158,7 +176,6 @@ When a server connection is returned to the pool (in transaction/statement mode)
 See `internal/pool/reset.go` for implementation:
 - `ConnectionResetter` interface for protocol-specific reset logic
 - `SmartResetter` for tracking state modifications and minimizing round-trips
-- `ResetConnection()` helper function used in `serverConnPool.release()`
 
 ### Clustering
 Optional clustering via Raft consensus + SWIM gossip:
@@ -214,6 +231,8 @@ func TestFeature(t *testing.T) {
 ```
 
 Run tests with race detection enabled: `go test -race ./...`
+
+Benchmarks are in `benchmarks/` and use `testing.B` with parallel execution patterns.
 
 ## Configuration File
 

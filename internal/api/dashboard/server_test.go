@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
@@ -214,6 +215,8 @@ func TestDashboard_QueriesEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
+	time.Sleep(10 * time.Millisecond)
+
 	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/queries")
 	if err != nil {
 		t.Fatalf("GET /queries failed: %v", err)
@@ -236,6 +239,8 @@ func TestDashboard_ConfigEndpoint(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer s.Stop()
+
+	time.Sleep(10 * time.Millisecond)
 
 	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/config")
 	if err != nil {
@@ -271,6 +276,8 @@ func TestDashboard_ConfigReload(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer s.Stop()
+
+	time.Sleep(10 * time.Millisecond)
 
 	resp, err := http.Post("http://"+cfg.Listen+"/api/v1/config", "application/json", nil)
 	if err != nil {

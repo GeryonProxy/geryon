@@ -1,6 +1,8 @@
 package pool
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -251,7 +253,98 @@ func (s *Session) Stats() SessionStats {
 }
 
 // HandleMessage handles an incoming message using the session strategy.
+// This implements the strategy pattern for different pooling modes.
 func (s *Session) HandleMessage(msg *common.Message) error {
-	// TODO: Implement message handling with strategy
+	if msg == nil {
+		return nil
+	}
+
+	codec := s.pool.Codec()
+	if codec == nil {
+		return fmt.Errorf("pool codec not available")
+	}
+
+	// Update activity timestamp
+	s.lastActive.Store(time.Now())
+
+	// Track bytes in
+	if msg.Raw != nil {
+		s.bytesIn.Add(int64(len(msg.Raw)))
+	}
+
+	// Handle different message types based on strategy
+	ctx := context.Background()
+
+	// Transaction boundary detection
+	if codec.IsTransactionBegin(msg) {
+		s.inTxn.Store(true)
+		s.txnStart = time.Now()
+		if err := s.strategy.OnTransactionBegin(s); err != nil {
+			return err
+		}
+	}
+
+	// Handle query messages
+	if codec.IsQuery(msg) || codec.IsExecute(msg) {
+		s.queryCount.Add(1)
+
+		// Extract query for logging/tracing
+		query, err := codec.ExtractQuery(msg)
+		if err == nil && query != "" {
+			s.lastQuery = query
+		}
+
+		// Acquire server connection via strategy
+		serverConn, err := s.strategy.OnQuery(ctx, s, msg)
+		if err != nil {
+			return fmt.Errorf("failed to acquire server connection: %w", err)
+		}
+
+		if serverConn == nil {
+			return fmt.Errorf("no server connection available")
+		}
+
+		// Forward message to server
+		if err := codec.WriteMessage(serverConn.Conn(), msg); err != nil {
+			return fmt.Errorf("failed to forward message to server: %w", err)
+		}
+
+		// Notify strategy that query is complete
+		if err := s.strategy.OnQueryComplete(s); err != nil {
+			return err
+		}
+	}
+
+	// Transaction end detection
+	if codec.IsTransactionEnd(msg) {
+		s.inTxn.Store(false)
+		if err := s.strategy.OnTransactionEnd(s); err != nil {
+			return err
+		}
+	}
+
+	// Handle prepared statement messages
+	if codec.IsPrepare(msg) {
+		// Track prepared statement
+		if s.stmtTracker != nil {
+			query, _ := codec.ExtractQuery(msg)
+			if query != "" {
+				s.stmtTracker.Add(query)
+			}
+		}
+	}
+
+	// Handle close messages
+	if codec.IsClose(msg) {
+		// Clean up any resources
+	}
+
 	return nil
+}
+
+// GetLastQuery returns the last executed query.
+func (s *Session) GetLastQuery() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastQuery
 }

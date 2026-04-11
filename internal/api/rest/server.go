@@ -369,6 +369,37 @@ func validatePoolName(name string) bool {
 	return poolNameRegex.MatchString(name)
 }
 
+// validatePoolConfig validates pool configuration.
+func validatePoolConfig(cfg *config.PoolConfig) error {
+	if cfg.Name == "" {
+		return fmt.Errorf("pool name is required")
+	}
+	if cfg.Body != "postgresql" && cfg.Body != "mysql" && cfg.Body != "mssql" {
+		return fmt.Errorf("invalid body type: %s (must be postgresql, mysql, or mssql)", cfg.Body)
+	}
+	if cfg.Mode != "session" && cfg.Mode != "transaction" && cfg.Mode != "statement" {
+		return fmt.Errorf("invalid mode: %s (must be session, transaction, or statement)", cfg.Mode)
+	}
+	if cfg.Listen.Port <= 0 || cfg.Listen.Port > 65535 {
+		return fmt.Errorf("invalid port: %d", cfg.Listen.Port)
+	}
+	if len(cfg.Backend.Hosts) == 0 {
+		return fmt.Errorf("at least one backend host is required")
+	}
+	for _, h := range cfg.Backend.Hosts {
+		if h.Host == "" {
+			return fmt.Errorf("backend host cannot be empty")
+		}
+		if h.Port <= 0 || h.Port > 65535 {
+			return fmt.Errorf("invalid backend port: %d", h.Port)
+		}
+		if h.Role != "primary" && h.Role != "replica" {
+			return fmt.Errorf("invalid backend role: %s (must be primary or replica)", h.Role)
+		}
+	}
+	return nil
+}
+
 // handlePools handles pool listing and creation.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -500,8 +531,34 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPut:
-		// TODO: Update pool configuration
-		http.Error(w, "Not implemented", http.StatusNotImplemented)
+		// Update pool configuration
+		var req config.PoolConfig
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid JSON: "+sanitizeErr(err))
+			return
+		}
+
+		// Ensure pool name matches URL
+		req.Name = poolName
+
+		// Validate the configuration
+		if err := validatePoolConfig(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		// Update the pool
+		if err := s.poolMgr.UpdatePoolConfig(poolName, &req); err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to update pool: "+sanitizeErr(err))
+			return
+		}
+
+		s.log.Info("Pool updated via API", "pool", poolName)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":  "success",
+			"message": "Pool updated",
+			"pool":    poolName,
+		})
 
 	case http.MethodDelete:
 		// Remove the pool
@@ -649,9 +706,28 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	// Check if all pools are ready
 	pools := s.poolMgr.ListPools()
+	unhealthyPools := []string{}
 	for _, p := range pools {
-		// TODO: Check pool health
-		_ = p
+		stats := p.Stats()
+		// Check if pool has healthy backends
+		if stats.BackendCount == 0 {
+			unhealthyPools = append(unhealthyPools, stats.Name+": no backends")
+			continue
+		}
+		// Check if pool can accept connections
+		if stats.WaitingClients > stats.MaxServerConnections*2 {
+			unhealthyPools = append(unhealthyPools, stats.Name+": overloaded")
+		}
+	}
+
+	if len(unhealthyPools) > 0 {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"ready":   false,
+			"reason":  "unhealthy pools",
+			"pools":   unhealthyPools,
+			"timestamp": time.Now().UTC(),
+		})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1141,8 +1217,18 @@ func (s *Server) handleActiveTransactions(w http.ResponseWriter, r *http.Request
 
 	for _, l := range s.listeners {
 		if tm := l.TransactionManager(); tm != nil {
-			// TODO: Implement GetActiveTransactions method in TransactionManager
-			_ = tm
+			txns := tm.GetActiveTransactions()
+			for _, txn := range txns {
+				activeTxns = append(activeTxns, map[string]interface{}{
+					"id":             txn.ID,
+					"session_id":     txn.SessionID,
+					"server_conn_id": txn.ServerConnID,
+					"start_time":     txn.StartTime.UTC(),
+					"last_activity":  txn.LastActivity.UTC(),
+					"query_count":    txn.QueryCount.Load(),
+					"status":         txn.Status.String(),
+				})
+			}
 		}
 	}
 

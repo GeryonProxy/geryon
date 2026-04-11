@@ -42,6 +42,22 @@ const (
 	TxnCommitted
 )
 
+// String returns the string representation of TransactionStatus.
+func (s TransactionStatus) String() string {
+	switch s {
+	case TxnActive:
+		return "active"
+	case TxnIdle:
+		return "idle"
+	case TxnAborted:
+		return "aborted"
+	case TxnCommitted:
+		return "committed"
+	default:
+		return "unknown"
+	}
+}
+
 // NewTransactionManager creates a new transaction manager.
 func NewTransactionManager(timeout, idleTimeout time.Duration, log *logger.Logger) *TransactionManager {
 	if timeout == 0 {
@@ -243,6 +259,73 @@ func (tm *TransactionManager) GetStats() TransactionStats {
 	}
 
 	return stats
+}
+
+// GetActiveTransactions returns a list of all active transactions.
+func (tm *TransactionManager) GetActiveTransactions() []*TransactionInfo {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	var activeTxns []*TransactionInfo
+	now := time.Now()
+
+	for _, info := range tm.transactions {
+		info.mu.RLock()
+		if info.Status == TxnActive {
+			// Create a copy of the transaction info
+			txnCopy := &TransactionInfo{
+				ID:           info.ID,
+				SessionID:    info.SessionID,
+				StartTime:    info.StartTime,
+				LastActivity: info.LastActivity,
+				ServerConnID: info.ServerConnID,
+				Status:       info.Status,
+			}
+			// Copy atomic values
+			txnCopy.QueryCount.Store(info.QueryCount.Load())
+
+			// Calculate duration
+			duration := now.Sub(info.StartTime)
+
+			activeTxns = append(activeTxns, txnCopy)
+
+			tm.log.Debug("Active transaction",
+				"txn_id", info.ID,
+				"session_id", info.SessionID,
+				"duration", duration,
+				"queries", info.QueryCount.Load(),
+			)
+		}
+		info.mu.RUnlock()
+	}
+
+	return activeTxns
+}
+
+// GetTransactionDetails returns detailed information about a specific transaction.
+func (tm *TransactionManager) GetTransactionDetails(txnID uint64) *TransactionInfo {
+	tm.mu.RLock()
+	info, exists := tm.transactions[txnID]
+	tm.mu.RUnlock()
+
+	if !exists {
+		return nil
+	}
+
+	// Create a copy to return
+	info.mu.RLock()
+	copy := &TransactionInfo{
+		ID:           info.ID,
+		SessionID:    info.SessionID,
+		StartTime:    info.StartTime,
+		LastActivity: info.LastActivity,
+		ServerConnID: info.ServerConnID,
+		Status:       info.Status,
+	}
+	copy.QueryCount.Store(info.QueryCount.Load())
+	info.mu.RUnlock()
+
+	return copy
 }
 
 // Stop stops the transaction manager.

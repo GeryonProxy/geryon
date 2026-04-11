@@ -694,8 +694,7 @@ func (c *Coordinator) GetLeader() string {
 	if c.raftNode.IsLeader() {
 		return c.nodeID
 	}
-	// TODO: Track leader from Raft
-	return ""
+	return c.raftNode.GetLeaderID()
 }
 
 // GetMembers returns all cluster members.

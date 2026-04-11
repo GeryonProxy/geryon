@@ -472,7 +472,7 @@ func TestServerConnPoolSize(t *testing.T) {
 
 func BenchmarkPoolModeString(b *testing.B) {
 	for b.Loop() {
-		ModeTransaction.String()
+		_ = ModeTransaction.String()
 	}
 }
 

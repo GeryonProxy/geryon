@@ -49,6 +49,7 @@ type Node struct {
 	state             atomic.Value // NodeState
 	currentTerm       atomic.Uint64
 	votedFor          atomic.Value // string
+	leaderID          atomic.Value // string - tracks the current leader
 	logEntries        []Entry
 	logMu             sync.RWMutex
 
@@ -179,6 +180,7 @@ func NewNode(id, listenAddr string, peers []string, dataDir string, fsm FSM, log
 	}
 	n.state.Store(StateFollower)
 	n.votedFor.Store("")
+	n.leaderID.Store("")
 
 	// Initialize WAL
 	walPath := dataDir + "/raft.log"
@@ -233,6 +235,11 @@ func (n *Node) State() NodeState {
 // IsLeader returns true if this node is the leader.
 func (n *Node) IsLeader() bool {
 	return n.State() == StateLeader
+}
+
+// GetLeaderID returns the current leader's node ID, or empty string if unknown.
+func (n *Node) GetLeaderID() string {
+	return n.leaderID.Load().(string)
 }
 
 // CurrentTerm returns the current term.
@@ -422,6 +429,7 @@ func (n *Node) handleAppendEntries(msg Message) {
 	if req.Term >= n.currentTerm.Load() {
 		n.resetElectionTimer()
 		n.votedFor.Store(req.LeaderID)
+		n.leaderID.Store(req.LeaderID)
 
 		// Check if previous log entry matches
 		if req.PrevLogIndex == 0 || n.hasLogEntry(req.PrevLogIndex, req.PrevLogTerm) {
@@ -539,6 +547,7 @@ func (n *Node) becomeFollower(term uint64) {
 	n.currentTerm.Store(term)
 	n.state.Store(StateFollower)
 	n.votedFor.Store("")
+	n.leaderID.Store("") // Clear leader until we hear from the new one
 	n.stopHeartbeat()
 	n.resetElectionTimer()
 
@@ -550,6 +559,7 @@ func (n *Node) becomeCandidate() {
 	n.currentTerm.Add(1)
 	n.state.Store(StateCandidate)
 	n.votedFor.Store(n.id)
+	n.leaderID.Store("") // Clear leader since we're starting a new election
 
 	n.logger.Info("Became candidate", "term", n.currentTerm.Load())
 

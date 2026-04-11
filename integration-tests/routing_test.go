@@ -240,6 +240,10 @@ func extractTableName(query string) string {
 			fields := strings.Fields(rest)
 			if len(fields) > 0 {
 				table := fields[0]
+				// Skip subqueries - if table starts with '(' it's a subquery
+				if strings.HasPrefix(table, "(") {
+					return ""
+				}
 				// Remove backticks
 				table = strings.Trim(table, "`")
 				// Remove schema prefix
