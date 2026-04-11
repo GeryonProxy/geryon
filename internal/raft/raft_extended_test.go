@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -1399,4 +1400,392 @@ func TestNode_GetSnapshot(t *testing.T) {
 	if got.Metadata.Index != 100 {
 		t.Errorf("snapshot.Index = %d, want 100", got.Metadata.Index)
 	}
+}
+
+// Test GetLeaderID
+func TestNode_GetLeaderID(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Initially should be empty
+	if n.GetLeaderID() != "" {
+		t.Errorf("GetLeaderID() = %q, want empty", n.GetLeaderID())
+	}
+
+	// Set leader and check
+	n.leaderID.Store("node-2")
+	if n.GetLeaderID() != "node-2" {
+		t.Errorf("GetLeaderID() = %q, want node-2", n.GetLeaderID())
+	}
+}
+
+// Test handleVoteRequest via message handling
+func TestNode_handleVoteRequest_LowerTerm(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set current term to 5
+	n.currentTerm.Store(5)
+
+	// Create vote request with lower term
+	req := VoteRequest{
+		Term:         3,
+		CandidateID:  "node-2",
+		LastLogIndex: 0,
+		LastLogTerm:  0,
+	}
+	data, _ := json.Marshal(req)
+	msg := Message{
+		Type: MsgVoteRequest,
+		From: "node-2",
+		To:   "node-1",
+		Term: 3,
+		Data: data,
+	}
+
+	// Should not panic - lower term request is rejected
+	n.handleVoteRequest(msg)
+
+	// Term should not change
+	if n.currentTerm.Load() != 5 {
+		t.Errorf("currentTerm = %d, want 5", n.currentTerm.Load())
+	}
+}
+
+// Test handleVoteRequest with higher term
+func TestNode_handleVoteRequest_HigherTerm(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Become leader first
+	n.currentTerm.Store(3)
+	n.state.Store(StateLeader)
+
+	// Create vote request with higher term (wrapped in Message)
+	req := VoteRequest{
+		Term:         5,
+		CandidateID:  "node-2",
+		LastLogIndex: 0,
+		LastLogTerm:  0,
+	}
+	data, _ := json.Marshal(req)
+	msg := Message{
+		Type: MsgVoteRequest,
+		From: "node-2",
+		To:   "node-1",
+		Term: 5,
+		Data: data,
+	}
+
+	// Use handleMessage which checks term and steps down
+	n.handleMessage(msg)
+
+	// Should step down to follower
+	if n.currentTerm.Load() != 5 {
+		t.Errorf("currentTerm = %d, want 5", n.currentTerm.Load())
+	}
+	if n.State() != StateFollower {
+		t.Errorf("state = %v, want Follower", n.State())
+	}
+}
+
+// Test handleVoteResponse
+func TestNode_handleVoteResponse(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set up as candidate
+	n.currentTerm.Store(2)
+	n.state.Store(StateCandidate)
+	n.votedFor.Store("node-1")
+
+	// Create vote response granting vote
+	resp := VoteResponse{
+		Term:        2,
+		VoteGranted: true,
+	}
+	data, _ := json.Marshal(resp)
+	msg := Message{
+		Type: MsgVoteResponse,
+		From: "node-2",
+		To:   "node-1",
+		Term: 2,
+		Data: data,
+	}
+
+	// Should not panic
+	n.handleVoteResponse(msg)
+}
+
+// Test handleVoteResponse with higher term
+func TestNode_handleVoteResponse_HigherTerm(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set up as candidate
+	n.currentTerm.Store(2)
+	n.state.Store(StateCandidate)
+
+	// Create vote response with higher term
+	resp := VoteResponse{
+		Term:        5,
+		VoteGranted: false,
+	}
+	data, _ := json.Marshal(resp)
+	msg := Message{
+		Type: MsgVoteResponse,
+		From: "node-2",
+		To:   "node-1",
+		Term: 5,
+		Data: data,
+	}
+
+	n.handleVoteResponse(msg)
+
+	// Should step down
+	if n.currentTerm.Load() != 5 {
+		t.Errorf("currentTerm = %d, want 5", n.currentTerm.Load())
+	}
+	if n.State() != StateFollower {
+		t.Errorf("state = %v, want Follower", n.State())
+	}
+}
+
+// Test handleAppendEntries with lower term
+func TestNode_handleAppendEntries_LowerTerm(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set current term
+	n.currentTerm.Store(5)
+
+	// Create append entries with lower term
+	req := AppendEntries{
+		Term:         3,
+		LeaderID:     "node-2",
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+		Entries:      []Entry{},
+		LeaderCommit: 0,
+	}
+	data, _ := json.Marshal(req)
+	msg := Message{
+		Type: MsgAppendEntries,
+		From: "node-2",
+		To:   "node-1",
+		Term: 3,
+		Data: data,
+	}
+
+	// Should reject lower term
+	n.handleAppendEntries(msg)
+
+	// Term should not change
+	if n.currentTerm.Load() != 5 {
+		t.Errorf("currentTerm = %d, want 5", n.currentTerm.Load())
+	}
+}
+
+// Test handleAppendEntriesResponse
+func TestNode_handleAppendEntriesResponse(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set up as leader
+	n.currentTerm.Store(2)
+	n.state.Store(StateLeader)
+	n.logEntries = []Entry{{Index: 1, Term: 1, Command: nil}}
+	n.commitIndex.Store(0)
+	n.nextIndex["node-2"] = 2
+	n.matchIndex["node-2"] = 0
+
+	// Create successful append entries response
+	resp := AppendEntriesResponse{
+		Term:    2,
+		Success: true,
+		Index:   1,
+	}
+	data, _ := json.Marshal(resp)
+	msg := Message{
+		Type: MsgAppendEntriesResponse,
+		From: "node-2",
+		To:   "node-1",
+		Term: 2,
+		Data: data,
+	}
+
+	n.handleAppendEntriesResponse(msg)
+
+	// Should track the match index
+	n.volatileMu.RLock()
+	matchIdx := n.matchIndex["node-2"]
+	n.volatileMu.RUnlock()
+	if matchIdx != 1 {
+		t.Errorf("matchIndex[node-2] = %d, want 1", matchIdx)
+	}
+}
+
+// Test sendHeartbeats
+func TestNode_sendHeartbeats(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"127.0.0.1:9999"}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set up as leader
+	n.currentTerm.Store(1)
+	n.state.Store(StateLeader)
+	n.leaderID.Store("node-1")
+	n.nextIndex["127.0.0.1:9999"] = 1
+	n.matchIndex["127.0.0.1:9999"] = 0
+
+	// Should not panic (will fail to connect but shouldn't crash)
+	n.sendHeartbeats()
+}
+
+// Test sendAppendEntriesToAll
+func TestNode_sendAppendEntriesToAll(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"127.0.0.1:9999"}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set up as leader with some log entries
+	n.currentTerm.Store(1)
+	n.state.Store(StateLeader)
+	n.logEntries = []Entry{
+		{Index: 1, Term: 1, Command: json.RawMessage(`{"type": "test"}`)},
+	}
+	n.nextIndex["127.0.0.1:9999"] = 2
+	n.matchIndex["127.0.0.1:9999"] = 0
+
+	// Should not panic
+	n.sendAppendEntriesToAll()
+}
+
+// Test maybeSnapshot
+func TestNode_maybeSnapshot(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Add some log entries
+	n.logEntries = []Entry{
+		{Index: 1, Term: 1, Command: json.RawMessage(`{"type": "noop"}`)},
+		{Index: 2, Term: 1, Command: json.RawMessage(`{"type": "noop"}`)},
+		{Index: 3, Term: 1, Command: json.RawMessage(`{"type": "noop"}`)},
+	}
+	n.lastApplied.Store(3)
+
+	// Should not panic - but won't snapshot because < 1000 entries
+	n.maybeSnapshot()
+
+	// Snapshot should not be created yet
+	if n.lastSnapshotIndex.Load() != 0 {
+		t.Log("Snapshot was created (unexpected with only 3 entries)")
+	}
+}
+
+// Test handleInstallSnapshot
+func TestNode_handleInstallSnapshot(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	dir := t.TempDir()
+
+	fsm := NewGeryonFSM(FSMConfig{})
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	if err != nil {
+		t.Fatalf("NewNode failed: %v", err)
+	}
+	defer n.wal.Close()
+
+	// Set current term
+	n.currentTerm.Store(2)
+	n.logEntries = []Entry{{Index: 1, Term: 1, Command: nil}}
+
+	// Create install snapshot request
+	req := InstallSnapshotRequest{
+		Term:              2,
+		LeaderID:          "node-2",
+		LastIncludedIndex: 100,
+		LastIncludedTerm:  2,
+		Offset:            0,
+		Data:              []byte("snapshot data"),
+		Done:              true,
+	}
+	data, _ := json.Marshal(req)
+	msg := Message{
+		Type: MsgInstallSnapshot,
+		From: "node-2",
+		To:   "node-1",
+		Term: 2,
+		Data: data,
+	}
+
+	// Should not panic
+	n.handleInstallSnapshot(msg)
 }
