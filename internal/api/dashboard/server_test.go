@@ -401,3 +401,97 @@ func TestDashboardRateLimiter(t *testing.T) {
 		t.Error("Different IP should return different limiter")
 	}
 }
+
+// TestHandleConnections tests the handleConnections endpoint
+func TestHandleConnections(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &Config{
+		Enabled: true,
+		Listen:  "127.0.0.1:0",
+		Auth:    config.RESTAuthConfig{Enabled: false},
+	}
+
+	t.Run("no_pools", func(t *testing.T) {
+		pm := pool.NewManager(log)
+		s := NewServer(cfg, pm, log, nil)
+
+		req := httptest.NewRequest("GET", "/api/connections", nil)
+		rr := httptest.NewRecorder()
+
+		s.handleConnections(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+			t.Fatalf("JSON decode failed: %v", err)
+		}
+
+		// connections can be nil or an array
+		connections, _ := result["connections"].([]interface{})
+		if connections == nil {
+			connections = []interface{}{}
+		}
+		if len(connections) != 0 {
+			t.Errorf("connections length = %d, want 0", len(connections))
+		}
+	})
+
+	t.Run("with_pools", func(t *testing.T) {
+		pm := pool.NewManager(log)
+
+		// Create a pool
+		poolCfg := &config.PoolConfig{
+			Name: "test-pool",
+			Body: "postgresql",
+			Mode: "transaction",
+			Listen: config.ListenConfig{
+				Host: "127.0.0.1",
+				Port: 0,
+			},
+			Backend: config.BackendConfig{
+				Hosts: []config.BackendHost{
+					{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+				},
+			},
+		}
+		pm.CreatePool(poolCfg)
+
+		s := NewServer(cfg, pm, log, nil)
+
+		req := httptest.NewRequest("GET", "/api/connections", nil)
+		rr := httptest.NewRecorder()
+
+		s.handleConnections(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		var result map[string]interface{}
+		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+			t.Fatalf("JSON decode failed: %v", err)
+		}
+
+		connections, ok := result["connections"].([]interface{})
+		if !ok {
+			t.Fatal("connections should be an array")
+		}
+		if len(connections) == 0 {
+			t.Error("connections should not be empty")
+		}
+
+		// Check first connection has expected fields
+		if len(connections) > 0 {
+			first, ok := connections[0].(map[string]interface{})
+			if !ok {
+				t.Fatal("first connection should be an object")
+			}
+			if _, ok := first["pool_name"]; !ok {
+				t.Error("first connection should have pool_name")
+			}
+		}
+	})
+}
