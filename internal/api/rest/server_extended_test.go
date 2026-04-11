@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
@@ -809,5 +810,184 @@ func TestServer_PoolDetail_NotFound(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("Status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// Test periodicCleanup function - removed since rateLimiter is internal to middleware
+
+// Test handleConnections endpoint
+func TestServer_Connections(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(context.Background())
+
+	// Test GET /connections
+	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/connections")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	// Test POST (should fail)
+	resp2, err := http.Post("http://"+s.listener.Addr().String()+"/api/v1/connections", "application/json", nil)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST Status = %d, want 405", resp2.StatusCode)
+	}
+}
+
+// Test handleBackends endpoint
+func TestServer_Backends(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(context.Background())
+
+	// Test GET /backends (returns empty list when no pools)
+	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/backends")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// Test validatePoolName function
+func Test_validatePoolName(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"valid-pool", true},
+		{"another_valid_pool", true},
+		{"pool123", true},
+		{"", false},
+		{"pool with spaces", false},
+		{"pool/with/slashes", false},
+		{"../etc/passwd", false},
+	}
+
+	for _, tt := range tests {
+		result := validatePoolName(tt.name)
+		if result != tt.expected {
+			t.Errorf("validatePoolName(%q) = %v, want %v", tt.name, result, tt.expected)
+		}
+	}
+}
+
+// Test sanitizeErr function
+func Test_sanitizeErr(t *testing.T) {
+	tests := []struct {
+		input    error
+		expected string
+	}{
+		{fmt.Errorf("normal error"), "normal error"},
+		{fmt.Errorf("error with sensitive data"), "error with sensitive data"},
+	}
+
+	for _, tt := range tests {
+		result := sanitizeErr(tt.input)
+		if result != tt.expected {
+			t.Errorf("sanitizeErr(%v) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+// Test withCORS options request
+func Test_withCORS_Options(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(context.Background())
+
+	// Test OPTIONS request
+	req, _ := http.NewRequest("OPTIONS", "http://"+s.listener.Addr().String()+"/api/v1/pools", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("OPTIONS Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// Test handleConfigReload with GET (not allowed)
+func TestServer_ConfigReload_Get(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminRESTConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: false},
+	}
+	pm := pool.NewManager(log)
+	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop(context.Background())
+
+	// Test GET /config/reload (should fail)
+	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/config/reload")
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET Status = %d, want 405", resp.StatusCode)
 	}
 }
