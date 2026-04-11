@@ -1036,3 +1036,174 @@ func (c *errorConn) RemoteAddr() net.Addr               { return nil }
 func (c *errorConn) SetDeadline(t time.Time) error      { return nil }
 func (c *errorConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *errorConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// Test sendSimpleResult
+func TestSendSimpleResult(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Test with rows and columns
+	rows := [][]interface{}{{1, "test"}, {2, "test2"}}
+	columns := []string{"id", "name"}
+
+	err := f.sendSimpleResult(rows, columns)
+	if err != nil {
+		t.Errorf("sendSimpleResult failed: %v", err)
+	}
+
+	// Should have written multiple packets
+	if conn.Buffer.Len() == 0 {
+		t.Error("sendSimpleResult wrote nothing")
+	}
+}
+
+// Test sendSimpleResult with empty result
+func TestSendSimpleResult_Empty(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// Test with no rows
+	rows := [][]interface{}{}
+	columns := []string{"id"}
+
+	err := f.sendSimpleResult(rows, columns)
+	if err != nil {
+		t.Errorf("sendSimpleResult failed: %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("sendSimpleResult wrote nothing")
+	}
+}
+
+// Test handleShowQuery with VERSION
+func TestHandleShowQuery_Version(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// SHOW VERSION()
+	err := f.handleShowQuery("VERSION()")
+
+	if err != nil {
+		t.Errorf("handleShowQuery should handle VERSION(): %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleShowQuery wrote nothing")
+	}
+}
+
+// Test handleShowQuery with DATABASES
+func TestHandleShowQuery_Databases(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// SHOW DATABASES
+	err := f.handleShowQuery("DATABASES")
+
+	if err != nil {
+		t.Errorf("handleShowQuery should handle DATABASES: %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleShowQuery wrote nothing")
+	}
+}
+
+// Test handleShowQuery with TABLES
+func TestHandleShowQuery_Tables(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+	f.database = "testdb"
+
+	// SHOW TABLES
+	err := f.handleShowQuery("TABLES")
+
+	if err != nil {
+		t.Errorf("handleShowQuery should handle TABLES: %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleShowQuery wrote nothing")
+	}
+}
+
+// Test handleShowQuery with unrecognized query
+func TestHandleShowQuery_Unrecognized(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// SHOW UNKNOWN - returns OK for any unrecognized query
+	err := f.handleShowQuery("UNKNOWN")
+
+	// Function returns OK for unrecognized queries (doesn't error)
+	if err != nil {
+		t.Errorf("handleShowQuery should not error for unrecognized queries: %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleShowQuery wrote nothing")
+	}
+}
+
+// Test handleShowQuery with GRANTS
+func TestHandleShowQuery_Grants(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+	f.user = &auth.User{Username: "testuser"}
+	f.database = "testdb"
+
+	// SHOW GRANTS
+	err := f.handleShowQuery("GRANTS")
+
+	if err != nil {
+		t.Errorf("handleShowQuery should handle GRANTS: %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleShowQuery wrote nothing")
+	}
+}
+
+// Test handleShowQuery with STATUS
+func TestHandleShowQuery_Status(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// SHOW STATUS
+	err := f.handleShowQuery("STATUS")
+
+	if err != nil {
+		t.Errorf("handleShowQuery should handle STATUS: %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleShowQuery wrote nothing")
+	}
+}
+
+// Test handleShowQuery with VARIABLES
+func TestHandleShowQuery_Variables(t *testing.T) {
+	conn := newMockConn()
+	log, _ := logger.New("info", "json")
+	f := NewFrontend(conn, nil, nil, log)
+
+	// SHOW VARIABLES
+	err := f.handleShowQuery("VARIABLES")
+
+	if err != nil {
+		t.Errorf("handleShowQuery should handle VARIABLES: %v", err)
+	}
+
+	if conn.Buffer.Len() == 0 {
+		t.Error("handleShowQuery wrote nothing")
+	}
+}
