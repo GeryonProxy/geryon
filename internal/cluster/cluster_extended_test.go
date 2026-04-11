@@ -511,3 +511,32 @@ func TestConfig_Fields(t *testing.T) {
 		t.Errorf("HeartbeatInterval = %v, want 200ms", cfg.HeartbeatInterval)
 	}
 }
+
+// Test cluster quorum function
+func TestCluster_quorum(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	c := New(Config{
+		NodeID:     "node-1",
+		ListenAddr: "127.0.0.1:0",
+		Logger:     log,
+	})
+
+	// quorum should return 1 for single node
+	if c.quorum() != 1 {
+		t.Errorf("quorum with single node should be 1")
+	}
+}
+
+// Test ShareBackendHealth
+func TestCluster_ShareBackendHealth(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	c := New(Config{
+		NodeID:     "node-1",
+		ListenAddr: "127.0.0.1:0",
+		Logger:     log,
+	})
+
+	// Should not panic
+	c.ShareBackendHealth("backend1", true)
+}
+

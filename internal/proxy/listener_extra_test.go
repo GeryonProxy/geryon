@@ -326,3 +326,54 @@ func TestListener_TransactionManagerIntegration(t *testing.T) {
 		t.Error("TransactionManager should be initialized")
 	}
 }
+
+// Test isSelectQuery with various inputs
+func TestIsSelectQuery_Various(t *testing.T) {
+	tests := []struct {
+		query    string
+		expected bool
+	}{
+		{"SELECT * FROM users", true},
+		{"select 1", true},
+		{"  SELECT count(*)", true},
+		{"WITH cte AS (SELECT 1) SELECT * FROM cte", true},
+		{"INSERT INTO users", false},
+		{"UPDATE users SET", false},
+		{"DELETE FROM users", false},
+		{"DROP TABLE users", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		result := isSelectQuery(tt.query)
+		if result != tt.expected {
+			t.Errorf("isSelectQuery(%q) = %v, want %v", tt.query, result, tt.expected)
+		}
+	}
+}
+
+// Test isModificationQuery with various inputs
+func TestIsModificationQuery_Various(t *testing.T) {
+	tests := []struct {
+		query    string
+		expected bool
+	}{
+		{"INSERT INTO t VALUES (1)", true},
+		{"UPDATE t SET x=1", true},
+		{"DELETE FROM t", true},
+		{"TRUNCATE TABLE t", true},
+		{"DROP TABLE t", true},
+		{"ALTER TABLE t ADD x INT", true},
+		{"CREATE TABLE t (x INT)", true},
+		{"SELECT * FROM t", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		result := isModificationQuery(tt.query)
+		if result != tt.expected {
+			t.Errorf("isModificationQuery(%q) = %v, want %v", tt.query, result, tt.expected)
+		}
+	}
+}
+
