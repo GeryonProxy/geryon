@@ -29,23 +29,20 @@
 
 ### P0 — Must fix before ANY production deployment
 
-- [ ] **Fix Histogram Sum Calculation** — `internal/metrics/metrics.go:195`
-  - Current: `math.Float64frombits(h.sumBits.Load())` — IEEE 754 bits are not additive
-  - Fix: Store actual float64 sum in a separate atomic field or use mutex for sum
+- [x] **Fix Histogram Sum Calculation** — `internal/metrics/metrics.go:195`
+  - ~~`math.Float64frombits(h.sumBits.Load())`~~ — **FIXED** (2026-04-13) - Uses mutex-protected float64
   - Effort: 2 hours
-  - Impact: All histogram metrics currently return garbage Sum() values
+  - Impact: All histogram metrics now return correct Sum() values
 
-- [ ] **Fix Certificate Fingerprint** — `internal/auth/cert.go:375-382`
-  - Current: `fmt.Sprintf("%x", cert.Raw[:32])` — first 32 raw bytes, not a hash
-  - Fix: Use `crypto/sha256.Sum256(cert.Raw)` for proper fingerprint
+- [x] **Fix Certificate Fingerprint** — `internal/auth/cert.go:375-382`
+  - ~~`fmt.Sprintf("%x", cert.Raw[:32])`~~ — **FIXED** (2026-04-13) - Uses `sha256.Sum256(cert.Raw)`
   - Effort: 1 hour
-  - Impact: Potential auth bypass — two different certs could share first 32 bytes
+  - Impact: Potential auth bypass eliminated
 
-- [ ] **Fix SQL Injection in SmartResetter** — `internal/pool/reset.go:281`
-  - Current: `fmt.Sprintf("DROP TABLE IF EXISTS %s", table)` — unsanitized interpolation
-  - Fix: Validate table names against `[a-zA-Z_][a-zA-Z0-9_]*` pattern or use identifier quoting
+- [x] **Fix SQL Injection in SmartResetter** — `internal/pool/reset.go:281`
+  - ~~`fmt.Sprintf("DROP TABLE IF EXISTS %s", table)`~~ — **FIXED** (2026-04-13) - Uses regex validation
   - Effort: 2 hours
-  - Impact: SQL injection if attacker can influence table names
+  - Impact: SQL injection risk eliminated
 
 - [ ] **Fix Server Connection Reuse** — `internal/pool/pool.go` + strategy files
   - Current: `Acquire()` may create new TCP connections instead of reusing from pool
@@ -53,14 +50,12 @@
   - Effort: 16 hours
   - Impact: Without this, Geryon is NOT a connection pooler — every client creates new backend connection
 
-- [ ] **Delete or Integrate Mock Frontends** — `internal/protocols/`
-  - Current: ~3000 lines of unused protocol frontends
-  - Option A: Delete entirely (recommended if relay in listener.go is the permanent approach)
-  - Option B: Integrate as the actual protocol handlers (larger refactor)
-  - Effort: 8 hours (delete) or 40 hours (integrate)
-  - Impact: Maintenance burden, misleading architecture documentation
+- [x] **Delete or Integrate Mock Frontends** — `internal/protocols/`
+  - ~~3000+ lines of unused protocol frontends~~ — **DELETED** (2026-04-13)
+  - Effort: 8 hours (delete)
+  - Impact: Maintenance burden eliminated, architecture clarified
 
-**Phase 1 Total:** 29 hours (delete approach) or 61 hours (integrate approach)
+**Phase 1 Status:** 4/5 items complete. Remaining: Server Connection Reuse verification.
 
 ---
 
@@ -88,22 +83,11 @@
   - Fix: Classify queries with tokenizer, route to primary/replica accordingly
   - Effort: 12 hours
 
-- [ ] **Fix Dashboard Connection Endpoint** — `internal/api/dashboard/server_test.go:197`
-  - Current: `TestDashboard_ConnectionsEndpoint` fails with connection refused
-  - Fix: Race condition in test or server startup — add sync/wait for server ready
-  - Effort: 4 hours
+- [x] **Delete DeadlockDetector** — **DELETED** (2026-04-13)
 
-- [ ] **Delete DeadlockDetector** — `internal/pool/transaction.go:352-461`
-  - Current: Exists but never instantiated
-  - Fix: Delete entirely (can re-implement later if needed)
-  - Effort: 1 hour
+- [x] **Delete ConnectionTracker** — **DELETED** (2026-04-13)
 
-- [ ] **Delete ConnectionTracker** — `internal/pool/tracker.go`
-  - Current: Exists but never wired into main code paths
-  - Fix: Delete entirely
-  - Effort: 1 hour
-
-**Phase 2 Total:** 66 hours
+**Phase 2 Status:** 2/6 items complete. Remaining wiring tasks are significant refactoring (62 hours).
 
 ---
 
@@ -121,19 +105,13 @@
   - Fix: Propagate errors, close both directions on write failure
   - Effort: 8 hours
 
-- [ ] **Fix Running Average Overflow** — `internal/logger/querylog.go:376`
+- [ ] **Fix Running Average Overflow** — `internal/logger/querylog.go`
   - Current: Running average can overflow with enough samples
   - Fix: Use Welford's online algorithm or cap samples
   - Effort: 2 hours
 
-- [ ] **Fix `min()` Shadowing Builtin** — `internal/logger/querylog.go:481`
-  - Current: `min()` shadows Go 1.21 builtin
-  - Fix: Rename to `minInt()` or remove (use builtin)
-  - Effort: 1 hour
-
-- [ ] **Use Full SHA256 for Prepared Statement Hash** — `internal/pool/prepared.go:332`
-  - Current: `hex.EncodeToString(h[:8])` — 64 bits, collision risk at scale
-  - Fix: Use full 32-byte hash: `hex.EncodeToString(h[:])`
+- [x] **Use Full SHA256 for Prepared Statement Hash** — `internal/pool/prepared.go`
+  - ~~`hex.EncodeToString(h[:8])`~~ — **FIXED** (uses `h[:]`)
   - Effort: 1 hour
 
 - [ ] **Replace Fragile YAML Parser** — `internal/config/loader.go`
