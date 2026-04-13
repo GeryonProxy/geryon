@@ -1,0 +1,610 @@
+package dashboard
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/GeryonProxy/geryon/internal/config"
+	"github.com/GeryonProxy/geryon/internal/logger"
+	"github.com/GeryonProxy/geryon/internal/pool"
+)
+
+func TestDashboard_PeriodicCleanup(t *testing.T) {
+	rl := newDashboardRateLimiter(10, 5)
+	rl.mu.Lock()
+	rl.cleanupTTL = 50 * time.Millisecond
+	rl.mu.Unlock()
+
+	rl.GetLimiter("10.0.0.1")
+	rl.GetLimiter("10.0.0.2")
+
+	rl.mu.Lock()
+	initialCount := len(rl.limiters)
+	rl.mu.Unlock()
+	if initialCount != 2 {
+		t.Fatalf("expected 2 limiters, got %d", initialCount)
+	}
+
+	rl.mu.Lock()
+	rl.lastSeen["10.0.0.1"] = time.Now().Add(-1 * time.Hour)
+	rl.lastSeen["10.0.0.2"] = time.Now().Add(-1 * time.Hour)
+	rl.mu.Unlock()
+
+	time.Sleep(150 * time.Millisecond)
+
+	rl.mu.Lock()
+	afterCount := len(rl.limiters)
+	rl.mu.Unlock()
+	if afterCount != 0 {
+		t.Errorf("expected 0 limiters after cleanup, got %d", afterCount)
+	}
+}
+
+func TestDashboard_WithAuth_WrongToken(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: "secret"}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/health", nil)
+	req.Header.Set("Authorization", "Bearer wrongtoken")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestDashboard_WithAuth_InvalidFormat(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: "secret"}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/health", nil)
+	req.Header.Set("Authorization", "Basic secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestDashboard_HandleStats_WithPools(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "stats-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/stats")
+	if err != nil {
+		t.Fatalf("GET /stats failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDashboard_HandleBackends_WithPools(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "backend-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/backends")
+	if err != nil {
+		t.Fatalf("GET /backends failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDashboard_HandlePools_WithPools(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "test-pool-d",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/pools")
+	if err != nil {
+		t.Fatalf("GET /pools failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDashboard_HandleQueries_WithPools(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "query-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/queries")
+	if err != nil {
+		t.Fatalf("GET /queries failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDashboard_HandleConfigReload_Error(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, func() error {
+		return fmt.Errorf("reload failed")
+	})
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Post("http://"+cfg.Listen+"/api/v1/config", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /config failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Dashboard returns 200 with error status in body
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	if data["status"] != "error" {
+		t.Errorf("status = %v, want error", data["status"])
+	}
+}
+
+func TestDashboard_Stop_NilServer(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: false, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	err := s.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	err = s.Stop()
+	if err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
+func TestDashboard_HandleConnections_WithPoolsData(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "conn-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/connections")
+	if err != nil {
+		t.Fatalf("GET /connections failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+}
+
+func TestDashboard_ConfigReload_NoReloadFn(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Post("http://"+cfg.Listen+"/api/v1/config", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /config failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// --- GetLimiter maxSize eviction ---
+
+func TestDashboard_GetLimiter_MaxSizeEviction(t *testing.T) {
+	rl := newDashboardRateLimiter(5, 15)
+	rl.maxSize = 3
+
+	// Fill to max
+	rl.GetLimiter("10.0.0.1")
+	time.Sleep(1 * time.Millisecond)
+	rl.GetLimiter("10.0.0.2")
+	time.Sleep(1 * time.Millisecond)
+	rl.GetLimiter("10.0.0.3")
+
+	if len(rl.limiters) != 3 {
+		t.Fatalf("Expected 3 limiters, got %d", len(rl.limiters))
+	}
+
+	// Adding a 4th should evict the oldest
+	rl.GetLimiter("10.0.0.4")
+
+	rl.mu.Lock()
+	count := len(rl.limiters)
+	rl.mu.Unlock()
+	if count != 3 {
+		t.Errorf("Expected 3 limiters after eviction, got %d", count)
+	}
+
+	// 10.0.0.1 should have been evicted (oldest)
+	rl.mu.Lock()
+	_, exists := rl.limiters["10.0.0.1"]
+	rl.mu.Unlock()
+	if exists {
+		t.Error("10.0.0.1 should have been evicted as oldest")
+	}
+
+	// 10.0.0.4 should exist
+	rl.mu.Lock()
+	_, exists = rl.limiters["10.0.0.4"]
+	rl.mu.Unlock()
+	if !exists {
+		t.Error("10.0.0.4 should exist")
+	}
+}
+
+// --- handleConnections with active transactions ---
+
+func TestDashboard_HandleConnections_ActiveTxns(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "txn-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+
+	// Register a transaction to make ActiveTransactions > 0
+	p := pm.GetPool("txn-pool")
+	if p != nil && p.TransactionManager() != nil {
+		p.TransactionManager().Register(1, 1, nil)
+	}
+
+	s := NewServer(cfg, pm, log, nil)
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/connections")
+	if err != nil {
+		t.Fatalf("GET /connections failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+
+	connections, _ := data["connections"].([]interface{})
+	if len(connections) < 2 {
+		t.Errorf("Expected at least 2 connection entries (pool + txn), got %d", len(connections))
+	}
+
+	if p != nil && p.TransactionManager() != nil {
+		p.TransactionManager().Stop()
+	}
+}
+
+// --- handleStats with cache hit rate ---
+
+func TestDashboard_HandleStats_WithCacheHitRate(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "cache-stats-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Cache: config.CacheConfig{
+			Enabled: true,
+		},
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+
+	// Manually set some query count to have non-zero stats
+	p := pm.GetPool("cache-stats-pool")
+	if p != nil {
+		p.IncrementQueryCount()
+		p.IncrementQueryCount()
+		p.IncrementQueryCount()
+	}
+
+	s := NewServer(cfg, pm, log, nil)
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/stats")
+	if err != nil {
+		t.Fatalf("GET /stats failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+
+	totalQueries, ok := data["total_queries"].(float64)
+	if !ok {
+		t.Fatal("total_queries should be a number")
+	}
+	if totalQueries < 3 {
+		t.Errorf("total_queries = %v, want >= 3", totalQueries)
+	}
+}
+
+// --- handleIndex with non-root path ---
+
+func TestDashboard_HandleIndex_NonRootPath(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	req := httptest.NewRequest("GET", "/some/random/path", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleIndex(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Status = %d, want 404 for non-root path", rr.Code)
+	}
+}
+
+// --- withRateLimit with non-hostport RemoteAddr ---
+
+func TestDashboard_WithRateLimit_NonHostPort(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	// Create a handler that records whether it was called
+	called := false
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrapped := s.withRateLimit(handler)
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "no-colon-or-port"
+	rr := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(rr, req)
+
+	if !called {
+		t.Error("Handler should have been called even with non-hostport RemoteAddr")
+	}
+}
+
+// --- ConfigReload with nil reloadFn via httptest ---
+
+func TestDashboard_ConfigReload_NilReloadFn_Direct(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	req := httptest.NewRequest("POST", "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleConfigReload(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want 200", rr.Code)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	if data["status"] != "reloaded" {
+		t.Errorf("status = %v, want reloaded", data["status"])
+	}
+}
