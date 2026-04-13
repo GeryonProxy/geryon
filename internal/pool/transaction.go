@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,13 +12,15 @@ import (
 
 // TransactionManager manages active transactions and handles timeouts.
 type TransactionManager struct {
-	mu              sync.RWMutex
-	transactions    map[uint64]*TransactionInfo
-	timeout         time.Duration
-	idleTimeout     time.Duration
-	checkInterval   time.Duration
-	stopCh          chan struct{}
-	log             *logger.Logger
+	mu               sync.RWMutex
+	transactions     map[uint64]*TransactionInfo
+	timeout          time.Duration
+	idleTimeout      time.Duration
+	checkInterval    time.Duration
+	stopCh           chan struct{}
+	log              *logger.Logger
+	onAbort          func(sessionID uint64)                  // Callback to abort backend transaction
+	onAbortWithConn  func(sessionID uint64, serverConn net.Conn) // Callback with backend connection
 }
 
 // TransactionInfo represents information about an active transaction.
@@ -29,6 +32,7 @@ type TransactionInfo struct {
 	ServerConnID    uint64
 	QueryCount      atomic.Int32
 	Status          TransactionStatus
+	AbortFunc       func() // Called by checkTimeouts to abort backend transaction
 	mu              sync.RWMutex
 }
 
@@ -59,19 +63,22 @@ func (s TransactionStatus) String() string {
 }
 
 // NewTransactionManager creates a new transaction manager.
-func NewTransactionManager(timeout, idleTimeout time.Duration, log *logger.Logger) *TransactionManager {
+func NewTransactionManager(timeout, idleTimeout, checkInterval time.Duration, log *logger.Logger) *TransactionManager {
 	if timeout == 0 {
 		timeout = 30 * time.Minute // Default 30 min transaction timeout
 	}
 	if idleTimeout == 0 {
 		idleTimeout = 5 * time.Minute // Default 5 min idle timeout
 	}
+	if checkInterval == 0 {
+		checkInterval = 30 * time.Second
+	}
 
 	tm := &TransactionManager{
 		transactions:  make(map[uint64]*TransactionInfo),
 		timeout:       timeout,
 		idleTimeout:   idleTimeout,
-		checkInterval: 30 * time.Second,
+		checkInterval: checkInterval,
 		stopCh:        make(chan struct{}),
 		log:           log,
 	}
@@ -82,8 +89,23 @@ func NewTransactionManager(timeout, idleTimeout time.Duration, log *logger.Logge
 	return tm
 }
 
+// OnAbort sets a callback invoked when a transaction is aborted due to timeout.
+func (tm *TransactionManager) OnAbort(fn func(sessionID uint64)) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.onAbort = fn
+}
+
+// SetOnAbortWithConn sets a callback invoked when a transaction is aborted.
+// This variant receives the backend connection so ROLLBACK can be sent.
+func (tm *TransactionManager) SetOnAbortWithConn(fn func(sessionID uint64, serverConn net.Conn)) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.onAbortWithConn = fn
+}
+
 // Register registers a new transaction.
-func (tm *TransactionManager) Register(sessionID, serverConnID uint64) *TransactionInfo {
+func (tm *TransactionManager) Register(sessionID, serverConnID uint64, abortFn func()) *TransactionInfo {
 	info := &TransactionInfo{
 		ID:           generateTxnID(),
 		SessionID:    sessionID,
@@ -91,6 +113,7 @@ func (tm *TransactionManager) Register(sessionID, serverConnID uint64) *Transact
 		LastActivity: time.Now(),
 		ServerConnID: serverConnID,
 		Status:       TxnActive,
+		AbortFunc:    abortFn,
 	}
 
 	tm.mu.Lock()
@@ -197,6 +220,11 @@ func (tm *TransactionManager) checkTimeouts() {
 	}
 	tm.mu.RUnlock()
 
+	// Get the abort callback (under read lock to avoid race with OnAbort)
+	tm.mu.RLock()
+	onAbort := tm.onAbort
+	tm.mu.RUnlock()
+
 	// Handle transaction timeouts
 	for _, info := range timeouts {
 		tm.log.Warn("Transaction timeout",
@@ -205,6 +233,16 @@ func (tm *TransactionManager) checkTimeouts() {
 			"duration", now.Sub(info.StartTime),
 		)
 		tm.SetStatus(info.ID, TxnAborted)
+		// Call per-transaction abort function if set
+		info.mu.RLock()
+		abortFn := info.AbortFunc
+		info.mu.RUnlock()
+		if abortFn != nil {
+			abortFn()
+		}
+		if onAbort != nil {
+			onAbort(info.SessionID)
+		}
 	}
 
 	// Handle idle timeouts
@@ -215,6 +253,16 @@ func (tm *TransactionManager) checkTimeouts() {
 			"idle_time", now.Sub(info.LastActivity),
 		)
 		tm.SetStatus(info.ID, TxnIdle)
+		// Call per-transaction abort function if set
+		info.mu.RLock()
+		abortFn := info.AbortFunc
+		info.mu.RUnlock()
+		if abortFn != nil {
+			abortFn()
+		}
+		if onAbort != nil {
+			onAbort(info.SessionID)
+		}
 	}
 }
 
@@ -347,117 +395,6 @@ var txnIDCounter atomic.Uint64
 
 func generateTxnID() uint64 {
 	return txnIDCounter.Add(1)
-}
-
-// DeadlockDetector detects potential deadlocks.
-type DeadlockDetector struct {
-	mu          sync.RWMutex
-	waitGraph   map[uint64]map[uint64]bool // session -> sessions it's waiting for
-	timeout     time.Duration
-	log         *logger.Logger
-}
-
-// NewDeadlockDetector creates a new deadlock detector.
-func NewDeadlockDetector(timeout time.Duration, log *logger.Logger) *DeadlockDetector {
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-
-	return &DeadlockDetector{
-		waitGraph: make(map[uint64]map[uint64]bool),
-		timeout:   timeout,
-		log:       log,
-	}
-}
-
-// AddWait adds a wait relationship.
-func (dd *DeadlockDetector) AddWait(sessionID, waitingForSessionID uint64) {
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	if _, exists := dd.waitGraph[sessionID]; !exists {
-		dd.waitGraph[sessionID] = make(map[uint64]bool)
-	}
-	dd.waitGraph[sessionID][waitingForSessionID] = true
-
-	// Check for cycle
-	if dd.detectCycle() {
-		dd.log.Warn("Potential deadlock detected", "session", sessionID)
-	}
-}
-
-// RemoveWait removes a wait relationship.
-func (dd *DeadlockDetector) RemoveWait(sessionID, waitingForSessionID uint64) {
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	if waits, exists := dd.waitGraph[sessionID]; exists {
-		delete(waits, waitingForSessionID)
-		if len(waits) == 0 {
-			delete(dd.waitGraph, sessionID)
-		}
-	}
-}
-
-// ClearSession removes all wait relationships for a session.
-func (dd *DeadlockDetector) ClearSession(sessionID uint64) {
-	dd.mu.Lock()
-	defer dd.mu.Unlock()
-
-	delete(dd.waitGraph, sessionID)
-
-	// Remove references from other sessions
-	for _, waits := range dd.waitGraph {
-		delete(waits, sessionID)
-	}
-}
-
-// detectCycle detects if there's a cycle in the wait graph.
-func (dd *DeadlockDetector) detectCycle() bool {
-	visited := make(map[uint64]bool)
-	recStack := make(map[uint64]bool)
-
-	for node := range dd.waitGraph {
-		if !visited[node] {
-			if dd.hasCycleDFS(node, visited, recStack) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// hasCycleDFS performs DFS to detect cycle.
-func (dd *DeadlockDetector) hasCycleDFS(node uint64, visited, recStack map[uint64]bool) bool {
-	visited[node] = true
-	recStack[node] = true
-
-	for neighbor := range dd.waitGraph[node] {
-		if !visited[neighbor] {
-			if dd.hasCycleDFS(neighbor, visited, recStack) {
-				return true
-			}
-		} else if recStack[neighbor] {
-			return true
-		}
-	}
-
-	recStack[node] = false
-	return false
-}
-
-// GetWaitingSessions returns sessions that a session is waiting for.
-func (dd *DeadlockDetector) GetWaitingSessions(sessionID uint64) []uint64 {
-	dd.mu.RLock()
-	defer dd.mu.RUnlock()
-
-	result := make([]uint64, 0)
-	if waits, exists := dd.waitGraph[sessionID]; exists {
-		for sid := range waits {
-			result = append(result, sid)
-		}
-	}
-	return result
 }
 
 // ContextWithTransactionTimeout creates a context with transaction timeout.

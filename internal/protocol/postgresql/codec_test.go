@@ -2,6 +2,8 @@ package postgresql
 
 import (
 	"bytes"
+	"encoding/binary"
+	"net"
 	"testing"
 
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
@@ -459,4 +461,312 @@ func TestCodec_ExtractBindStatementName(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCodec_BuildParsePayload(t *testing.T) {
+	c := NewCodec()
+
+	tests := []struct {
+		name       string
+		stmtName   string
+		query      string
+		paramOIDs  []int32
+	}{
+		{
+			name:      "simple query",
+			stmtName:  "test_stmt",
+			query:     "SELECT 1",
+			paramOIDs: nil,
+		},
+		{
+			name:      "with parameters",
+			stmtName:  "ins_stmt",
+			query:     "INSERT INTO t VALUES ($1, $2)",
+			paramOIDs: []int32{23, 25},
+		},
+		{
+			name:      "empty statement name",
+			stmtName:  "",
+			query:     "SELECT * FROM users",
+			paramOIDs: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := c.BuildParsePayload(tt.stmtName, tt.query, tt.paramOIDs)
+			if len(payload) == 0 {
+				t.Fatal("BuildParsePayload returned empty payload")
+			}
+			// Payload starts with statement name (null-terminated)
+			// Check that the query is embedded
+			if !bytes.Contains(payload, []byte(tt.query)) {
+				t.Errorf("Payload should contain query %q", tt.query)
+			}
+			// Check that the statement name is embedded
+			if !bytes.HasPrefix(payload, []byte(tt.stmtName)) {
+				t.Errorf("Payload should start with statement name %q", tt.stmtName)
+			}
+		})
+	}
+}
+
+func TestCodec_CreateSCRAMResponse(t *testing.T) {
+	c := NewCodec()
+	data := []byte("client-first-message-data")
+	buf := c.CreateSCRAMResponse("SCRAM-SHA-256", data)
+	if len(buf) == 0 {
+		t.Fatal("CreateSCRAMResponse returned empty buffer")
+	}
+	if buf[0] != 'p' {
+		t.Errorf("Expected 'p' message type, got %c", buf[0])
+	}
+}
+
+func TestCreateAuthenticationMD5Password(t *testing.T) {
+	salt := [4]byte{0x01, 0x02, 0x03, 0x04}
+	buf := CreateAuthenticationMD5Password(salt)
+	if len(buf) != 13 {
+		t.Errorf("Length = %d, want 13", len(buf))
+	}
+	if buf[0] != 'R' {
+		t.Errorf("Expected 'R' message type, got %c", buf[0])
+	}
+	// Check auth type (5 = MD5)
+	authType := binary.BigEndian.Uint32(buf[5:9])
+	if authType != 5 {
+		t.Errorf("Auth type = %d, want 5", authType)
+	}
+}
+
+func TestCreateAuthenticationSCRAM(t *testing.T) {
+	buf := CreateAuthenticationSCRAM()
+	if len(buf) < 10 {
+		t.Errorf("Buffer too short: %d bytes", len(buf))
+	}
+	if buf[0] != 'R' {
+		t.Errorf("Expected 'R' message type, got %c", buf[0])
+	}
+	// Check that SCRAM-SHA-256 is in the mechanisms
+	if !bytes.Contains(buf, []byte("SCRAM-SHA-256")) {
+		t.Error("Should contain SCRAM-SHA-256 mechanism")
+	}
+}
+
+func TestCreateAuthenticationSASLContinue(t *testing.T) {
+	challenge := []byte("server-challenge-data")
+	buf := CreateAuthenticationSASLContinue(challenge)
+	if len(buf) < 14 {
+		t.Errorf("Buffer too short: %d bytes", len(buf))
+	}
+	if buf[0] != 'R' {
+		t.Errorf("Expected 'R' message type, got %c", buf[0])
+	}
+	// Check auth type (11 = SASL continue)
+	authType := binary.BigEndian.Uint32(buf[5:9])
+	if authType != 11 {
+		t.Errorf("Auth type = %d, want 11", authType)
+	}
+	if !bytes.Contains(buf, challenge) {
+		t.Error("Should contain the challenge data")
+	}
+}
+
+func TestCreateAuthenticationSASLFinal(t *testing.T) {
+	data := []byte("server-final-data")
+	buf := CreateAuthenticationSASLFinal(data)
+	if len(buf) < 14 {
+		t.Errorf("Buffer too short: %d bytes", len(buf))
+	}
+	if buf[0] != 'R' {
+		t.Errorf("Expected 'R' message type, got %c", buf[0])
+	}
+	// Check auth type (12 = SASL final)
+	authType := binary.BigEndian.Uint32(buf[5:9])
+	if authType != 12 {
+		t.Errorf("Auth type = %d, want 12", authType)
+	}
+	if !bytes.Contains(buf, data) {
+		t.Error("Should contain the final data")
+	}
+}
+
+func TestCreateAuthenticationOk(t *testing.T) {
+	buf := CreateAuthenticationOk()
+	if len(buf) != 9 {
+		t.Errorf("Length = %d, want 9", len(buf))
+	}
+	if buf[0] != 'R' {
+		t.Errorf("Expected 'R' message type, got %c", buf[0])
+	}
+	// Check auth type (0 = OK)
+	authType := binary.BigEndian.Uint32(buf[5:9])
+	if authType != 0 {
+		t.Errorf("Auth type = %d, want 0", authType)
+	}
+}
+
+// --- Coverage: IsTransactionEnd with ReadyForQuery 'Z' message ---
+
+func TestPGCodec_IsTransactionEnd_ReadyForQuery(t *testing.T) {
+	c := NewCodec()
+
+	msg := &common.Message{Type: 'Z', Payload: []byte{'I'}, Direction: common.Backend}
+	if !c.IsTransactionEnd(msg) {
+		t.Error("IsTransactionEnd should return true for backend Z with I")
+	}
+
+	msg2 := &common.Message{Type: 'Z', Payload: []byte{'T'}, Direction: common.Backend}
+	if c.IsTransactionEnd(msg2) {
+		t.Error("IsTransactionEnd should return false for T status")
+	}
+
+	msg3 := &common.Message{Type: 'Z', Payload: []byte{'E'}, Direction: common.Backend}
+	if c.IsTransactionEnd(msg3) {
+		t.Error("IsTransactionEnd should return false for E status")
+	}
+
+	msg4 := &common.Message{Type: 'Z', Payload: []byte{'I'}, Direction: common.Frontend}
+	if c.IsTransactionEnd(msg4) {
+		t.Error("IsTransactionEnd should return false for frontend Z")
+	}
+
+	msg5 := &common.Message{Type: 'Z', Payload: []byte{}, Direction: common.Backend}
+	if c.IsTransactionEnd(msg5) {
+		t.Error("IsTransactionEnd should return false for empty payload")
+	}
+}
+
+func TestPGCodec_IsTransactionBegin_NonQType(t *testing.T) {
+	c := NewCodec()
+	msg := &common.Message{Type: 'P', Payload: []byte("BEGIN")}
+	if c.IsTransactionBegin(msg) {
+		t.Error("IsTransactionBegin should return false for non-Q message type")
+	}
+}
+
+func TestPGCodec_IsGSSENCRequest_ShortData(t *testing.T) {
+	c := NewCodec()
+	if c.IsGSSENCRequest([]byte{0, 0, 0, 0}) {
+		t.Error("Should return false for data < 8 bytes")
+	}
+	if c.IsGSSENCRequest([]byte{}) {
+		t.Error("Should return false for empty data")
+	}
+	data := make([]byte, 8)
+	binary.BigEndian.PutUint32(data[4:8], 80877104)
+	if !c.IsGSSENCRequest(data) {
+		t.Error("Should return true for valid GSSENC request")
+	}
+	data2 := make([]byte, 8)
+	binary.BigEndian.PutUint32(data2[4:8], 99999)
+	if c.IsGSSENCRequest(data2) {
+		t.Error("Should return false for wrong code")
+	}
+}
+
+func TestPGCodec_ExtractParseQuery_Errors(t *testing.T) {
+	c := NewCodec()
+	_, err := c.ExtractQuery(&common.Message{Type: 'P', Payload: []byte{0}})
+	if err == nil {
+		t.Error("Should fail for too-short Parse payload")
+	}
+	_, err = c.ExtractQuery(&common.Message{Type: 'P', Payload: []byte("no_null")})
+	if err == nil {
+		t.Error("Should fail for missing null terminator")
+	}
+	_, err = c.ExtractQuery(&common.Message{Type: 'P', Payload: append([]byte("stmt"), 0, 'S', 'E', 'L')})
+	if err == nil {
+		t.Error("Should fail for missing query null terminator")
+	}
+	_, err = c.ExtractQuery(&common.Message{Type: 'P', Payload: append(append([]byte("stmt"), 0), append([]byte("SELECT 1"), 0)...)})
+	if err != nil {
+		t.Errorf("Valid parse query failed: %v", err)
+	}
+}
+
+func TestPGCodec_ExtractStatementName_Errors(t *testing.T) {
+	c := NewCodec()
+	_, err := c.ExtractStatementName(&common.Message{Type: 'Q', Payload: []byte("test")})
+	if err == nil {
+		t.Error("Should fail for non-Parse message")
+	}
+	_, err = c.ExtractStatementName(&common.Message{Type: 'P', Payload: []byte{}})
+	if err == nil {
+		t.Error("Should fail for empty payload")
+	}
+	name, err := c.ExtractStatementName(&common.Message{Type: 'P', Payload: append([]byte("mystmt"), 0)})
+	if err != nil {
+		t.Errorf("Valid ExtractStatementName failed: %v", err)
+	}
+	if name != "mystmt" {
+		t.Errorf("Name = %q, want mystmt", name)
+	}
+}
+
+func TestPGCodec_ExtractPortalName_Errors(t *testing.T) {
+	c := NewCodec()
+	_, err := c.ExtractPortalName(&common.Message{Type: 'Q', Payload: []byte("test")})
+	if err == nil {
+		t.Error("Should fail for non-Bind message")
+	}
+	_, err = c.ExtractPortalName(&common.Message{Type: 'B', Payload: []byte{}})
+	if err == nil {
+		t.Error("Should fail for empty payload")
+	}
+	name, err := c.ExtractPortalName(&common.Message{Type: 'B', Payload: append([]byte("myportal"), 0)})
+	if err != nil {
+		t.Errorf("Valid ExtractPortalName failed: %v", err)
+	}
+	if name != "myportal" {
+		t.Errorf("Name = %q, want myportal", name)
+	}
+}
+
+func TestPGCodec_ReadMessage_LengthReadError(t *testing.T) {
+	c := NewCodec()
+	r, w := net.Pipe()
+	go func() {
+		w.Write([]byte{'Q'})
+		w.Close()
+	}()
+	_, err := c.ReadMessage(r)
+	if err == nil {
+		t.Error("Should fail when length read fails")
+	}
+	r.Close()
+}
+
+func TestPGCodec_ReadMessage_PayloadTooLarge(t *testing.T) {
+	c := NewCodec()
+	r, w := net.Pipe()
+	go func() {
+		w.Write([]byte{'Q'})
+		lenBuf := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBuf, uint32(MaxPayloadLen+100))
+		w.Write(lenBuf)
+		w.Close()
+	}()
+	_, err := c.ReadMessage(r)
+	if err == nil {
+		t.Error("Should fail for payload too large")
+	}
+	r.Close()
+}
+
+func TestPGCodec_ReadMessage_ZeroLength(t *testing.T) {
+	c := NewCodec()
+	r, w := net.Pipe()
+	go func() {
+		w.Write([]byte{'Q'})
+		lenBuf := make([]byte, 4)
+		binary.BigEndian.PutUint32(lenBuf, 0)
+		w.Write(lenBuf)
+		w.Close()
+	}()
+	_, err := c.ReadMessage(r)
+	if err == nil {
+		t.Error("Should fail for zero length")
+	}
+	r.Close()
 }

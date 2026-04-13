@@ -2,231 +2,155 @@
 
 > Comprehensive evaluation of whether Geryon is ready for production deployment.
 > Assessment Date: 2026-04-11
-> Verdict: 🟡 CONDITIONALLY READY
+> Verdict: **NOT READY**
 
 ## Overall Verdict & Score
 
-**Production Readiness Score: 78/100**
+**Production Readiness Score: 45/100**
 
 | Category | Score | Weight | Weighted Score |
 |----------|-------|--------|----------------|
-| Core Functionality | 9/10 | 20% | 18 |
-| Reliability & Error Handling | 7/10 | 15% | 10.5 |
-| Security | 8/10 | 20% | 16 |
-| Performance | 8/10 | 10% | 8 |
-| Testing | 7/10 | 15% | 10.5 |
-| Observability | 8/10 | 10% | 8 |
+| Core Functionality | 5/10 | 20% | 10 |
+| Reliability & Error Handling | 4/10 | 15% | 6 |
+| Security | 3/10 | 20% | 6 |
+| Performance | 4/10 | 10% | 4 |
+| Testing | 5/10 | 15% | 7.5 |
+| Observability | 3/10 | 10% | 3 |
 | Documentation | 6/10 | 5% | 3 |
-| Deployment Readiness | 7/10 | 5% | 3.5 |
-| **TOTAL** | | **100%** | **77.5/100** |
+| Deployment Readiness | 6/10 | 5% | 3 |
+| **TOTAL** | | **100%** | **42.5/100** |
+
+Rounded to **45/100** accounting for strong points in deployment readiness and documentation.
 
 ---
 
 ## 1. Core Functionality Assessment
 
-### 1.1 Feature Completeness: 90%
+### 1.1 Feature Completeness: 50%
 
-**✅ Working — Fully Implemented:**
+**What Actually Works:**
 
 | Feature | Status | Evidence |
 |---------|--------|----------|
-| PostgreSQL wire protocol | ✅ Working | Full v3 implementation, SCRAM-SHA-256, SSL |
-| MySQL wire protocol | ✅ Working | Handshake v10, caching_sha2_password, prepared statements |
-| MSSQL TDS protocol | ✅ Working | TDS 7.4+, SQL Batch, RPC, encryption |
-| Session pooling mode | ✅ Working | 1:1 client-to-server mapping |
-| Transaction pooling mode | ✅ Working | N:M multiplexing with boundary detection |
-| Statement pooling mode | ✅ Working | N:1 aggressive multiplexing |
-| REST API | ✅ Working | Full CRUD, 16+ endpoints |
-| Web Dashboard | ✅ Working | 9 pages, SSE streaming |
-| MCP Server | ✅ Working | 13 tools, 4 resources, SSE transport |
-| gRPC API | ✅ Working | Hand-rolled protobuf, streaming |
-| Query result cache | ✅ Working | LRU+TTL, write invalidation |
-| Prepared statement cache | ✅ Working | Transparent re-preparation |
-| Raft consensus | ✅ Working | Leader election, log replication |
-| SWIM gossip | ✅ Working | Membership, failure detection |
+| Basic proxy relay | Working | Bidirectional forwarding in `internal/proxy/listener.go` |
+| SCRAM-SHA-256 auth | Working | Hand-rolled PBKDF2, tested |
+| Session mode (1:1) | Working | Via bidirectional relay |
+| REST API | Working | Basic endpoints functional |
+| MCP server | Working | SSE transport, basic tools |
+| Connection state reset | Working | DISCARD ALL, COM_RESET_CONNECTION, sp_reset_connection |
+| SQL tokenizer | Working | Basic classification via `strings.HasPrefix` |
+| TLS support | Working | Server/client TLS, self-signed cert generation |
+| Hot config reload | Partial | SIGHUP + file watch work |
 
-**⚠️ Partial — Working but Incomplete:**
+**What Does NOT Work (despite existing code):**
 
-| Feature | Status | Issue |
-|---------|--------|-------|
-| MSSQL NTLM passthrough | ⚠️ Partial | Test exists, full implementation incomplete |
-| MSSQL sp_prepare | ⚠️ Partial | Prepared statements incomplete |
-| YAML config parser | ⚠️ Partial | Basic string parsing, not full YAML |
-| Cluster leader tracking | ⚠️ Partial | TODO in coordinator |
+| Feature | Status | Why |
+|---------|--------|-----|
+| Connection pooling | **BROKEN** | `Acquire()` may create new TCP connections instead of reusing |
+| Transaction mode | **NOT WIRED** | Strategy exists but not connected to relay |
+| Statement mode | **NOT WIRED** | Strategy exists but not connected to relay |
+| Query result cache | **DEAD CODE** | Cache exists but never instantiated in relay |
+| Prepared statement proxy | **DEAD CODE** | TransparentRepreparer exists but never used |
+| Read/write splitting | **DEAD CODE** | Router exists but not wired into relay |
+| Deadlock detection | **DEAD CODE** | DeadlockDetector exists but never instantiated |
+| Connection tracking | **DEAD CODE** | ConnectionTracker exists but never wired |
+| gRPC API | **MISLEADING** | HTTP/2 + JSON, not actual gRPC |
+| Raft clustering | **INCOMPLETE** | Simplified Raft, potential hasMajority bug |
+| SWIM gossip | **INCOMPLETE** | Not production-ready |
+| Health checks | **PARTIAL** | TCP-only, no protocol-specific health queries |
 
-**❌ Missing:**
-
-| Feature | Impact | Priority |
-|---------|--------|----------|
-| PostgreSQL COPY protocol | Low | P2 |
-| PostgreSQL LISTEN/NOTIFY | Low | P2 |
-| Backend authentication | Medium | P1 |
+**Dead Code (~3000+ lines):**
+- `internal/protocols/postgresql/frontend.go` — never instantiated
+- `internal/protocols/mysql/frontend.go` — never instantiated
+- `internal/protocols/mssql/frontend.go` — never instantiated
+- `internal/cache/` — never used in relay path
+- `internal/pool/tracker.go` — never wired in
+- `DeadlockDetector` in `internal/pool/transaction.go` — never instantiated
 
 ### 1.2 Critical Path Analysis
 
 **Primary Use Case: Web Application Connection Pooling**
 
 ```
-Client → TLS Handshake → Auth (SCRAM/MD5) → Pool Assignment → Query → Response
+Client → TLS → Auth → Pool Acquire → Query → Pool Release → Response
 ```
 
-✅ **Happy Path Works Reliably:**
-- All three database protocols handle standard queries
-- Transaction pooling correctly manages connection lifecycle
-- Auth interception mode properly validates users
-- Query result cache improves read performance
+**The gap between intended and actual flow:**
 
-**Potential Dead Ends:**
-- Complex YAML configs may fail parsing (use simple configs)
-- Windows Authentication requires NTLM completion
-- Advanced PostgreSQL features (COPY, NOTIFY) not supported
+- **Intended**: Client authenticates, gets a reused backend connection from pool, query forwarded, connection returned to pool
+- **Actual**: Client authenticates, new TCP connection may be created to backend for each query, no pooling benefit
 
-### 1.3 Data Integrity
-
-**Connection State Management:**
-- ✅ PostgreSQL: `DISCARD ALL` reset implemented
-- ✅ MySQL: `COM_RESET_CONNECTION` / `COM_CHANGE_USER` implemented
-- ✅ MSSQL: `sp_reset_connection` implemented
-- ✅ Smart resetter tracks state modifications
-
-**Transaction Boundaries:**
-- ✅ BEGIN/COMMIT/ROLLBACK detection for all protocols
-- ✅ Transaction-aware routing (all queries in txn go to same backend)
-- ✅ Auto-commit detection
-
-**Potential Issues:**
-- ⚠️ No automatic transaction recovery on backend failure
-- ⚠️ No distributed transaction support (expected for v1)
+**The bidirectional relay DOES work** for session mode (1:1 client-to-backend mapping). This is the only mode that functions correctly.
 
 ---
 
 ## 2. Reliability & Error Handling
 
-### 2.1 Error Handling Coverage: B+
+### 2.1 Error Handling Coverage: C
 
 **Strengths:**
-- All errors wrapped with context: `fmt.Errorf("...: %w", err)`
-- Proper error propagation to clients
-- Structured error logging
+- Errors wrapped with context: `fmt.Errorf("...: %w", err)`
+- Proper error propagation in most paths
 
-**Gaps:**
-- Some functions return generic errors where specific types would help
-- Client receives protocol-specific error messages (could be unified)
+**Critical Gaps:**
+- **Write errors ignored in relay** (`internal/proxy/listener.go`): `io.Copy` failures silently swallowed. Goroutine may continue reading from a broken connection.
+- **Dashboard test fails**: `TestDashboard_ConnectionsEndpoint` — connection refused, indicating race condition or server startup issue
+- **No circuit breaker**: Backend failures are not handled gracefully beyond health check removal
+- **No retry logic**: Failed queries are not retried
 
-### 2.2 Graceful Degradation: B
+### 2.2 Transaction Management: D+
 
-**Backend Failure Handling:**
-- ✅ Health checks with configurable queries
-- ✅ Automatic backend removal after max failures
-- ✅ Replica fallback for read queries
-- ⚠️ No circuit breaker pattern
-- ⚠️ Limited retry logic (no exponential backoff)
+- `TransactionManager.checkTimeouts()` sets status to `TxnAborted` or `TxnIdle` but **does NOT send ROLLBACK to the backend database**
+- Backend transactions remain open, consuming resources and holding locks
+- This is a **data integrity risk** — orphaned transactions can cause lock contention and deadlocks on the backend
 
-**Resource Exhaustion:**
-- ✅ Wait queue with timeout for connection limits
-- ✅ Configurable max connections
-- ⚠️ No back-pressure mechanism
+### 2.3 Graceful Shutdown: B+
 
-### 2.3 Graceful Shutdown: A-
-
-**Implementation:**
-```go
-// From cmd/geryon/main.go
-sigCh := make(chan os.Signal, 1)
-signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-
-// Stops listeners, servers, pools in order
-// Context cancellation propagates to all goroutines
-```
-
-**Strengths:**
 - Proper signal handling (SIGINT, SIGTERM, SIGHUP)
 - Resources cleaned up in correct order
-- In-flight requests completed before shutdown
-
-**Considerations:**
-- ⚠️ Shutdown timeout not configurable
-- ⚠️ No forced shutdown after timeout
-
-### 2.4 Recovery
-
-**Automatic Recovery:**
-- ✅ Backend health checks re-enable backends when healthy
-- ✅ Raft leader election on node failure
-- ✅ SWIM protocol handles node rejoin
-
-**Manual Recovery:**
-- ✅ REST API to detach/attach backends
-- ✅ Config reload without restart
+- Context cancellation propagates to goroutines
+- **Gap**: No forced shutdown timeout — if a goroutine hangs, shutdown hangs
 
 ---
 
 ## 3. Security Assessment
 
-### 3.1 Authentication & Authorization: A-
+### 3.1 Critical Vulnerabilities
 
-**✅ Implemented:**
-- [x] SCRAM-SHA-256 password hashing
-- [x] MD5 authentication (PostgreSQL legacy)
-- [x] mysql_native_password
-- [x] caching_sha2_password
-- [x] mTLS client certificate validation
-- [x] Certificate CN/SAN to username mapping
-- [x] Per-user connection limits
-- [x] Per-user pool access control (`allowed_pools`)
-- [x] Auth interception mode (Geryon manages auth)
-- [x] Auth passthrough mode (transparent to backend)
+| Severity | Issue | Location | Impact |
+|----------|-------|----------|--------|
+| **CRITICAL** | SQL injection in SmartResetter | `internal/pool/reset.go:281` | `fmt.Sprintf("DROP TABLE IF EXISTS %s", table)` — unsanitized table name |
+| **CRITICAL** | Certificate fingerprint not a hash | `internal/auth/cert.go:375-382` | `cert.Raw[:32]` instead of SHA-256 — auth bypass possible |
+| **HIGH** | No auth rate limiting | `internal/auth/auth.go` | DoS via SCRAM-SHA-256 exhaustion (PBKDF2 is CPU-intensive) |
+| **HIGH** | Write errors ignored in relay | `internal/proxy/listener.go` | Silent data loss, zombie goroutines |
+| **MEDIUM** | No input validation on REST config reload | `internal/api/rest/server.go` | Arbitrary config changes via API |
 
-**⚠️ Considerations:**
-- No rate limiting on auth endpoints specifically
-- Session/token management not applicable (connection-based auth)
+### 3.2 Authentication & Authorization: C-
 
-### 3.2 Input Validation & Injection Protection: A
+**Implemented:**
+- SCRAM-SHA-256 password hashing (correct)
+- MD5 authentication (PostgreSQL legacy)
+- mysql_native_password, caching_sha2_password
+- mTLS client certificate validation
+- Per-user connection limits and pool access control
 
-**✅ Protected Against:**
-- [x] SQL injection — Queries passed through, not constructed
-- [x] Command injection — No shell execution
-- [x] Path traversal — File paths sanitized
-- [x] Buffer overflow — Go memory safety
+**Missing:**
+- **No rate limiting on auth endpoints** — PBKDF2 at ~100ms per attempt makes this a natural DoS vector
+- **Certificate fingerprint is wrong** — takes first 32 raw bytes instead of SHA-256 hash
 
-**Input Validation:**
-- [x] Config validation (ports, enums, required fields)
-- [x] Environment variable restriction (GERYON_* prefix)
-- [x] SQL tokenizer for safe query classification
+### 3.3 Input Validation: C
 
-### 3.3 Network Security: A-
+- Config validation is comprehensive for basic fields
+- SQL tokenizer only used for routing, not query construction (good)
+- **SQL injection risk** in SmartResetter temp table cleanup
+- Custom YAML parser is fragile — may fail on edge cases
 
-**✅ Implemented:**
-- [x] TLS modes: disable, allow, prefer, require, verify-ca, verify-full
-- [x] mTLS with client certificate validation
-- [x] Per-pool TLS policy
-- [x] Certificate generation tool
-- [x] Self-signed cert generation for testing
+### 3.4 Network Security: B-
 
-**⚠️ Considerations:**
-- CORS configuration could be stricter by default
-- No built-in DDoS protection (relies on external LB)
-
-### 3.4 Secrets & Configuration: A
-
-**✅ Implemented:**
-- [x] No hardcoded secrets
-- [x] Password files (`password_file`)
-- [x] Environment variable expansion (restricted prefix)
-- [x] Sensitive values masked in logs
-
-**Configuration Security:**
-- [x] Config file permissions checked
-- [x] Path traversal protection
-
-### 3.5 Security Vulnerabilities Found
-
-| Severity | Issue | Location | Mitigation |
-|----------|-------|----------|------------|
-| Low | YAML parser doesn't validate all edge cases | `internal/config/loader.go` | Use simple configs; fix in Phase 1 |
-| Low | Some TODOs in security-related code | Various | Address in Phase 1 |
-
-**Overall Security Posture:** Strong. Zero-dependency approach minimizes supply chain risk.
+- TLS modes supported (disable through verify-full)
+- mTLS with client certificate validation
+- **No built-in DDoS protection**
+- **No connection-level rate limiting**
 
 ---
 
@@ -236,125 +160,84 @@ signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 | Issue | Severity | Location | Notes |
 |-------|----------|----------|-------|
-| Fixed timeout | Low | `internal/pool/pool.go:394` | 5s hardcoded, should be configurable |
-| Buffer allocation | Low | Message relay | Could use sync.Pool |
-| Query parsing | Low | Tokenizer | Runs on every query (necessary) |
+| No connection reuse | **CRITICAL** | `internal/pool/pool.go` | Every client may create new backend TCP connection |
+| Histogram Sum is garbage | **HIGH** | `internal/metrics/metrics.go:195` | Float64bits addition ≠ float addition |
+| PBKDF2 as DoS vector | **HIGH** | `internal/auth/auth.go` | ~100ms CPU per auth attempt, no rate limiting |
+| SHA256 per query | MEDIUM | `internal/pool/prepared.go:332` | Hash computed for every query in prepared statement cache |
+| Regex in tokenizer | LOW | `internal/tokenizer/tokenizer.go` | `RemoveComments()` uses regex |
+| Running average overflow | LOW | `internal/logger/querylog.go:376` | Overflows with enough samples |
 
-### 4.2 Resource Management
+### 4.2 Resource Management: D+
 
-**Connection Pooling:**
-- ✅ Min/max connection limits
-- ✅ Idle connection timeout
-- ✅ Max connection lifetime
-- ✅ Connection rotation
-
-**Memory:**
-- ✅ Per-connection buffers (32KB)
-- ✅ LRU cache with memory limits
-- ⚠️ No global memory limit enforcement
-
-**File Descriptors:**
-- ✅ Proper connection cleanup
-- ✅ Listener management
+- **Connection pooling**: NOT functional — `Acquire()` may create new connections
+- **Memory**: 32KB per-connection buffers (over target of 8KB)
+- **No global memory limit enforcement**
+- **No buffer pooling** with `sync.Pool`
 
 ### 4.3 Performance Targets vs Reality
 
 | Metric | Target | Current | Status |
 |--------|--------|---------|--------|
-| Max client connections | 100,000+ | Unknown | Needs load testing |
-| Connection setup latency | < 1ms | Unknown | Likely met |
-| Query proxy overhead | < 100μs | Unknown | Likely met |
+| Max client connections | 100,000+ | Unknown | Not load tested |
+| Connection setup latency | < 1ms | Unknown | Likely not met (no connection reuse) |
+| Query proxy overhead | < 100μs | Unknown | Not measured |
 | Memory per idle conn | < 8KB | ~32KB | Over target |
-| Config reload | < 100ms | < 100ms | ✅ Met |
-| Binary size | < 30MB | ~15MB | ✅ Met |
-| Startup time | < 2s | < 1s | ✅ Met |
+| Binary size | < 30MB | ~15MB | Met |
+| Startup time | < 2s | < 1s | Met |
 
 ---
 
 ## 5. Testing Assessment
 
-### 5.1 Test Coverage Reality Check
-
-**Overall Coverage: ~55%**
+### 5.1 Test Coverage: ~55%
 
 | Package | Coverage | Status |
 |---------|----------|--------|
-| `internal/auth` | ~85% | ✅ Good |
-| `internal/cache` | ~80% | ✅ Good |
-| `internal/tokenizer` | ~90% | ✅ Excellent |
-| `internal/protocol/*` | ~70% | ✅ Good |
-| `internal/pool` | ~65% | ✅ Adequate |
-| `internal/raft` | ~60% | ⚠️ Needs improvement |
-| `internal/swim` | ~50% | ⚠️ Needs improvement |
-| `internal/api/*` | ~60% | ✅ Adequate |
+| `internal/auth` | ~85% | Good |
+| `internal/cache` | ~80% | Good (but cache is dead code) |
+| `internal/tokenizer` | ~90% | Excellent |
+| `internal/protocol/*` | ~70% | Adequate |
+| `internal/pool` | ~65% | Adequate |
+| `internal/raft` | ~60% | Needs improvement |
+| `internal/swim` | ~50% | Needs improvement |
+| `internal/api/*` | ~60% | Adequate |
 
-### 5.2 Test Categories Present
+### 5.2 Test Failures
 
-| Category | Count | Quality |
-|----------|-------|---------|
-| Unit tests | 49 files | Good — table-driven patterns |
-| Integration tests | 8 files | Good — real protocol tests |
-| Benchmarks | 1 file | Basic — needs expansion |
-| Chaos tests | 1 file | Good — failure injection |
-| Memory tests | 1 file | Good — leak detection |
-| Fuzz tests | 0 | ❌ Missing |
-| E2E tests | 0 | ❌ Missing |
+1. **`TestDashboard_ConnectionsEndpoint`** — connection refused. Race condition in test or server not starting properly.
+2. **Integration tests timeout** — 512s timeout, requires actual database backends.
 
-### 5.3 Test Infrastructure
+### 5.3 Missing Test Categories
 
-**✅ Strengths:**
-- Race detection enabled (`go test -race`)
-- CI matrix: Go 1.23, 1.24 × Linux, macOS, Windows
-- Coverage reporting to Codecov
-- All tests currently passing
-
-**⚠️ Gaps:**
-- No automated load testing
-- No fuzz testing for protocol parsers
-- No formal E2E test suite
+- **No fuzz testing** for protocol parsers
+- **No E2E tests** for full proxy relay path
+- **No load testing** automation
+- **No concurrency stress tests** for pool acquire/release
 
 ---
 
 ## 6. Observability
 
-### 6.1 Logging: A
+### 6.1 Logging: B
 
-**✅ Implemented:**
-- [x] Structured JSON logging (slog)
-- [x] Per-component log levels
-- [x] Request/connection lifecycle logging
-- [x] Slow query logging (configurable threshold)
-- [x] Error logs with context
+- Structured JSON logging via `slog`
+- Slow query logging with configurable threshold
+- **Gap**: No log rotation (config fields exist but not implemented)
+- **Gap**: Running average can overflow
 
-**Log Rotation:**
-- ⚠️ No built-in log rotation (relies on external tools like logrotate)
+### 6.2 Metrics: D
 
-### 6.2 Monitoring & Metrics: A-
+- Counter, Gauge, Histogram, Registry framework exists
+- **CRITICAL**: Histogram Sum returns garbage (Float64bits bug)
+- **CRITICAL**: Metrics not wired into pool or relay
+- Dashboard shows metrics but they may be incorrect
 
-**✅ Implemented:**
-- [x] Prometheus metrics endpoint (`/metrics`)
-- [x] Pool metrics (connections, queries, errors)
-- [x] Backend metrics (status, latency)
-- [x] Cache metrics (hits, misses, memory)
-- [x] Cluster metrics (nodes, Raft state)
-- [x] SSE streaming for real-time dashboard
+### 6.3 Health Checks: C-
 
-**Dashboard:**
-- [x] Real-time stats via SSE
-- [x] Per-pool visualization
-- [x] Query stats and slow query log
-
-**⚠️ Gaps:**
-- No distributed tracing (OpenTelemetry)
-- No pre-built Grafana dashboards
-
-### 6.3 Health Checks
-
-**✅ Implemented:**
-- [x] `/api/v1/health` — Basic health
-- [x] `/api/v1/ready` — Readiness probe
-- [x] Backend health checks with configurable query
-- [x] Cluster health endpoint
+- TCP-only health checks (dial and close)
+- No protocol-specific health queries (e.g., `SELECT 1`)
+- Backend marked unhealthy after consecutive failures
+- No circuit breaker pattern
 
 ---
 
@@ -362,135 +245,109 @@ signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 ### 7.1 Build & Package: A
 
-**✅ Implemented:**
-- [x] Reproducible builds (Makefile with version flags)
-- [x] Multi-platform compilation (Linux, macOS, Windows)
-- [x] Docker multi-stage build (scratch-based, minimal)
-- [x] Version embedding in binary
+- Reproducible builds via Makefile
+- Multi-platform compilation (Linux, macOS, Windows)
+- Docker multi-stage build (scratch-based)
+- Version embedding in binary
+- GitHub Actions CI/CD
 
-**Binary Size:**
-- ~15MB — Well under 30MB target
+### 7.2 Configuration: C
 
-### 7.2 Configuration: B+
+- Environment variable expansion with `GERYON_` prefix
+- Hot reload via SIGHUP, file watch, and API
+- **Concern**: Custom YAML parser is fragile
+- **Concern**: Unsafe reload detection is incomplete
 
-**✅ Strengths:**
-- Environment variable expansion
-- Sensible defaults
-- Validation on startup
-- Hot reload support
+### 7.3 Infrastructure: B
 
-**⚠️ Concerns:**
-- YAML parser is incomplete (basic string parsing)
-- No config schema validation beyond basic checks
-
-### 7.3 Infrastructure
-
-**✅ Implemented:**
-- [x] GitHub Actions CI/CD
-- [x] Automated testing in pipeline
-- [x] Multi-platform release binaries
-- [x] Docker image builds
-- [x] Homebrew formula template
-
-**⚠️ Missing:**
-- [ ] Helm chart for Kubernetes
-- [ ] Terraform modules
-- [ ] Ansible playbooks
+- CI/CD with GitHub Actions
+- Docker image builds
+- Homebrew formula template
+- **Missing**: Helm chart, Terraform modules
 
 ---
 
-## 8. Documentation Readiness
+## 8. Score Justification
 
-### 8.1 Documentation Status
+### Why 45/100 and not higher?
 
-| Document | Status | Quality |
-|----------|--------|---------|
-| README.md | ✅ Complete | Excellent — comprehensive |
-| SPECIFICATION.md | ✅ Complete | Excellent — detailed spec |
-| IMPLEMENTATION.md | ✅ Complete | Good — architecture guide |
-| TASKS.md | ✅ Complete | Good — tracking |
-| API Documentation | ⚠️ Partial | No OpenAPI spec |
-| Operations Guide | ❌ Missing | No production runbook |
-| Troubleshooting | ❌ Missing | No dedicated guide |
+The previous assessment scored this project 78/100 ("CONDITIONAL GO"). That score was based on the assumption that advertised features were working. This assessment scores based on what actually functions when the code is executed:
 
-### 8.2 Code Documentation
+| Category | Previous | Corrected | Reason for Change |
+|----------|----------|-----------|-------------------|
+| Core Functionality | 9/10 | 5/10 | Connection pooling broken, most features are dead code |
+| Reliability | 7/10 | 4/10 | Write errors ignored, transactions not aborted on timeout |
+| Security | 8/10 | 3/10 | SQL injection, cert fingerprint bug, no auth rate limiting |
+| Performance | 8/10 | 4/10 | No connection reuse, histogram garbage |
+| Testing | 7/10 | 5/10 | Same coverage but gaps are in critical paths |
+| Observability | 8/10 | 3/10 | Metrics broken, not wired into pool |
+| Documentation | 6/10 | 6/10 | Unchanged |
+| Deployment | 7/10 | 6/10 | Slight improvement (CI/CD is solid) |
 
-**✅ Strengths:**
-- Godoc comments on exported functions
-- Clear package documentation
-- Architecture comments in complex areas
+### What Would Raise the Score
 
-**⚠️ Gaps:**
-- Some internal functions lack comments
-- Complex protocol implementations could use more detail
+| Fix | Score Impact |
+|-----|-------------|
+| Fix connection reuse | +10 (Core Functionality → 7/10) |
+| Fix Histogram Sum + wire metrics | +5 (Observability → 6/10) |
+| Fix certificate fingerprint | +3 (Security → 5/10) |
+| Fix SQL injection | +2 (Security → 6/10) |
+| Add auth rate limiting | +2 (Security → 7/10) |
+| Wire dead features into relay | +5 (Core Functionality → 8/10) |
+| Fix write error handling | +2 (Reliability → 6/10) |
+| **Potential after fixes** | **74/100** |
 
 ---
 
-## 9. Final Verdict
+## 9. Production Blockers
 
-### 🚫 Production Blockers (MUST fix before any deployment)
+These issues MUST be resolved before ANY production deployment:
 
-1. **YAML Parser Incompleteness**
-   - **Severity:** Medium
-   - **Impact:** Complex YAML configs will fail to parse
-   - **Mitigation:** Use only simple config structures until fixed
+1. **Connection pooling not functional** — Without connection reuse, Geryon provides no benefit over direct database connections and may worsen performance.
 
-### ⚠️ High Priority (Should fix within first week of production)
+2. **SQL injection in SmartResetter** (`internal/pool/reset.go:281`) — Unsanitized table name in DROP TABLE statement.
 
-1. **MSSQL NTLM Passthrough**
-   - Windows Authentication won't work
-   - Affects enterprise MSSQL users
+3. **Certificate fingerprint bug** (`internal/auth/cert.go:375-382`) — Auth bypass possible if two certificates share the same first 32 bytes.
 
-2. **Configurable Timeouts**
-   - 5s hardcoded wait queue timeout
-   - May not suit all workloads
+4. **Histogram metrics garbage** (`internal/metrics/metrics.go:195`) — Performance monitoring returns incorrect values.
 
-3. **Missing Transaction Method**
-   - `GetActiveTransactions()` referenced but not implemented
-
-### 💡 Recommendations (Improve over time)
-
-1. Add OpenTelemetry tracing
-2. Create Helm chart for Kubernetes
-3. Implement circuit breaker pattern
-4. Add fuzz testing
-5. Complete fuzz testing for protocol parsers
+5. **Write errors ignored in relay** (`internal/proxy/listener.go`) — Silent data loss on write failures.
 
 ---
 
 ## 10. Go/No-Go Recommendation
 
-### 🟡 **CONDITIONAL GO**
+### **NO GO**
 
 **Justification:**
 
-Geryon is **ready for production deployment with caveats**. The core functionality (PostgreSQL and MySQL proxying with connection pooling) is solid, well-tested, and demonstrates production quality. The codebase shows excellent engineering discipline with zero dependencies, comprehensive protocol implementations, and strong observability.
+Geryon is NOT ready for production deployment. While the core proxy relay works for basic bidirectional forwarding, the five production blockers listed above represent unacceptable risk:
 
-**However**, the following conditions should be met before production deployment:
+- **Data integrity risk**: Orphaned backend transactions, SQL injection in reset logic
+- **Security risk**: Certificate auth bypass, no auth rate limiting
+- **Operational risk**: Broken metrics, no connection pooling benefit
+- **Reliability risk**: Ignored write errors, zombie goroutines
 
-1. **Use Simple YAML Configs** — Avoid complex YAML features until the parser is fixed
-2. **Avoid MSSQL Windows Auth** — NTLM passthrough is incomplete
-3. **Monitor Connection Timeouts** — The 5s hardcoded timeout may need adjustment
-4. **Test Thoroughly in Staging** — Run your specific workload through Geryon before production
-
-**Minimum Work for Safe Production:**
-- 2-3 days to fix critical TODOs
-- 1 week for load testing with your workload
+**Minimum Work for Safe Production (Phase 1 + 2 from ROADMAP.md):**
+- 2-3 weeks to fix critical bugs and wire up dead features
+- 1 week for load testing with your specific workload
+- Total: ~3-4 weeks minimum
 
 **Full Production Readiness:**
-- 4-6 weeks following the roadmap in ROADMAP.md
+- 11-12 weeks following the complete roadmap in ROADMAP.md
 
-**Risk Assessment:**
-- **Low Risk:** PostgreSQL and MySQL with standard auth, simple configs
-- **Medium Risk:** MSSQL, complex configs, clustering
-- **High Risk:** Windows Authentication, advanced PostgreSQL features
+**Risk Assessment by Use Case:**
+- **PostgreSQL session mode (1:1 relay)**: Medium risk — works but has security vulnerabilities
+- **PostgreSQL/MySQL transaction mode**: High risk — not wired, connection reuse broken
+- **MSSQL**: High risk — NTLM incomplete, basic relay only
+- **Clustering**: Very high risk — simplified Raft with potential quorum bug
 
-**Recommended First Deployment:**
-- Start with PostgreSQL or MySQL
-- Use transaction pooling mode
-- Enable auth interception with SCRAM-SHA-256
-- Deploy with external load balancer (not clustering initially)
-- Monitor closely for first 2 weeks
+**Recommended Path Forward:**
+1. Fix all Phase 1 critical bugs (1-2 weeks)
+2. Wire up dead features (Phase 2, 2-3 weeks)
+3. Add security hardening (Phase 3, 1 week)
+4. Load test with your specific workload
+5. Deploy in staging for 2-4 weeks before production
 
 ---
 

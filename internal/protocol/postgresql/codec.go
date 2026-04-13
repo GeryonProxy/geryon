@@ -2,6 +2,7 @@ package postgresql
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/binary"
@@ -216,6 +217,34 @@ func (c *PGCodec) ExtractStatementName(msg *common.Message) (string, error) {
 	}
 
 	return string(msg.Payload[:pos]), nil
+}
+
+// BuildParsePayload creates a Parse message payload.
+// Format: [name]\0[query]\0[param_types (2-byte count + 4-byte OIDs)]
+func (c *PGCodec) BuildParsePayload(name, query string, paramTypes []int32) []byte {
+	var buf bytes.Buffer
+	buf.WriteString(name)
+	buf.WriteByte(0)
+	buf.WriteString(query)
+	buf.WriteByte(0)
+
+	// Write parameter type count (2 bytes, big-endian)
+	nParams := 0
+	if paramTypes != nil {
+		nParams = len(paramTypes)
+	}
+	buf.WriteByte(byte(nParams >> 8))
+	buf.WriteByte(byte(nParams))
+
+	// Write parameter type OIDs (4 bytes each, big-endian)
+	for _, pt := range paramTypes {
+		buf.WriteByte(byte(pt >> 24))
+		buf.WriteByte(byte(pt >> 16))
+		buf.WriteByte(byte(pt >> 8))
+		buf.WriteByte(byte(pt))
+	}
+
+	return buf.Bytes()
 }
 
 // ExtractPortalName extracts the portal name from a Bind message.

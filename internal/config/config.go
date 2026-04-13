@@ -87,6 +87,13 @@ type RoutingConfig struct {
 	Rules          []RoutingRule `yaml:"rules"`
 }
 
+// TransactionConfig contains transaction manager settings.
+type TransactionConfig struct {
+	Timeout       string `yaml:"timeout"`        // e.g. "30m"
+	IdleTimeout   string `yaml:"idle_timeout"`   // e.g. "5m"
+	CheckInterval string `yaml:"check_interval"` // e.g. "30s"
+}
+
 // PoolConfig represents a single pool configuration.
 type PoolConfig struct {
 	Name    string        `yaml:"name"`
@@ -99,6 +106,7 @@ type PoolConfig struct {
 	TLS     TLSConfig     `yaml:"tls"`
 	Cache   CacheConfig   `yaml:"cache"`
 	Routing RoutingConfig `yaml:"routing"`
+	Transaction TransactionConfig `yaml:"transaction"`
 }
 
 // ListenConfig contains listener settings.

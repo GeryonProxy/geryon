@@ -1,621 +1,319 @@
-# Project Analysis Report
+# Geryon Proxy — Comprehensive Codebase Analysis
 
-> Auto-generated comprehensive analysis of Geryon — Multi-Database Connection Pooler
-> Generated: 2026-04-11
-> Analyzer: Claude Code — Full Codebase Audit
+## Executive Summary
 
-## 1. Executive Summary
+**Verdict: NOT READY for production.** The project has a solid architectural foundation but contains critical bugs, dead code paths, and unfinished features that would cause data loss, connection failures, or security vulnerabilities under production load.
 
-**Geryon** is a high-performance, multi-database connection pooler and proxy built in pure Go with zero external dependencies (stdlib only). Named after the three-bodied giant of Greek mythology, it unifies PostgreSQL, MySQL, and MSSQL wire protocol handling in a single static binary. The project targets teams running polyglot database architectures who currently must deploy and manage 2-3 separate poolers (PgBouncer, ProxySQL, etc.).
-
-### Key Metrics
-
-| Metric | Value |
-|--------|-------|
-| Total Files | 572 |
-| Go Source Files | 96 |
-| Go Test Files | 49 |
-| Total Go LOC | 52,184 |
-| Test LOC | 29,023 |
-| External Dependencies | 2 (golang.org/x/term, golang.org/x/time) |
-| Test Coverage | ~55% (estimated) |
-| Open TODOs | 9 |
-
-### Overall Health Assessment: 8.5/10
-
-**Justification:** Geryon is a remarkably well-architected project with ambitious scope (3 database protocols, Raft clustering, SWIM gossip, custom gRPC/MCP implementations). The codebase demonstrates strong Go idioms, comprehensive testing, and zero-dependency discipline. Minor concerns include incomplete YAML parser (uses basic string parsing), partial clustering implementation, and some TODO items in critical paths.
-
-### Top 3 Strengths
-
-1. **Zero Dependencies Philosophy** — Strict stdlib-only approach eliminates supply chain risk, creates true static binaries, and demonstrates advanced Go capability
-2. **Comprehensive Protocol Implementation** — Full wire-protocol implementations for PostgreSQL (v3), MySQL (handshake v10), and MSSQL (TDS 7.4+) with proper authentication methods
-3. **Production-Ready Tooling** — Complete CI/CD, Docker images, release automation, dashboard, REST/gRPC/MCP APIs, and extensive test coverage
-
-### Top 3 Concerns
-
-1. **YAML Config Parser is Incomplete** — `internal/config/loader.go` uses basic string splitting instead of proper YAML parsing (T006 in TASKS.md claims "gopkg.in/yaml.v3" but only basic parsing implemented)
-2. **Clustering Implementation is Partial** — Raft and SWIM implementations exist but lack full integration testing; some cluster features marked TODO
-3. **MSSQL Feature Gaps** — NTLM passthrough and prepared statements (sp_prepare/sp_execute) have tests but implementation is incomplete
+The codebase is ~70% complete with ~30% being stubs, mocks, or incomplete implementations. The core proxy relay works for basic bidirectional forwarding, but many advertised features (Raft clustering, query cache, prepared statement transparent proxy, connection tracking, deadlock detection) are wired up superficially or not at all.
 
 ---
 
-## 2. Architecture Analysis
+## 1. Architecture Analysis
 
-### 2.1 High-Level Architecture
+### 1.1 Strengths
+- **Zero-dependency philosophy** (stdlib only + `golang.org/x/term`, `golang.org/x/time`) enables single static binary
+- **Atomic config access** via `atomic.Pointer[config.Config]` — correct lock-free concurrent reads
+- **Strategy pattern** for pooling modes (`internal/pool/strategy.go`) — clean abstraction
+- **Three-body architecture** cleanly separates PostgreSQL, MySQL, MSSQL protocol handling
+- **`cmd/geryon/main.go`** — well-structured entry point with proper signal handling and graceful shutdown
 
-Geryon implements a **modular monolith** architecture with clear separation between protocol handling, pooling logic, and management interfaces.
+### 1.2 Critical Architectural Issues
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           GERYON PROXY                                   │
-│                                                                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                      │
-│  │   BODY I    │  │   BODY II   │  │  BODY III   │                      │
-│  │ PostgreSQL  │  │    MySQL    │  │    MSSQL    │                      │
-│  │  :5432      │  │   :3306     │  │   :1433     │                      │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘                      │
-│         │                │                │                              │
-│         └────────────────┼────────────────┘                              │
-│                          ▼                                               │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                     UNIFIED POOL MANAGER                          │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │  │
-│  │  │   Session   │  │ Transaction │  │  Statement  │              │  │
-│  │  │    Mode     │  │    Mode     │  │    Mode     │              │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘              │  │
-│  │                                                                  │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │  │
-│  │  │   Wait      │  │    Stmt     │  │    Cache    │              │  │
-│  │  │   Queue     │  │    Cache    │  │    Store    │              │  │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘              │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                          │                                               │
-│         ┌────────────────┼────────────────┐                              │
-│         ▼                ▼                ▼                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                      │
-│  │   Primary   │  │   Replica   │  │   Health    │                      │
-│  │  PostgreSQL │  │  PostgreSQL │  │   Checker   │                      │
-│  └─────────────┘  └─────────────┘  └─────────────┘                      │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                    MANAGEMENT INTERFACES                          │  │
-│  │  REST API (:8080)  gRPC (:9090)  MCP (:8081)  Dashboard          │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                      CLUSTERING                                   │  │
-│  │        Raft Consensus + SWIM Gossip (optional)                   │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+#### Dead Code: Mock Frontends in `internal/protocols/`
+The high-level protocol handlers in `internal/protocols/postgresql/`, `internal/protocols/mysql/`, and `internal/protocols/mssql/` are **completely unused**. The actual proxy logic lives in `internal/proxy/listener.go` which does raw bidirectional byte relay. These mock frontends represent ~3000 lines of dead code that mislead anyone reading the architecture.
 
-### Data Flow
+- `internal/protocols/postgresql/frontend.go` — never instantiated
+- `internal/protocols/mysql/frontend.go` — never instantiated
+- `internal/protocols/mssql/frontend.go` — never instantiated
 
-1. **Client Connection** → TCP listener accepts connection
-2. **TLS Handshake** (if configured) → Upgrade to TLS/mTLS
-3. **Protocol Detection** → Startup message parsed by appropriate codec
-4. **Authentication** → SCRAM-SHA-256/MD5/MySQL native/caching_sha2
-5. **Pool Assignment** → PoolManager assigns to appropriate pool based on config
-6. **Strategy Application** → Session/Transaction/Statement strategy manages backend connections
-7. **Query Processing** → SQL tokenized, routed (read/write split), cached if applicable
-8. **Response Relay** → Bidirectional message forwarding with minimal parsing
+The real proxy (`internal/proxy/listener.go`) handles:
+- PostgreSQL startup/auth interception
+- MySQL handshake forwarding
+- MSSQL Pre-Login/Login7 forwarding
+- Bidirectional relay via `Relay.Run()`
 
-### Concurrency Model
+**Impact**: Maintenance burden, misleading architecture docs, potential for confusion during incident response.
 
-- **One goroutine per client connection** — `proxy.Listener.handleConnection()` spawns goroutine for each client
-- **One goroutine per server connection** — Pool manages server connection lifecycle
-- **Background goroutines** — Health checker, metrics collector, cache cleanup, config watcher
-- **Raft goroutines** — Election timer, heartbeat ticker, message processor
-- **SWIM goroutines** — Probe loop, sync loop, message handler
+#### No Actual Server Connection Pooling
+`internal/pool/pool.go` manages a `servers` slice but `Acquire()` in the strategy implementations may create new TCP connections rather than reusing existing ones from the pool. The `BackendConnection` struct has `LastUsed` and `InUse` fields suggesting connection reuse, but the actual relay in `listener.go` creates direct connections to backends.
 
-All shared state uses `sync.RWMutex` or `atomic` operations. Context cancellation propagates through all goroutines for graceful shutdown.
+**Impact**: Every client connection may create a new backend TCP connection, defeating the purpose of a connection pooler.
 
-### 2.2 Package Structure Assessment
+#### Raft: Two Implementations, Both Incomplete
+- `internal/raft/` — simplified Raft (active but incomplete)
+- A full Raft implementation was planned but never completed
+- The `hasMajority` bug: simplified Raft may incorrectly report quorum
 
-| Package | Responsibility | Lines | Test Coverage | Quality |
-|---------|---------------|-------|---------------|---------|
-| `cmd/geryon` | Entry point, CLI, signal handling | 400 | High | ✅ Excellent |
-| `internal/config` | Config structs, validation, loader | 600 | Medium | ⚠️ Parser incomplete |
-| `internal/protocol/common` | Shared message types, buffer utilities | 400 | High | ✅ Excellent |
-| `internal/protocol/postgresql` | PG wire protocol v3 codec | 1,800 | High | ✅ Complete |
-| `internal/protocol/mysql` | MySQL handshake v10 codec | 1,500 | High | ✅ Complete |
-| `internal/protocol/mssql` | TDS 7.4+ codec | 1,600 | Medium | ⚠️ NTLM missing |
-| `internal/protocols/postgresql` | PG frontend handler | 1,200 | High | ✅ Complete |
-| `internal/protocols/mysql` | MySQL frontend handler | 1,000 | High | ✅ Complete |
-| `internal/protocols/mssql` | MSSQL frontend handler | 900 | Medium | ⚠️ Partial |
-| `internal/pool` | Connection pooling core | 2,500 | High | ✅ Excellent |
-| `internal/proxy` | TCP listeners, session management | 1,800 | High | ✅ Good |
-| `internal/auth` | SCRAM-SHA-256, user database | 800 | High | ✅ Complete |
-| `internal/cache` | Query result cache (LRU+TTL) | 600 | High | ✅ Good |
-| `internal/stmt` | Prepared statement cache | 500 | High | ✅ Good |
-| `internal/tokenizer` | SQL tokenizer for routing | 400 | High | ✅ Good |
-| `internal/api/rest` | REST API server | 1,500 | Medium | ✅ Good |
-| `internal/api/grpc` | gRPC server (hand-rolled) | 800 | Medium | ✅ Good |
-| `internal/api/mcp` | MCP server for LLM integration | 600 | Medium | ✅ Good |
-| `internal/api/dashboard` | Web dashboard | 500 | Medium | ✅ Good |
-| `internal/raft` | Raft consensus implementation | 1,200 | Medium | ⚠️ Needs testing |
-| `internal/swim` | SWIM gossip protocol | 800 | Medium | ⚠️ Needs testing |
-| `internal/cluster` | Cluster coordinator | 600 | Medium | ⚠️ Partial |
-| `internal/metrics` | Prometheus metrics | 400 | High | ✅ Good |
-| `internal/logger` | Structured logging | 500 | High | ✅ Good |
-| `internal/tlsutil` | TLS utilities | 400 | High | ✅ Good |
-
-### Package Cohesion Assessment
-
-**Strong Cohesion:**
-- `protocol/*` packages — Each handles one protocol, clear interfaces
-- `pool/*` packages — Single responsibility: connection lifecycle management
-- `auth/*` packages — Authentication logic well-contained
-
-**Areas for Improvement:**
-- `internal/proxy/listener.go` at 1,800 lines — Consider splitting into session.go, relay.go
-- `internal/api/rest/server.go` at 1,500 lines — Could separate handlers into files per domain
-
-### 2.3 Dependency Analysis
-
-#### External Go Dependencies
-
-| Dependency | Version | Purpose | Can Replace with stdlib? |
-|------------|---------|---------|------------------------|
-| `golang.org/x/term` | v0.36.0 | Terminal password input (no echo) | ❌ No — required for secure password entry |
-| `golang.org/x/time` | v0.15.0 | Rate limiting (`rate.Limiter`) | ⚠️ Partial — could implement basic rate limiter |
-| `golang.org/x/sys` | v0.37.0 | Indirect (via term) | ❌ No — required dependency |
-
-**Dependency Hygiene: EXCELLENT**
-- Only 2 direct dependencies, both from golang.org/x (Google-maintained)
-- No third-party dependencies that could introduce supply chain risk
-- Zero CVE exposure from dependencies
-
-#### Frontend Dependencies
-
-The dashboard is vanilla HTML/CSS/JS with **zero dependencies**:
-- No npm, no bundler, no build step
-- All assets embedded via `embed.FS`
-- SSE for real-time updates
-
-### 2.4 API & Interface Design
-
-#### REST API Endpoints
-
-| Method | Path | Handler | Status |
-|--------|------|---------|--------|
-| GET | `/api/v1/pools` | `handlePools` | ✅ Complete |
-| GET | `/api/v1/pools/{name}` | `handlePoolDetail` | ✅ Complete |
-| PUT | `/api/v1/pools/{name}` | `handlePoolDetail` | ⚠️ TODO in code |
-| GET | `/api/v1/connections` | `handleConnections` | ✅ Complete |
-| DELETE | `/api/v1/connections/{id}` | `handleConnections` | ✅ Complete |
-| GET | `/api/v1/backends` | `handleBackends` | ✅ Complete |
-| POST | `/api/v1/backends/{id}/detach` | `handleBackendAction` | ✅ Complete |
-| POST | `/api/v1/backends/{id}/attach` | `handleBackendAction` | ✅ Complete |
-| GET | `/api/v1/stats` | `handleStats` | ✅ Complete |
-| GET | `/api/v1/stats/stream` | `handleStatsStream` | ✅ Complete (SSE) |
-| GET | `/api/v1/health` | `handleHealth` | ✅ Complete |
-| GET | `/api/v1/ready` | `handleReady` | ✅ Complete |
-| GET | `/api/v1/queries` | `handleQueries` | ✅ Complete |
-| GET | `/api/v1/queries/slow` | `handleSlowQueries` | ✅ Complete |
-| GET | `/api/v1/config` | `handleConfig` | ✅ Complete |
-| POST | `/api/v1/config/reload` | `handleConfigReload` | ✅ Complete |
-| GET | `/metrics` | `handleMetrics` | ✅ Complete (Prometheus) |
-
-#### API Consistency
-
-**Strengths:**
-- Consistent JSON response format across all endpoints
-- Proper HTTP status codes (200, 400, 404, 500)
-- Bearer token authentication on admin endpoints
-- Rate limiting implemented
-
-**Considerations:**
-- No OpenAPI/Swagger documentation generated
-- Some endpoints have TODO comments for full implementation
-
-#### Authentication/Authorization
-
-- **Auth Interception Mode** — Client authenticates against Geryon user database, Geryon uses pool credentials for backend
-- **Auth Passthrough Mode** — Transparent forwarding to backend
-- **mTLS** — Client certificate validation with CN/SAN → username mapping
-- **Per-user limits** — Max connections, allowed pools
-
----
-
-## 3. Code Quality Assessment
-
-### 3.1 Go Code Quality
-
-#### Code Style: A-
-- Consistent Go formatting (`gofmt` compliant)
-- Clear naming conventions (Exported, unexported, acronyms)
-- Good use of Go idioms (channels, context, defer)
-- Interface-based design (`common.Codec`, `PoolStrategy`)
-
-#### Error Handling: B+
-- Errors wrapped with context using `fmt.Errorf("...: %w", err)`
-- Custom error types would be beneficial in some areas
-- Some functions return generic errors where specific types would help
-
-#### Context Usage: A
-- Proper context propagation throughout
-- Timeout configuration for connections, queries
-- Graceful cancellation on shutdown
-
-#### Logging: A
-- Structured JSON logging via `log/slog`
-- Per-component log levels
-- Connection lifecycle logging
-- Slow query logging with configurable threshold
-
-#### Configuration: B
-- Environment variable expansion with `GERYON_` prefix restriction
-- Validation for all config fields
-- **Concern:** YAML parser is basic string splitting, not full YAML spec
-
-#### Magic Numbers & Hardcoded Values
-
-**Identified magic numbers:**
+#### Metrics Histogram Sum Bug
+`internal/metrics/metrics.go:195` — Histogram Sum calculation:
 ```go
-// internal/pool/pool.go:394
-conn, err := p.waitQueue.Wait(ctx, 5*time.Second) // TODO: configurable timeout
-
-// internal/proxy/listener.go:30
-const maxMySQLPayload = 16 << 20  // Should be documented
-
-// internal/protocol/postgresql/codec.go (various)
-// Various buffer sizes without documentation
+return math.Float64frombits(h.sumBits.Load())
 ```
+Adding `math.Float64bits()` values and converting back does NOT produce the sum of the floats. IEEE 754 bit patterns are not additive. **Sum() returns garbage.**
 
-**TODO/FIXME Comments (9 total):**
+#### Certificate Fingerprint Bug
+`internal/auth/cert.go:375-382`:
+```go
+func CertificateFingerprint(cert *x509.Certificate) string {
+    return fmt.Sprintf("%x", cert.Raw[:32])
+}
 ```
-./internal/api/dashboard/server.go:    // TODO: implement connection tracking
-./internal/api/rest/server.go:        // TODO: Update pool configuration
-./internal/api/rest/server.go:        // TODO: Check pool health
-./internal/api/rest/server.go:        // TODO: Implement GetActiveTransactions
-./internal/cluster/coordinator.go:    // TODO: Track leader from Raft
-./internal/pool/pool.go:              // TODO: configurable timeout
-./internal/pool/pool.go:              // TODO: Perform backend authentication
-./internal/pool/pool.go:              // TODO: weighted selection, replica routing
-./internal/pool/session.go:           // TODO: Implement message handling
-```
+This takes the first 32 bytes of the raw certificate DER, NOT a SHA-256 hash. Two different certificates could have the same first 32 bytes. **Auth bypass possible.**
 
-### 3.2 Concurrency & Safety
+---
 
-#### Goroutine Lifecycle: A-
-- All goroutines have proper context cancellation
-- `sync.WaitGroup` used where appropriate
-- Graceful shutdown implemented in `main.go`
+## 2. Spec-vs-Implementation Gap Analysis
 
-#### Mutex/Channel Usage: A
-- `sync.RWMutex` for read-heavy operations
-- `atomic` for simple counters
-- Channel-based communication between components
+| Spec Feature | Implementation Status | Gap |
+|---|---|---|
+| PostgreSQL wire protocol v3 | Partial | Basic relay works; full message parsing incomplete |
+| MySQL handshake v10 | Partial | Basic handshake forwarding; auth passthrough only |
+| MSSQL TDS 7.4+ | Partial | Pre-Login/Login7 forwarding; no full TDS support |
+| Session mode pooling | Implemented | 1:1 mapping works via bidirectional relay |
+| Transaction mode pooling | Stub | Strategy exists but connection reuse not wired |
+| Statement mode pooling | Stub | Strategy exists but not functional |
+| SCRAM-SHA-256 auth | Implemented | Hand-rolled PBKDF2, correct implementation |
+| Read/write splitting | Stub | Router exists but not wired into relay |
+| Query result cache | Stub | Cache exists in `internal/cache/` but never used in relay |
+| Prepared statement cache | Partial | Cache exists but transparent reproxy not wired |
+| Raft clustering | Incomplete | Simplified Raft, no leader election tested |
+| SWIM gossip | Incomplete | Basic implementation, not production-ready |
+| REST API | Implemented | Basic endpoints functional |
+| MCP server | Implemented | SSE transport, basic tools |
+| gRPC API | Misleading | HTTP/2 + JSON, not actual gRPC |
+| Web dashboard | Partial | Some endpoints fail (security test) |
+| Hot config reload | Partial | SIGHUP + file watch work; unsafe reload detection incomplete |
+| Connection state reset | Implemented | DISCARD ALL, COM_RESET_CONNECTION, sp_reset_connection |
+| SQL tokenizer | Implemented | Basic tokenizer with `strings.HasPrefix` classification |
+| Query logging | Implemented | Buffered file writing, slow query detection |
+| Prometheus metrics | Partial | Metrics framework exists but not wired into pool |
+| TLS support | Implemented | Server/client TLS, self-signed cert generation |
+| Certificate auth | Implemented | But fingerprint bug creates security risk |
+| Health checks | Partial | TCP-only checks, no protocol-specific health queries |
+| Transaction management | Partial | Timeout detection works but no actual backend abort |
+| Deadlock detection | Dead code | `DeadlockDetector` exists but never instantiated |
+| Connection tracking | Dead code | `ConnectionTracker` exists but never wired in |
 
-#### Race Condition Risk Assessment
+---
 
-**Low Risk:**
-- All shared state properly protected
-- Atomic operations for counters
-- No obvious data races from static analysis
+## 3. Code Quality Review
 
-**Medium Risk:**
-- `internal/pool/pool.go` — `lastUsedAt` is `atomic.Value` but accessed frequently
-- Config hot-reload uses `atomic.Pointer` correctly
+### 3.1 Critical Issues
 
-### 3.3 Security Assessment
+| File | Line | Issue | Severity |
+|---|---|---|---|
+| `internal/metrics/metrics.go` | 195 | Histogram Sum returns garbage (Float64bits addition ≠ float addition) | **CRITICAL** |
+| `internal/auth/cert.go` | 375-382 | Certificate fingerprint uses raw bytes, not hash | **CRITICAL** |
+| `internal/pool/reset.go` | 281 | SQL injection: `fmt.Sprintf("DROP TABLE IF EXISTS %s", table)` | **CRITICAL** |
+| `internal/pool/pool.go` | — | Server connections not reused; `Acquire()` may create new TCP conn | **CRITICAL** |
+| `internal/protocols/` | all | ~3000 lines of dead code — mock frontends never used | **HIGH** |
+| `internal/raft/` | — | Simplified Raft with potential hasMajority bug | **HIGH** |
+| `internal/pool/transaction.go` | 178-218 | `checkTimeouts()` sets status but doesn't abort backend transaction | **HIGH** |
+| `internal/config/loader.go` | — | Custom YAML parser is fragile (line-by-line, indent-based) | **HIGH** |
+| `internal/logger/querylog.go` | 376 | Running average can overflow | **MEDIUM** |
+| `internal/logger/querylog.go` | 481 | `min()` shadows Go 1.21 builtin | **LOW** |
 
-#### Input Validation: B+
-- Config validation comprehensive (port conflicts, pool names, enum values)
-- SQL tokenizer prevents injection into cache keys
-- File path sanitization for query logs
+### 3.2 Security Vulnerabilities
 
-#### SQL Injection Protection: A
-- Parameterized queries passed through to backend
-- No SQL construction in Geryon itself
-- Query tokenizer only used for routing decisions, not execution
+1. **SQL Injection in SmartResetter** (`internal/pool/reset.go:281`): Temporary table names interpolated directly into SQL. If an attacker can influence table names through query classification, they can inject SQL.
 
-#### Secrets Management: A
-- Passwords read from files (`password_file`)
-- Environment variable expansion restricted to `GERYON_*` prefix
-- No secrets in example configs
-- SCRAM-SHA-256 for password hashing
+2. **No Auth Rate Limiting** (`internal/auth/auth.go`): SCRAM-SHA-256 handshake has no rate limiting. PBKDF2 is intentionally slow (~100ms), making it a natural DoS vector — an attacker can exhaust CPU by initiating many auth handshakes.
 
-#### TLS Configuration: A
-- Full TLS mode support (disable, allow, prefer, require, verify-ca, verify-full)
-- mTLS with client certificate validation
-- Per-pool TLS policy
-- Certificate generation tool built-in
+3. **Ignored Write Errors** (`internal/proxy/listener.go`): Multiple `io.Copy` calls in relay ignore write errors. If a write fails, the goroutine may continue reading from the other direction, wasting resources and potentially corrupting state.
 
-#### CORS Configuration: B
-- Basic CORS middleware present
-- `AllowedOrigins` configurable but defaults to permissive in some cases
+4. **No Input Validation on REST API**: Config reload endpoint accepts arbitrary YAML without validation.
+
+5. **Dashboard Security Test Failure**: `TestDashboard_ConnectionsEndpoint` fails with connection refused — suggests race condition in test or server startup.
+
+### 3.3 Code Smells
+
+- **`context.Background()` in `Session.HandleMessage`** (`internal/pool/session.go`): Should use a cancellable context tied to the session lifecycle.
+- **Global counters** (`txnIDCounter`, `stmtIDCounter`): Package-level atomic counters are fine but make testing harder and could collide across tests.
+- **Hardcoded timeouts**: 30-minute transaction timeout, 5-minute idle timeout, 30-second check interval — all hardcoded in `NewTransactionManager`.
+- **SHA256 truncated to 8 bytes** (`internal/pool/prepared.go:332`): `hex.EncodeToString(h[:8])` — 8 bytes = 64 bits, collision probability becomes non-negligible with >10K statements.
 
 ---
 
 ## 4. Testing Assessment
 
-### 4.1 Test Coverage
+### 4.1 Current State
+- **Build**: `go build ./...` passes cleanly
+- **Tests**: Most pass, two failures:
+  1. `TestDashboard_ConnectionsEndpoint` — connection refused (race condition or server not starting)
+  2. Integration tests timeout (512s) — requires actual database backends
+- **Race detection**: `go test -race` passes for unit tests
+- **Benchmarks**: Exist in `benchmarks/`, no tests to run
 
-| Category | Files | Lines | Quality |
-|----------|-------|-------|---------|
-| Unit Tests | 49 | 29,023 | Good |
-| Integration Tests | 8 | ~3,000 | Good |
-| Benchmarks | 1 | ~200 | Basic |
-
-**Coverage by Package:**
-- `internal/auth` — High (~85%)
-- `internal/cache` — High (~80%)
-- `internal/tokenizer` — High (~90%)
-- `internal/metrics` — High (~75%)
-- `internal/protocol/*` — Medium-High (~70%)
-- `internal/pool` — Medium (~65%)
-- `internal/raft` — Medium (~60%)
-- `internal/swim` — Low (~50%)
-- `internal/api/*` — Medium (~60%)
-
-### 4.2 Test Types Present
-
-| Type | Status | Notes |
-|------|--------|-------|
-| Unit Tests | ✅ Extensive | Table-driven tests throughout |
-| Integration Tests | ✅ Good | `integration-tests/` directory |
-| Benchmarks | ✅ Basic | `benchmarks/suite_test.go` |
-| Chaos Tests | ✅ Present | `integration-tests/chaos_test.go` |
-| Memory Tests | ✅ Present | `integration-tests/memory_test.go` |
-| Fuzz Tests | ❌ Absent | Not implemented |
-| E2E Tests | ⚠️ Partial | Framework exists |
-
-### 4.3 Test Infrastructure
-
-**Strengths:**
-- Race detection enabled in CI (`go test -race`)
-- Test matrix across Go 1.23, 1.24 and OS (Linux, macOS, Windows)
-- Coverage reporting to Codecov
-- Dedicated integration test directory
-
-**Areas for Improvement:**
-- No fuzz testing for protocol parsers
-- No load testing automation
-- Some integration tests require external databases
+### 4.2 Coverage Gaps
+- `internal/proxy/listener.go` (1979 lines) — minimal test coverage for the actual relay logic
+- `internal/pool/pool.go` — connection acquire/release not tested under concurrency
+- `internal/protocols/` — dead code, not tested (correctly)
+- `internal/raft/` — Raft consensus not tested for edge cases
+- `internal/cache/` — query cache not tested
+- End-to-end proxy relay tests with actual database backends
 
 ---
 
-## 5. Specification vs Implementation Gap Analysis
+## 5. Performance Analysis
 
-### 5.1 Feature Completion Matrix
+### 5.1 Known Performance Issues
 
-| Planned Feature | Spec Section | Implementation Status | Files | Notes |
-|-----------------|--------------|----------------------|-------|-------|
-| **Phase 1: Foundation** | | | | |
-| Go module + structure | §1 | ✅ Complete | All | Clean architecture |
-| Structured logger | §1 | ✅ Complete | `internal/logger` | slog-based JSON |
-| Makefile | §1 | ✅ Complete | `Makefile` | Cross-compile ready |
-| Config structs | §1 | ✅ Complete | `internal/config` | Full validation |
-| YAML parser | §1 | ⚠️ Partial | `internal/config/loader.go` | Basic string parsing, not full YAML |
-| Config validation | §1 | ✅ Complete | `internal/config/config.go` | Comprehensive |
-| Hot reload | §1 | ✅ Complete | `internal/config/watcher.go` | SIGHUP + file watch |
-| **Phase 2: PostgreSQL** | | | | |
-| PG Wire Protocol v3 | §3.1 | ✅ Complete | `internal/protocol/postgresql` | Full implementation |
-| SSL negotiation | §3.1 | ✅ Complete | `internal/protocol/postgresql` | TLS upgrade working |
-| SCRAM-SHA-256 | §3.1 | ✅ Complete | `internal/auth/scram.go` | From-scratch implementation |
-| MD5 auth | §3.1 | ✅ Complete | `internal/auth/` | Legacy support |
-| Extended Query | §3.1 | ✅ Complete | `internal/protocol/postgresql/extended.go` | Parse/Bind/Execute |
-| COPY protocol | §3.1 | ❌ Missing | — | Listed as low priority |
-| LISTEN/NOTIFY | §3.1 | ❌ Missing | — | Listed as low priority |
-| **Phase 3: Pooling** | | | | |
-| Session Mode | §4.1 | ✅ Complete | `internal/pool/session.go` | Full implementation |
-| Transaction Mode | §4.1 | ✅ Complete | `internal/pool/transaction.go` | Full implementation |
-| Statement Mode | §4.1 | ✅ Complete | `internal/pool/statement.go` | Full implementation |
-| Wait Queue | §4.2 | ✅ Complete | `internal/pool/wait_queue.go` | FIFO with timeout |
-| Health Checker | §4.2 | ✅ Complete | `internal/pool/health.go` | Configurable queries |
-| Connection Reset | §4.4 | ✅ Complete | `internal/pool/reset.go` | Smart resetter |
-| **Phase 4: MySQL** | | | | |
-| Handshake v10 | §3.2 | ✅ Complete | `internal/protocol/mysql` | Full implementation |
-| mysql_native_password | §3.2 | ✅ Complete | `internal/auth/` | SHA1 challenge-response |
-| caching_sha2_password | §3.2 | ✅ Complete | `internal/auth/` | SHA256 + RSA |
-| COM_STMT_* | §3.2 | ✅ Complete | `internal/protocol/mysql` | Prepared statements |
-| **Phase 5: MSSQL** | | | | |
-| TDS 7.4+ codec | §3.3 | ✅ Complete | `internal/protocol/mssql` | Full packet implementation |
-| Pre-Login handshake | §3.3 | ✅ Complete | `internal/protocol/mssql` | Encryption negotiation |
-| Login7 auth | §3.3 | ✅ Complete | `internal/protocol/mssql` | SQL Auth working |
-| NTLM passthrough | §3.3 | ⚠️ Partial | `internal/protocols/mssql` | Test exists, implementation incomplete |
-| sp_prepare/sp_execute | §3.3 | ⚠️ Partial | `internal/protocols/mssql` | Test exists, implementation incomplete |
-| **Phase 6: Prepared Statements** | | | | |
-| Global stmt cache | §5.1 | ✅ Complete | `internal/stmt/cache.go` | Metadata tracking |
-| Per-conn tracking | §5.1 | ✅ Complete | `internal/stmt/tracker.go` | LRU eviction |
-| ID remapping | §5.1 | ✅ Complete | `internal/stmt/remapper.go` | Client→server mapping |
-| Transparent re-prep | §5.1 | ✅ Complete | `internal/pool/pool.go` | Auto-reprepare |
-| Query result cache | §5.2 | ✅ Complete | `internal/cache/store.go` | LRU+TTL |
-| Write invalidation | §5.2 | ✅ Complete | `internal/cache/invalidation.go` | Table-based |
-| **Phase 7: Auth & Security** | | | | |
-| Auth interception | §6.2 | ✅ Complete | `internal/auth/interceptor.go` | Full implementation |
-| Auth passthrough | §6.1 | ✅ Complete | `internal/auth/passthrough.go` | Transparent mode |
-| mTLS | §6.3 | ✅ Complete | `internal/tlsutil/` | Full implementation |
-| **Phase 8: Routing** | | | | |
-| SQL Tokenizer | §8 | ✅ Complete | `internal/tokenizer/` | Keyword detection |
-| R/W Splitting | §8 | ✅ Complete | `internal/pool/routing.go` | Transaction-aware |
-| **Phase 9: Management APIs** | | | | |
-| REST API | §8.1 | ✅ Complete | `internal/api/rest/` | Full CRUD |
-| gRPC API | §8.3 | ✅ Complete | `internal/api/grpc/` | Hand-rolled protobuf |
-| MCP Server | §8.2 | ✅ Complete | `internal/api/mcp/` | 13 tools, 4 resources |
-| Web Dashboard | §8.4 | ✅ Complete | `internal/api/dashboard/` | 9 pages, SSE |
-| **Phase 10: Metrics** | | | | |
-| Atomic counters | §9.1 | ✅ Complete | `internal/metrics/` | All targets met |
-| Histogram | §9.1 | ✅ Complete | `internal/metrics/histogram.go` | Duration tracking |
-| Slow query log | §9.2 | ✅ Complete | `internal/logger/querylog.go` | Configurable |
-| **Phase 11: Clustering** | | | | |
-| Raft consensus | §7.1 | ✅ Complete | `internal/raft/` | From-scratch implementation |
-| Log replication | §7.1 | ✅ Complete | `internal/raft/log.go` | WAL with fsync |
-| Leader election | §7.1 | ✅ Complete | `internal/raft/raft.go` | Working |
-| Snapshotting | §7.1 | ✅ Complete | `internal/raft/snapshot.go` | Compression |
-| SWIM gossip | §7.2 | ✅ Complete | `internal/swim/swim.go` | From-scratch |
-| Membership | §7.2 | ✅ Complete | `internal/swim/membership.go` | Alive/Suspect/Dead |
-| Coordinator | §7.3 | ✅ Complete | `internal/cluster/` | Raft+SWIM wiring |
-| **Phase 12: Release** | | | | |
-| GitHub Actions CI | — | ✅ Complete | `.github/workflows/` | Full matrix |
-| Docker images | — | ✅ Complete | `Dockerfile` | Scratch-based |
-| Release binaries | — | ✅ Complete | `.github/workflows/release.yml` | Multi-platform |
-| Homebrew formula | — | ✅ Complete | `.github/homebrew/` | Template ready |
+1. **No Connection Reuse**: If `Acquire()` creates new TCP connections, each query incurs TCP handshake + TLS handshake + database auth latency.
 
-### 5.2 Architectural Deviations
+2. **Histogram Sum Bug**: Metrics are garbage, making performance monitoring impossible.
 
-| Spec Requirement | Implementation | Deviation Type | Notes |
-|------------------|----------------|----------------|-------|
-| YAML parser using gopkg.in/yaml.v3 | Basic string parsing | Simplification | TASKS.md T006 mentions external dep but implementation is custom basic parser |
-| Full gRPC with protobuf | Hand-rolled serialization | Intentional | Zero dependency constraint required custom protobuf |
-| fsnotify for file watching | os.Stat polling | Intentional | Zero dependency constraint |
+3. **PBKDF2 as DoS Vector**: Each auth attempt costs ~100ms of CPU. 100 concurrent auth attempts = 10 CPU-seconds per second.
 
-### 5.3 Missing Critical Components
+4. **SHA256 for Every Query**: `hashQuery()` in prepared statement cache computes SHA256 for every query. At high QPS, this becomes measurable.
 
-| Feature | Impact | Priority | Notes |
-|---------|--------|----------|-------|
-| **MSSQL NTLM passthrough** | Medium | High | Windows auth common in enterprise |
-| **MSSQL sp_prepare/sp_execute** | Medium | Medium | Prepared statements incomplete |
-| **PostgreSQL COPY protocol** | Low | Low | Listed as low priority in spec |
-| **PostgreSQL LISTEN/NOTIFY** | Low | Low | Listed as low priority in spec |
-| **Full YAML parser** | Medium | Medium | Current parser may fail on complex YAML |
+5. **Regex in Tokenizer**: `RemoveComments()` uses regex — slow for large queries with many comments.
+
+6. **Running Average Overflow**: Query logger's running average can overflow with enough samples.
+
+### 5.2 Positive Performance Aspects
+- Zero external dependencies means minimal binary size and fast startup
+- Atomic config reads are lock-free
+- Buffer pooling in protocol codecs (if implemented) would reduce allocations
 
 ---
 
-## 6. Performance & Scalability
+## 6. Technical Debt Register
 
-### 6.1 Performance Patterns
+| ID | Debt | Impact | Effort to Fix | Priority |
+|---|---|---|---|---|
+| TD-1 | Mock frontends in `internal/protocols/` are dead code | Confusion, maintenance burden | Medium (delete or integrate) | P0 |
+| TD-2 | Server connections not reused from pool | No connection pooling benefit | High (rewrite acquire/release) | P0 |
+| TD-3 | Histogram Sum bug in metrics | Monitoring is broken | Low (fix float addition) | P0 |
+| TD-4 | Certificate fingerprint not using hash | Auth bypass possible | Low (use SHA-256) | P0 |
+| TD-5 | SQL injection in SmartResetter | Data loss/corruption | Low (use parameterized query) | P0 |
+| TD-6 | `checkTimeouts()` doesn't abort backend transactions | Orphaned transactions on backend | Medium | P1 |
+| TD-7 | Custom YAML parser is fragile | Config parsing failures on edge cases | High (switch to stdlib or robust parser) | P1 |
+| TD-8 | No auth rate limiting | DoS via auth exhaustion | Medium | P1 |
+| TD-9 | Transaction manager not wired into relay | Transaction timeouts don't work | Medium | P1 |
+| TD-10 | Query cache never used in relay | Advertised feature doesn't work | Medium | P2 |
+| TD-11 | Prepared statement transparent proxy not wired | Advertised feature doesn't work | Medium | P2 |
+| TD-12 | Read/write splitting not wired into relay | Advertised feature doesn't work | Medium | P2 |
+| TD-13 | DeadlockDetector is dead code | Maintenance burden | Low (delete) | P3 |
+| TD-14 | ConnectionTracker is dead code | Maintenance burden | Low (delete) | P3 |
+| TD-15 | Two Raft implementations | Confusion, maintenance burden | Medium (consolidate) | P2 |
+| TD-16 | gRPC API is actually HTTP/JSON | Misleading documentation | Low (fix docs or implement real gRPC) | P3 |
+| TD-17 | Hardcoded timeouts in TransactionManager | Inflexible configuration | Low | P3 |
+| TD-18 | SHA256 truncated to 8 bytes for prepared statements | Collision risk at scale | Low (use full hash) | P3 |
+| TD-19 | Query logger running average overflow | Incorrect stats at high volume | Low | P3 |
 
-**Hot Path Optimizations:**
-- Zero-allocation message relay using buffer pools
-- Double-buffering for bidirectional forwarding
-- Atomic counters for metrics (no locks)
-- Prepared statement caching to avoid re-parsing
+---
 
-**Memory Patterns:**
-- Per-connection buffers (32KB default)
+## 7. Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Connection pool doesn't reuse connections → backend overload | High | High | Fix Acquire() to reuse connections |
+| Auth DoS via SCRAM-SHA-256 exhaustion | Medium | High | Add rate limiting, connection-level throttling |
+| SQL injection via SmartResetter temp table cleanup | Low | High | Parameterize or validate table names |
+| Certificate auth bypass via fingerprint collision | Low | Critical | Use SHA-256 hash of full certificate |
+| Metrics garbage → no performance monitoring | Certain | Medium | Fix Histogram Sum calculation |
+| Orphaned backend transactions after timeout | Medium | Medium | Send ROLLBACK to backend on timeout |
+| Config parsing failure on complex YAML | Medium | Medium | Switch to robust YAML parser |
+| Dead code causes confusion during incident | Certain | Low | Delete or integrate mock frontends |
+
+---
+
+## 8. File-by-File Critical Findings
+
+### `internal/proxy/listener.go` (1979 lines)
+- **The actual proxy logic** — bidirectional relay via `Relay.Run()`
+- Bypasses mock frontends entirely
+- Write errors ignored in relay goroutines
+- Cache support exists but not fully wired
+
+### `internal/pool/pool.go`
+- `servers` slice manages backend connections
+- `Acquire()` implementation may create new connections instead of reusing
+- Connection state tracking (`LastUsed`, `InUse`) exists but may not be used
+
+### `internal/pool/strategy.go`
+- Strategy pattern correctly implemented
+- TransactionStrategy acquires on first query, releases on COMMIT/ROLLBACK
+- StatementStrategy correctly rejects transaction begins
+- Not wired into actual relay in `listener.go`
+
+### `internal/pool/transaction.go`
+- TransactionManager monitors timeouts in background goroutine
+- `checkTimeouts()` sets status to TxnAborted/TxnIdle but doesn't send ROLLBACK to backend
+- DeadlockDetector exists but never instantiated
+
+### `internal/pool/reset.go`
+- ConnectionResetter interface correctly abstracts protocol-specific reset
+- SQL injection risk in SmartResetter temp table cleanup (line 281)
+
+### `internal/metrics/metrics.go`
+- Counter, Gauge, Histogram, Registry correctly structured
+- **CRITICAL**: Histogram Sum at line 195 uses Float64bits addition which is NOT float addition
+- Not wired into pool or relay
+
+### `internal/auth/cert.go`
+- Certificate-based auth with CN/SAN extraction
+- **CRITICAL**: Fingerprint at line 375 uses `cert.Raw[:32]` instead of SHA-256 hash
+
+### `internal/auth/auth.go`
+- SCRAM-SHA-256 implementation with hand-rolled PBKDF2
+- No rate limiting on auth attempts
+- PBKDF2 is CPU-intensive, creating natural DoS vector
+
+### `internal/config/loader.go`
+- Custom YAML parser — line-by-line, indent-based
+- Fragile: no support for complex YAML features (anchors, multi-line strings, etc.)
+- Works for simple configs but will fail on edge cases
+
+### `internal/logger/querylog.go`
+- Buffered file writing, slow query logging
+- Running average can overflow (line 376)
+- `min()` shadows Go 1.21 builtin (line 481)
+- Config fields for log rotation exist but rotation not implemented
+
+### `internal/raft/` (simplified implementation)
+- Basic Raft state machine
+- Potential hasMajority bug — may incorrectly report quorum
+- No snapshot/compaction
+- Not tested for network partitions
+
+### `internal/swim/`
+- Basic SWIM gossip implementation
+- Not production-ready for cluster discovery
+
+### `internal/cache/`
 - LRU cache with TTL for query results
-- Connection pooling minimizes allocations
-- `sync.Pool` could be added for buffer reuse
+- Never instantiated or used in relay
+- Dead code unless wired in
 
-**Potential Bottlenecks:**
-- `internal/pool/pool.go:394` — Fixed 5s timeout in wait queue
-- Query tokenizer runs on every query (necessary but overhead)
-- Cache invalidation parses write queries (could optimize)
+### `internal/stmt/cache.go`
+- Statement cache with LRU list
+- TransparentRepreparer exists but never instantiated
+- Remapper for client→server ID mapping
 
-### 6.2 Scalability Assessment
+### `internal/tokenizer/tokenizer.go`
+- SQL tokenizer using `strings.HasPrefix` for classification
+- `ExtractTables()` is simplified — won't handle complex queries
+- `RemoveComments()` uses regex — slow for large queries
+- `NormalizeQuery()` with parameter normalization
 
-| Metric | Target | Current Status |
-|--------|--------|----------------|
-| Max client connections | 100,000+ | ✅ Achievable — goroutine-per-conn model |
-| Connection setup latency | < 1ms | ✅ Likely met — atomic pool operations |
-| Query proxy overhead | < 100μs | ✅ Should meet — minimal parsing |
-| Memory per idle conn | < 8KB | ⚠️ ~32KB buffer + overhead |
-| Config reload | < 100ms | ✅ Achievable |
-| Binary size | < 30MB | ✅ ~15MB based on build |
-| Startup time | < 2s | ✅ Instant for typical config |
+### `internal/tlsutil/tls.go` and `internal/tlsutil/config.go`
+- TLS config loading for server/client
+- Self-signed cert generation
+- Cipher suite configuration
+- Correct implementation
 
-**Horizontal Scaling:**
-- ✅ Stateless design allows multiple Geryon nodes
-- ✅ Raft clustering for config consistency
-- ✅ SWIM gossip for health sharing
-- ⚠️ No built-in load balancer (requires external LB)
-
----
-
-## 7. Developer Experience
-
-### 7.1 Onboarding Assessment
-
-**Setup Process:**
-1. `git clone` → ✅ Works
-2. `make build` → ✅ Works (requires Go 1.23+)
-3. `./bin/geryon --generate-config` → ✅ Works
-4. Edit config → ⚠️ Requires database backends for testing
-5. `./bin/geryon --config geryon.yaml` → ✅ Works
-
-**Documentation:**
-- ✅ README comprehensive with examples
-- ✅ Example configs provided
-- ✅ Docker Compose setup included
-- ⚠️ No formal API documentation (OpenAPI)
-
-### 7.2 Build & Deploy
-
-**Build Process:**
-- ✅ Single `make build` command
-- ✅ Cross-compilation for all platforms
-- ✅ Docker multi-stage build (scratch-based)
-- ✅ CI/CD with GitHub Actions
-
-**Deployment:**
-- ✅ Docker images ready
-- ✅ Binary releases automated
-- ✅ Homebrew formula template
-- ⚠️ No Helm chart for Kubernetes
+### `cmd/geryon/main.go`
+- Well-structured entry point
+- Atomic config holder (`cfgHolder`)
+- Graceful shutdown sequence
+- SIGHUP hot reload
+- Config watcher for file changes
 
 ---
 
-## 8. Technical Debt Inventory
+## 9. Conclusion
 
-### 🔴 Critical (blocks production readiness)
+Geryon has a solid architectural vision and a working core proxy relay. However, the gap between advertised features and actual implementation is significant. The critical bugs (Histogram Sum, certificate fingerprint, SQL injection, connection reuse) must be fixed before any production deployment. The dead code (mock frontends, deadlock detector, connection tracker, query cache) should be either integrated or deleted to reduce maintenance burden and confusion.
 
-| Item | Location | Description | Fix Effort |
-|------|----------|-------------|------------|
-| YAML Parser | `internal/config/loader.go` | Basic string parsing will fail on complex YAML | Medium |
-
-### 🟡 Important (should fix before v1.0)
-
-| Item | Location | Description | Fix Effort |
-|------|----------|-------------|------------|
-| MSSQL NTLM | `internal/protocols/mssql/` | Windows auth incomplete | High |
-| Pool Timeout | `internal/pool/pool.go:394` | Hardcoded 5s timeout | Low |
-| Raft Testing | `internal/raft/` | Needs more integration tests | Medium |
-| SWIM Testing | `internal/swim/` | Needs more integration tests | Medium |
-
-### 🟢 Minor (nice to fix)
-
-| Item | Location | Description | Fix Effort |
-|------|----------|-------------|------------|
-| TODO Comments | Various | 9 TODO items in codebase | Low |
-| Magic Numbers | Various | Some hardcoded values | Low |
-| File Splitting | `internal/proxy/listener.go` | 1,800 lines, could split | Low |
-
----
-
-## 9. Metrics Summary Table
-
-| Metric | Value |
-|--------|-------|
-| Total Files | 572 |
-| Total Go Files | 96 |
-| Total Go LOC | 52,184 |
-| Test Files | 49 |
-| Test LOC | 29,023 |
-| Test Coverage (estimated) | ~55% |
-| External Go Dependencies | 2 |
-| Open TODOs/FIXMEs | 9 |
-| API Endpoints | 16+ |
-| MCP Tools | 13 |
-| MCP Resources | 4 |
-| Spec Feature Completion | ~95% |
-| Task Completion | ~98% |
-| Overall Health Score | 8.5/10 |
-
----
-
-## 10. Recommendations
-
-### Immediate Actions (Next 2 Weeks)
-
-1. **Replace YAML Parser** — Implement proper YAML parsing using `gopkg.in/yaml.v3` or complete the custom parser
-2. **Complete MSSQL NTLM** — Finish NTLM passthrough implementation for Windows Authentication support
-3. **Address TODOs** — Resolve 9 TODO comments, especially in critical paths
-
-### Short Term (Next Month)
-
-1. **Increase Test Coverage** — Target 70%+ coverage, especially for clustering code
-2. **Add Fuzz Testing** — Protocol parsers would benefit from fuzz testing
-3. **Performance Benchmarks** — Complete benchmark suite with published numbers
-
-### Long Term (Next Quarter)
-
-1. **Kubernetes Operator** — Helm chart and operator for cloud-native deployments
-2. **Query Plan Cache** — Add query plan caching for repeated queries
-3. **Plugin System** — Allow custom middleware/plugins for query transformation
-
----
-
-*End of Analysis Report*
+**The project is approximately 70% complete.** The remaining 30% includes the most complex and critical pieces: proper connection pooling, transaction management integration, and production-hardened clustering.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"time"
 
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
@@ -263,6 +264,13 @@ func (s *SmartResetter) ResetState() {
 	}
 }
 
+var validTableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// isValidTableName validates that a table name contains only safe characters.
+func isValidTableName(name string) bool {
+	return validTableName.MatchString(name) && len(name) <= 128
+}
+
 // GetResetSQL returns SQL statements needed for reset (PostgreSQL specific).
 func (s *SmartResetter) GetResetSQL() []string {
 	var stmts []string
@@ -276,9 +284,11 @@ func (s *SmartResetter) GetResetSQL() []string {
 		stmts = append(stmts, "RESET ALL")
 	}
 
-	// Drop temp tables
+	// Drop temp tables (validated to prevent SQL injection)
 	for _, table := range s.state.TempTablesCreated {
-		stmts = append(stmts, fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
+		if isValidTableName(table) {
+			stmts = append(stmts, fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
+		}
 	}
 
 	// Deallocate prepared statements

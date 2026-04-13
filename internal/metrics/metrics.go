@@ -3,7 +3,6 @@ package metrics
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"runtime"
 	"sort"
 	"sync"
@@ -125,7 +124,8 @@ type Histogram struct {
 	name    string
 	buckets []float64
 	counts  []atomic.Uint64
-	sumBits atomic.Uint64 // Stored as math.Float64bits
+	sum     float64       // Actual sum, protected by mu
+	mu      sync.Mutex    // Protects sum field
 	count   atomic.Uint64
 }
 
@@ -159,8 +159,9 @@ func (h *Histogram) Value() float64 {
 
 // Observe adds a value to the histogram.
 func (h *Histogram) Observe(v float64) {
-	bits := math.Float64bits(v)
-	h.sumBits.Add(bits)
+	h.mu.Lock()
+	h.sum += v
+	h.mu.Unlock()
 	h.count.Add(1)
 
 	// Find the bucket
@@ -174,7 +175,9 @@ func (h *Histogram) Observe(v float64) {
 
 // Reset resets the histogram.
 func (h *Histogram) Reset() {
-	h.sumBits.Store(0)
+	h.mu.Lock()
+	h.sum = 0
+	h.mu.Unlock()
 	h.count.Store(0)
 	for i := range h.counts {
 		h.counts[i].Store(0)
@@ -192,7 +195,9 @@ func (h *Histogram) Buckets() ([]float64, []uint64) {
 
 // Sum returns the sum of all observed values.
 func (h *Histogram) Sum() float64 {
-	return math.Float64frombits(h.sumBits.Load())
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sum
 }
 
 // Count returns the total count of observations.

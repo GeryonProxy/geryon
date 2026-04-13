@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -657,6 +659,24 @@ func TestCertificateFingerprint(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("sha256_hash_not_raw_bytes", func(t *testing.T) {
+		raw := []byte("verify this is a proper SHA-256 hash")
+		cert := &x509.Certificate{Raw: raw}
+		fp := CertificateFingerprint(cert)
+
+		// Verify it matches SHA-256 of raw bytes, not first 32 raw bytes
+		expected := fmt.Sprintf("%x", sha256.Sum256(raw))
+		if fp != expected {
+			t.Errorf("fingerprint does not match SHA-256 hash\ngot  = %s\nwant = %s", fp, expected)
+		}
+
+		// Verify it's NOT just the first 32 bytes of raw (the old bug)
+		legacyExpected := fmt.Sprintf("%x", raw[:32])
+		if fp == legacyExpected {
+			t.Error("fingerprint appears to be raw first 32 bytes, not SHA-256 hash")
+		}
+	})
 }
 
 // TestIsCertificateValidExtended tests IsCertificateValid with more cases
@@ -910,5 +930,617 @@ func TestPeerCertificate(t *testing.T) {
 	result = PeerCertificate("some-state")
 	if result != nil {
 		t.Error("PeerCertificate should return nil for any input")
+	}
+}
+
+// TestAuthLimiter records failures and enforces lockout
+func TestAuthLimiter(t *testing.T) {
+	// 3 attempts, 100ms window, 200ms lockout
+	limiter := NewAuthLimiterConfig(3, 100*time.Millisecond, 200*time.Millisecond)
+
+	// Should not be limited initially
+	if limiter.IsLimited("1.2.3.4") {
+		t.Error("should not be limited initially")
+	}
+
+	// Record failures up to limit
+	for i := 0; i < 2; i++ {
+		if limiter.RecordFailure("1.2.3.4") {
+			t.Errorf("should not be locked after %d failures", i+1)
+		}
+	}
+
+	// 3rd failure should trigger lockout
+	if !limiter.RecordFailure("1.2.3.4") {
+		t.Error("should be locked after 3 failures")
+	}
+
+	// Should be limited
+	if !limiter.IsLimited("1.2.3.4") {
+		t.Error("should report as limited")
+	}
+
+	// Additional failures while locked should still return limited
+	if !limiter.RecordFailure("1.2.3.4") {
+		t.Error("should remain locked on further failures")
+	}
+
+	// Wait for lockout to expire
+	time.Sleep(250 * time.Millisecond)
+	if limiter.IsLimited("1.2.3.4") {
+		t.Error("should not be limited after lockout expires")
+	}
+
+	// RecordSuccess should clear the counter
+	limiter2 := NewAuthLimiterConfig(2, 100*time.Millisecond, 200*time.Millisecond)
+	limiter2.RecordFailure("1.2.3.4")
+	limiter2.RecordSuccess("1.2.3.4")
+	if limiter2.IsLimited("1.2.3.4") {
+		t.Error("should not be limited after success")
+	}
+
+	// Different IPs should be independent
+	limiter3 := NewAuthLimiterConfig(2, 100*time.Millisecond, 200*time.Millisecond)
+	limiter3.RecordFailure("1.1.1.1")
+	limiter3.RecordFailure("1.1.1.1")
+	if limiter3.IsLimited("2.2.2.2") {
+		t.Error("different IP should not be affected")
+	}
+}
+
+// TestAuthLimiterWindowExpiry resets counter after window expires
+func TestAuthLimiterWindowExpiry(t *testing.T) {
+	limiter := NewAuthLimiterConfig(3, 100*time.Millisecond, 200*time.Millisecond)
+
+	// Record 2 failures
+	limiter.RecordFailure("1.2.3.4")
+	limiter.RecordFailure("1.2.3.4")
+
+	// Wait for window to expire
+	time.Sleep(150 * time.Millisecond)
+
+	// Next failure should start a new window, not trigger lockout
+	if limiter.RecordFailure("1.2.3.4") {
+		t.Error("should not lock after window expired and single new failure")
+	}
+}
+
+// TestNewAuthLimiter tests the default constructor
+func TestNewAuthLimiter(t *testing.T) {
+	limiter := NewAuthLimiter()
+	if limiter == nil {
+		t.Fatal("NewAuthLimiter returned nil")
+	}
+	if limiter.maxAttempts != 10 {
+		t.Errorf("maxAttempts = %d, want 10", limiter.maxAttempts)
+	}
+	if limiter.window != 5*time.Minute {
+		t.Errorf("window = %v, want 5m", limiter.window)
+	}
+	if limiter.lockoutPeriod != 5*time.Minute {
+		t.Errorf("lockoutPeriod = %v, want 5m", limiter.lockoutPeriod)
+	}
+	if limiter.attempts == nil {
+		t.Error("attempts map not initialized")
+	}
+}
+
+// TestGenerateSCRAMSHA256 tests the standalone SCRAM-SHA-256 generation
+func TestGenerateSCRAMSHA256(t *testing.T) {
+	t.Run("valid_password", func(t *testing.T) {
+		hash, err := GenerateSCRAMSHA256("testpassword")
+		if err != nil {
+			t.Fatalf("GenerateSCRAMSHA256 failed: %v", err)
+		}
+		if !strings.HasPrefix(hash, "SCRAM-SHA-256$") {
+			t.Errorf("hash should start with 'SCRAM-SHA-256$', got %q", hash)
+		}
+		// Parse the format: SCRAM-SHA-256$<iterations>:<salt>$<storedKey>:<serverKey>
+		parts := strings.Split(hash, "$")
+		if len(parts) != 3 {
+			t.Fatalf("expected 3 major parts, got %d", len(parts))
+		}
+		// Check iterations is 10000
+		iterParts := strings.Split(parts[1], ":")
+		if len(iterParts) != 2 {
+			t.Fatal("iterations:salt should have 2 parts")
+		}
+		if iterParts[0] != "10000" {
+			t.Errorf("iterations = %s, want 10000", iterParts[0])
+		}
+		// Salt should be 32 bytes (base64 encoded)
+		salt, err := base64.StdEncoding.DecodeString(iterParts[1])
+		if err != nil {
+			t.Fatalf("invalid salt encoding: %v", err)
+		}
+		if len(salt) != 32 {
+			t.Errorf("salt length = %d, want 32", len(salt))
+		}
+		// Stored key and server key should be present
+		keyParts := strings.Split(parts[2], ":")
+		if len(keyParts) != 2 {
+			t.Fatal("storedKey:serverKey should have 2 parts")
+		}
+		storedKey, err := base64.StdEncoding.DecodeString(keyParts[0])
+		if err != nil {
+			t.Fatalf("invalid storedKey encoding: %v", err)
+		}
+		if len(storedKey) != 32 {
+			t.Errorf("storedKey length = %d, want 32", len(storedKey))
+		}
+		serverKey, err := base64.StdEncoding.DecodeString(keyParts[1])
+		if err != nil {
+			t.Fatalf("invalid serverKey encoding: %v", err)
+		}
+		if len(serverKey) != 32 {
+			t.Errorf("serverKey length = %d, want 32", len(serverKey))
+		}
+	})
+
+	t.Run("different_passwords_different_hashes", func(t *testing.T) {
+		hash1, _ := GenerateSCRAMSHA256("password1")
+		hash2, _ := GenerateSCRAMSHA256("password2")
+		if hash1 == hash2 {
+			t.Error("different passwords should produce different hashes")
+		}
+	})
+
+	t.Run("same_password_different_salts", func(t *testing.T) {
+		hash1, _ := GenerateSCRAMSHA256("samepassword")
+		hash2, _ := GenerateSCRAMSHA256("samepassword")
+		if hash1 == hash2 {
+			t.Error("same password with random salts should produce different hashes")
+		}
+	})
+}
+
+// TestVerifySCRAMSHA256 tests password verification against SCRAM-SHA-256 hashes
+func TestVerifySCRAMSHA256(t *testing.T) {
+	t.Run("correct_password", func(t *testing.T) {
+		password := "verifyme"
+		hash, err := GenerateSCRAMSHA256(password)
+		if err != nil {
+			t.Fatalf("GenerateSCRAMSHA256 failed: %v", err)
+		}
+		ok, err := VerifySCRAMSHA256(password, hash)
+		if err != nil {
+			t.Fatalf("VerifySCRAMSHA256 failed: %v", err)
+		}
+		if !ok {
+			t.Error("verification should succeed with correct password")
+		}
+	})
+
+	t.Run("wrong_password", func(t *testing.T) {
+		hash, _ := GenerateSCRAMSHA256("correct")
+		ok, err := VerifySCRAMSHA256("wrong", hash)
+		if err != nil {
+			t.Fatalf("VerifySCRAMSHA256 failed: %v", err)
+		}
+		if ok {
+			t.Error("verification should fail with wrong password")
+		}
+	})
+
+	t.Run("invalid_hash_format_missing_parts", func(t *testing.T) {
+		_, err := VerifySCRAMSHA256("pass", "SCRAM-SHA-256$invalid")
+		if err == nil {
+			t.Error("should fail for hash with wrong number of parts")
+		}
+	})
+
+	t.Run("invalid_hash_format_wrong_algorithm", func(t *testing.T) {
+		_, err := VerifySCRAMSHA256("pass", "SCRAM-SHA-512$10000:c2FsdA==$aGFzaA=:c2VydmVy")
+		if err == nil {
+			t.Error("should fail for unsupported algorithm")
+		}
+	})
+
+	t.Run("invalid_iterations", func(t *testing.T) {
+		_, err := VerifySCRAMSHA256("pass", "SCRAM-SHA-256$abc:c2FsdA==$aGFzaA=:c2VydmVy")
+		if err == nil {
+			t.Error("should fail for non-numeric iterations")
+		}
+	})
+
+	t.Run("invalid_salt_encoding", func(t *testing.T) {
+		_, err := VerifySCRAMSHA256("pass", "SCRAM-SHA-256$10000:!!!invalid!!!$aGFzaA=:c2VydmVy")
+		if err == nil {
+			t.Error("should fail for invalid base64 salt")
+		}
+	})
+
+	t.Run("invalid_stored_key_encoding", func(t *testing.T) {
+		_, err := VerifySCRAMSHA256("pass", "SCRAM-SHA-256$10000:c2FsdA==$!!!invalid!!!:c2VydmVy")
+		if err == nil {
+			t.Error("should fail for invalid base64 stored key")
+		}
+	})
+
+	t.Run("invalid_iterations_salt_format", func(t *testing.T) {
+		_, err := VerifySCRAMSHA256("pass", "SCRAM-SHA-256$10000$c2FsdA==$aGFzaA=:c2VydmVy")
+		if err == nil {
+			t.Error("should fail for invalid iter/salt format (missing colon)")
+		}
+	})
+
+	t.Run("invalid_keys_format", func(t *testing.T) {
+		_, err := VerifySCRAMSHA256("pass", "SCRAM-SHA-256$10000:c2FsdA==$aGFzaA+")
+		if err == nil {
+			t.Error("should fail for invalid keys format (missing server key)")
+		}
+	})
+}
+
+// TestPBKDF2Key tests the pbkdf2Key function directly
+func TestPBKDF2Key(t *testing.T) {
+	t.Run("derive_key", func(t *testing.T) {
+		key := pbkdf2Key([]byte("password"), []byte("salt"), 1000, 32, sha256.New)
+		if len(key) != 32 {
+			t.Errorf("key length = %d, want 32", len(key))
+		}
+		// Same inputs should produce same key
+		key2 := pbkdf2Key([]byte("password"), []byte("salt"), 1000, 32, sha256.New)
+		for i := range key {
+			if key[i] != key2[i] {
+				t.Error("same inputs should produce same key")
+				break
+			}
+		}
+	})
+
+	t.Run("different_salt_different_key", func(t *testing.T) {
+		key1 := pbkdf2Key([]byte("password"), []byte("salt1"), 1000, 32, sha256.New)
+		key2 := pbkdf2Key([]byte("password"), []byte("salt2"), 1000, 32, sha256.New)
+		same := true
+		for i := range key1 {
+			if key1[i] != key2[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			t.Error("different salts should produce different keys")
+		}
+	})
+
+	t.Run("different_password_different_key", func(t *testing.T) {
+		key1 := pbkdf2Key([]byte("pass1"), []byte("salt"), 1000, 32, sha256.New)
+		key2 := pbkdf2Key([]byte("pass2"), []byte("salt"), 1000, 32, sha256.New)
+		same := true
+		for i := range key1 {
+			if key1[i] != key2[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			t.Error("different passwords should produce different keys")
+		}
+	})
+
+	t.Run("longer_key", func(t *testing.T) {
+		key := pbkdf2Key([]byte("password"), []byte("salt"), 1000, 64, sha256.New)
+		if len(key) != 64 {
+			t.Errorf("key length = %d, want 64", len(key))
+		}
+	})
+}
+
+// TestHMACSum tests the hmacSum function
+func TestHMACSum(t *testing.T) {
+	t.Run("basic", func(t *testing.T) {
+		result := hmacSum([]byte("key"), []byte("data"))
+		if len(result) != 32 {
+			t.Errorf("result length = %d, want 32 (SHA-256)", len(result))
+		}
+	})
+
+	t.Run("deterministic", func(t *testing.T) {
+		r1 := hmacSum([]byte("secret-key"), []byte("message"))
+		r2 := hmacSum([]byte("secret-key"), []byte("message"))
+		for i := range r1 {
+			if r1[i] != r2[i] {
+				t.Error("same inputs should produce same output")
+				break
+			}
+		}
+	})
+
+	t.Run("different_key_different_output", func(t *testing.T) {
+		r1 := hmacSum([]byte("key1"), []byte("data"))
+		r2 := hmacSum([]byte("key2"), []byte("data"))
+		same := true
+		for i := range r1 {
+			if r1[i] != r2[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			t.Error("different keys should produce different output")
+		}
+	})
+
+	t.Run("empty_data", func(t *testing.T) {
+		result := hmacSum([]byte("key"), []byte{})
+		if len(result) != 32 {
+			t.Errorf("result length = %d, want 32", len(result))
+		}
+	})
+}
+
+// TestParseSCRAMHash tests the parseSCRAMHash function
+func TestParseSCRAMHash_Extended(t *testing.T) {
+	password := "testpassword"
+	hash, err := GenerateSCRAMHash(password)
+	if err != nil {
+		t.Fatalf("GenerateSCRAMHash failed: %v", err)
+	}
+
+	storedKey, serverKey, salt, iterations, err := parseSCRAMHash(hash)
+	if err != nil {
+		t.Fatalf("parseSCRAMHash failed for valid hash: %v", err)
+	}
+	if len(storedKey) == 0 {
+		t.Error("storedKey should not be empty")
+	}
+	if len(serverKey) == 0 {
+		t.Error("serverKey should not be empty")
+	}
+	if len(salt) == 0 {
+		t.Error("salt should not be empty")
+	}
+	if iterations <= 0 {
+		t.Errorf("iterations = %d, want > 0", iterations)
+	}
+}
+
+func TestParseSCRAMHash_UnsupportedFormat(t *testing.T) {
+	_, _, _, _, err := parseSCRAMHash("bcrypt$hash")
+	if err == nil {
+		t.Error("Should fail for unsupported format")
+	}
+	if !strings.Contains(err.Error(), "unsupported") {
+		t.Errorf("Error = %q, want unsupported", err.Error())
+	}
+}
+
+func TestParseSCRAMHash_InvalidNewFormat(t *testing.T) {
+	_, _, _, _, err := parseSCRAMHash("SCRAM-SHA-256$onlyonepart")
+	if err == nil {
+		t.Error("Should fail for invalid new format")
+	}
+}
+
+func TestParseSCRAMHash_InvalidNewFormatBadIterSalt(t *testing.T) {
+	_, _, _, _, err := parseSCRAMHash("SCRAM-SHA-256$abc$stored:server")
+	if err == nil {
+		t.Error("Should fail for invalid iterations")
+	}
+}
+
+func TestParseSCRAMHash_InvalidNewFormatBadSalt(t *testing.T) {
+	_, _, _, _, err := parseSCRAMHash("SCRAM-SHA-256$4096:!invalid-base64!$c3RvcmVk:c2VydmVy")
+	if err == nil {
+		t.Error("Should fail for invalid salt base64")
+	}
+}
+
+func TestParseSCRAMHash_InvalidNewFormatBadKeys(t *testing.T) {
+	_, _, _, _, err := parseSCRAMHash("SCRAM-SHA-256$4096:c2FsdA==$onlyonekey")
+	if err == nil {
+		t.Error("Should fail for invalid keys format")
+	}
+}
+
+func TestParseSCRAMHash_InvalidNewFormatBadStoredKey(t *testing.T) {
+	_, _, _, _, err := parseSCRAMHash("SCRAM-SHA-256$4096:c2FsdA==$!invalid!:c2VydmVy")
+	if err == nil {
+		t.Error("Should fail for invalid stored key base64")
+	}
+}
+
+func TestParseSCRAMHash_InvalidNewFormatBadServerKey(t *testing.T) {
+	_, _, _, _, err := parseSCRAMHash("SCRAM-SHA-256$4096:c2FsdA==$c3RvcmVk:!invalid!")
+	if err == nil {
+		t.Error("Should fail for invalid server key base64")
+	}
+}
+
+func TestParseSCRAMHash_LegacyFormat(t *testing.T) {
+	salt := base64.StdEncoding.EncodeToString([]byte("salt"))
+	storedKey := base64.StdEncoding.EncodeToString([]byte("storedkey"))
+	serverKey := base64.StdEncoding.EncodeToString([]byte("serverkey"))
+	hash := "SCRAM-SHA-256$" + fmt.Sprintf("4096:%s:%s:%s", salt, storedKey, serverKey)
+
+	sk, svk, s, iter, err := parseSCRAMHash(hash)
+	if err != nil {
+		t.Fatalf("parseSCRAMHash legacy failed: %v", err)
+	}
+	if iter != 4096 {
+		t.Errorf("iterations = %d, want 4096", iter)
+	}
+	if string(s) != "salt" {
+		t.Errorf("salt = %q, want salt", s)
+	}
+	if string(sk) != "storedkey" {
+		t.Errorf("storedKey = %q, want storedkey", sk)
+	}
+	if string(svk) != "serverkey" {
+		t.Errorf("serverKey = %q, want serverkey", svk)
+	}
+}
+
+func TestParseSCRAMHash_LegacyFormatInvalidIter(t *testing.T) {
+	salt := base64.StdEncoding.EncodeToString([]byte("salt"))
+	storedKey := base64.StdEncoding.EncodeToString([]byte("storedkey"))
+	serverKey := base64.StdEncoding.EncodeToString([]byte("serverkey"))
+	hash := "SCRAM-SHA-256$" + fmt.Sprintf("abc:%s:%s:%s", salt, storedKey, serverKey)
+
+	_, _, _, _, err := parseSCRAMHash(hash)
+	if err == nil {
+		t.Error("Should fail for invalid iterations in legacy format")
+	}
+}
+
+func TestParseSCRAMHash_LegacyFormatInvalidSalt(t *testing.T) {
+	storedKey := base64.StdEncoding.EncodeToString([]byte("storedkey"))
+	serverKey := base64.StdEncoding.EncodeToString([]byte("serverkey"))
+	hash := "SCRAM-SHA-256$" + fmt.Sprintf("4096:!invalid!:%s:%s", storedKey, serverKey)
+
+	_, _, _, _, err := parseSCRAMHash(hash)
+	if err == nil {
+		t.Error("Should fail for invalid salt base64 in legacy format")
+	}
+}
+
+func TestParseSCRAMHash_LegacyFormatInvalidStoredKey(t *testing.T) {
+	salt := base64.StdEncoding.EncodeToString([]byte("salt"))
+	serverKey := base64.StdEncoding.EncodeToString([]byte("serverkey"))
+	hash := "SCRAM-SHA-256$" + fmt.Sprintf("4096:%s:!invalid!:%s", salt, serverKey)
+
+	_, _, _, _, err := parseSCRAMHash(hash)
+	if err == nil {
+		t.Error("Should fail for invalid stored key base64 in legacy format")
+	}
+}
+
+func TestParseSCRAMHash_LegacyFormatInvalidServerKey(t *testing.T) {
+	salt := base64.StdEncoding.EncodeToString([]byte("salt"))
+	storedKey := base64.StdEncoding.EncodeToString([]byte("storedkey"))
+	hash := "SCRAM-SHA-256$" + fmt.Sprintf("4096:%s:%s:!invalid!", salt, storedKey)
+
+	_, _, _, _, err := parseSCRAMHash(hash)
+	if err == nil {
+		t.Error("Should fail for invalid server key base64 in legacy format")
+	}
+}
+
+// TestMatchPattern tests the matchPattern function
+func TestMatchPattern_Extended(t *testing.T) {
+	tests := []struct {
+		s       string
+		pattern string
+		want    bool
+	}{
+		{"hello", "*", true},
+		{"hello", "hello", true},
+		{"hello", "world", false},
+		{"hello", "hel*", true},
+		{"hello", "*llo", true},
+		{"hello", "h*llo", true},
+		{"hello", "h*o", true},
+		{"hello", "h*xyz", false},
+		{"test.example.com", "*.example.com", true},
+		{"test.example.com", "*.other.com", false},
+		{"abc", "a*c", true},
+		{"abc", "a*b", false},
+	}
+
+	for _, tt := range tests {
+		got, err := matchPattern(tt.s, tt.pattern)
+		if err != nil {
+			t.Errorf("matchPattern(%q, %q) unexpected error: %v", tt.s, tt.pattern, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("matchPattern(%q, %q) = %v, want %v", tt.s, tt.pattern, got, tt.want)
+		}
+	}
+}
+
+// TestAuthLimiter_RecordFailureMultiple tests repeated failures and success reset
+func TestAuthLimiter_RecordFailureMultiple(t *testing.T) {
+	limiter := NewAuthLimiter()
+
+	// Record many failures
+	for i := 0; i < 10; i++ {
+		limiter.RecordFailure("192.168.1.1")
+	}
+
+	// Should be limited after many failures
+	if !limiter.IsLimited("192.168.1.1") {
+		t.Error("Should be limited after 10 failures")
+	}
+
+	// Different IP should not be limited
+	if limiter.IsLimited("192.168.1.2") {
+		t.Error("Different IP should not be limited")
+	}
+
+	// Record success should reset
+	limiter.RecordSuccess("192.168.1.1")
+	if limiter.IsLimited("192.168.1.1") {
+		t.Error("Should not be limited after success")
+	}
+}
+
+// TestAuthLimiter_RecordFailure_ExpiredLockout tests the expired lockout reset path
+func TestAuthLimiter_RecordFailure_ExpiredLockout(t *testing.T) {
+	limiter := NewAuthLimiterConfig(2, 1*time.Hour, 1*time.Nanosecond)
+
+	// Trigger lockout
+	limiter.RecordFailure("1.2.3.4")
+	limiter.RecordFailure("1.2.3.4")
+
+	if !limiter.IsLimited("1.2.3.4") {
+		t.Error("Should be locked after 2 failures")
+	}
+
+	// Wait for lockout to expire (1 nanosecond)
+	time.Sleep(1 * time.Millisecond)
+
+	// Next failure should reset the counter (lockout expired path)
+	locked := limiter.RecordFailure("1.2.3.4")
+	if locked {
+		t.Error("Should not be locked after lockout expires and new failure")
+	}
+}
+
+// TestAuthLimiter_RecordFailure_AlreadyLocked tests the already-locked path
+func TestAuthLimiter_RecordFailure_AlreadyLocked(t *testing.T) {
+	limiter := NewAuthLimiterConfig(2, 1*time.Hour, 1*time.Hour)
+
+	limiter.RecordFailure("1.2.3.4")
+	limiter.RecordFailure("1.2.3.4")
+
+	// Already locked, should return true
+	if !limiter.RecordFailure("1.2.3.4") {
+		t.Error("Should return true when already locked")
+	}
+}
+
+// TestAuthLimiter_IsLimited_WindowExpired tests window expiry cleanup in IsLimited
+func TestAuthLimiter_IsLimited_WindowExpired(t *testing.T) {
+	limiter := NewAuthLimiterConfig(10, 1*time.Nanosecond, 1*time.Hour)
+
+	limiter.RecordFailure("1.2.3.4")
+
+	// Wait for window to expire
+	time.Sleep(1 * time.Millisecond)
+
+	if limiter.IsLimited("1.2.3.4") {
+		t.Error("Should not be limited after window expires")
+	}
+}
+
+// Test_xor_DifferentLengths tests xor with different length inputs
+func Test_xor_DifferentLengths(t *testing.T) {
+	a := []byte{0x01, 0x02, 0x03}
+	b := []byte{0xFF, 0xFE}
+
+	result := xor(a, b)
+	if len(result) != 2 {
+		t.Errorf("len(result) = %d, want 2 (shorter)", len(result))
+	}
+	if result[0] != 0x01^0xFF || result[1] != 0x02^0xFE {
+		t.Errorf("result = %v, want [0xFE 0xFC]", result)
+	}
+
+	// Reverse: b shorter than a
+	result2 := xor(b, a)
+	if len(result2) != 2 {
+		t.Errorf("len(result2) = %d, want 2", len(result2))
 	}
 }

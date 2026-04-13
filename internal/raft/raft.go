@@ -60,6 +60,10 @@ type Node struct {
 	matchIndex        map[string]uint64
 	volatileMu        sync.RWMutex
 
+	// Election state (reset each term)
+	votesReceived     map[string]bool // peer ID -> voted for us
+	votesMu           sync.Mutex
+
 	// Configuration
 	peers             []string
 	listenAddr        string
@@ -172,6 +176,7 @@ func NewNode(id, listenAddr string, peers []string, dataDir string, fsm FSM, log
 		logEntries:        make([]Entry, 0),
 		nextIndex:         make(map[string]uint64),
 		matchIndex:        make(map[string]uint64),
+		votesReceived:     make(map[string]bool),
 		stopCh:            make(chan struct{}),
 		msgCh:             make(chan Message, 100),
 		applyCh:           make(chan Entry, 100),
@@ -230,6 +235,18 @@ func (n *Node) ID() string {
 // State returns the current state.
 func (n *Node) State() NodeState {
 	return n.state.Load().(NodeState)
+}
+
+// SetStateForTest sets the node state. For use in tests only.
+func (n *Node) SetStateForTest(state NodeState) {
+	n.state.Store(state)
+}
+
+// CloseWAL closes the underlying WAL. For cleanup in tests.
+func (n *Node) CloseWAL() {
+	if n.wal != nil {
+		n.wal.Close()
+	}
 }
 
 // IsLeader returns true if this node is the leader.
@@ -409,9 +426,15 @@ func (n *Node) handleVoteResponse(msg Message) {
 	}
 
 	if resp.VoteGranted {
-		// Count votes
-		// Simplified: check if we have majority
-		if n.hasMajority() {
+		// Track vote
+		n.votesMu.Lock()
+		n.votesReceived[msg.From] = true
+		voteCount := len(n.votesReceived) + 1 // +1 for our own vote
+		total := len(n.peers) + 1
+		n.votesMu.Unlock()
+
+		// Check if we have majority
+		if voteCount > total/2 {
 			n.becomeLeader()
 		}
 	}
@@ -548,6 +571,9 @@ func (n *Node) becomeFollower(term uint64) {
 	n.state.Store(StateFollower)
 	n.votedFor.Store("")
 	n.leaderID.Store("") // Clear leader until we hear from the new one
+	n.votesMu.Lock()
+	n.votesReceived = make(map[string]bool)
+	n.votesMu.Unlock()
 	n.stopHeartbeat()
 	n.resetElectionTimer()
 
@@ -560,6 +586,11 @@ func (n *Node) becomeCandidate() {
 	n.state.Store(StateCandidate)
 	n.votedFor.Store(n.id)
 	n.leaderID.Store("") // Clear leader since we're starting a new election
+
+	// Reset vote tracking for this election
+	n.votesMu.Lock()
+	n.votesReceived = make(map[string]bool)
+	n.votesMu.Unlock()
 
 	n.logger.Info("Became candidate", "term", n.currentTerm.Load())
 
@@ -750,9 +781,11 @@ func (n *Node) appendEntry(entry Entry) {
 
 // hasMajority checks if we have a majority of votes.
 func (n *Node) hasMajority() bool {
-	// Simplified: just check if we have more than half
+	n.votesMu.Lock()
+	defer n.votesMu.Unlock()
 	total := len(n.peers) + 1
-	return total/2+1 <= total
+	votes := len(n.votesReceived) + 1 // +1 for our own vote
+	return votes > total/2
 }
 
 // isStopping checks if the node is stopping.
@@ -779,7 +812,10 @@ func (n *Node) Propose(command Command) (uint64, error) {
 	}
 
 	n.logMu.Lock()
-	lastIndex, _ := n.lastLogInfo()
+	var lastIndex uint64
+	if len(n.logEntries) > 0 {
+		lastIndex = n.logEntries[len(n.logEntries)-1].Index
+	}
 	entry := Entry{
 		Term:    n.currentTerm.Load(),
 		Index:   lastIndex + 1,

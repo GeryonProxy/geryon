@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
@@ -215,8 +214,6 @@ func TestDashboard_QueriesEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	time.Sleep(10 * time.Millisecond)
-
 	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/queries")
 	if err != nil {
 		t.Fatalf("GET /queries failed: %v", err)
@@ -239,8 +236,6 @@ func TestDashboard_ConfigEndpoint(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer s.Stop()
-
-	time.Sleep(10 * time.Millisecond)
 
 	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/config")
 	if err != nil {
@@ -276,8 +271,6 @@ func TestDashboard_ConfigReload(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer s.Stop()
-
-	time.Sleep(10 * time.Millisecond)
 
 	resp, err := http.Post("http://"+cfg.Listen+"/api/v1/config", "application/json", nil)
 	if err != nil {
@@ -492,6 +485,60 @@ func TestHandleConnections(t *testing.T) {
 			if _, ok := first["pool_name"]; !ok {
 				t.Error("first connection should have pool_name")
 			}
+		}
+	})
+}
+
+func TestDashboard_HandleIndex(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	t.Run("root path returns HTML", func(t *testing.T) {
+		resp, err := http.Get("http://" + cfg.Listen + "/")
+		if err != nil {
+			t.Fatalf("GET / failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Status = %d, want 200", resp.StatusCode)
+		}
+
+		contentType := resp.Header.Get("Content-Type")
+		if contentType != "text/html" {
+			t.Errorf("Content-Type = %q, want text/html", contentType)
+		}
+	})
+
+	t.Run("index.html returns HTML", func(t *testing.T) {
+		resp, err := http.Get("http://" + cfg.Listen + "/index.html")
+		if err != nil {
+			t.Fatalf("GET /index.html failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Status = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("unknown path returns 404", func(t *testing.T) {
+		resp, err := http.Get("http://" + cfg.Listen + "/nonexistent")
+		if err != nil {
+			t.Fatalf("GET /nonexistent failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Status = %d, want 404", resp.StatusCode)
 		}
 	})
 }

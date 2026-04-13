@@ -893,7 +893,7 @@ func TestHealthChecker_AddBackend(t *testing.T) {
 	hc := NewHealthChecker(&config.HealthConfig{
 		CheckInterval: "1s",
 		CheckQuery:    "SELECT 1",
-	}, log)
+	}, "postgresql", log)
 
 	backend := &Backend{Host: "localhost", Port: 5432}
 	hc.AddBackend(backend)
@@ -909,7 +909,7 @@ func TestHealthChecker_AddBackend(t *testing.T) {
 
 func TestHealthChecker_AddBackendDuplicate(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{Host: "localhost", Port: 5432}
 	hc.AddBackend(backend)
@@ -922,7 +922,7 @@ func TestHealthChecker_AddBackendDuplicate(t *testing.T) {
 
 func TestHealthChecker_RemoveBackend(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{Host: "localhost", Port: 5432}
 	hc.AddBackend(backend)
@@ -936,7 +936,7 @@ func TestHealthChecker_RemoveBackend(t *testing.T) {
 
 func TestHealthChecker_Stats(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend1 := &Backend{Host: "localhost", Port: 5432}
 	backend1.Healthy.Store(true)
@@ -964,7 +964,7 @@ func TestHealthChecker_StartStop(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	hc := NewHealthChecker(&config.HealthConfig{
 		CheckInterval: "100ms",
-	}, log)
+	}, "postgresql", log)
 
 	hc.Start()
 	if !hc.running.Load() {
@@ -979,7 +979,7 @@ func TestHealthChecker_StartStop(t *testing.T) {
 
 func TestHealthChecker_WaitForHealthy(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{Host: "localhost", Port: 5432}
 	// Not added to checker, should return false

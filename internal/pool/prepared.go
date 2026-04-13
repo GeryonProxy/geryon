@@ -284,6 +284,11 @@ func (sps *SessionPreparedStatements) Get(name string) (*PreparedStatement, bool
 	return sps.cache.GetByHash(hash)
 }
 
+// GetQuery returns the prepared statement by name (alias for Get for convenience).
+func (sps *SessionPreparedStatements) GetQuery(name string) (*PreparedStatement, bool) {
+	return sps.Get(name)
+}
+
 // GetServerName returns the server-assigned name for a statement.
 func (sps *SessionPreparedStatements) GetServerName(name string) (string, bool) {
 	sps.mu.RLock()
@@ -329,7 +334,7 @@ func (psc *PreparedStatementCache) GetByHash(hash string) (*PreparedStatement, b
 // hashQuery creates a hash of the query string.
 func hashQuery(query string) string {
 	h := sha256.Sum256([]byte(query))
-	return hex.EncodeToString(h[:8]) // Use first 8 bytes for shorter hash
+	return hex.EncodeToString(h[:])
 }
 
 // GenerateStmtID generates a unique statement ID.

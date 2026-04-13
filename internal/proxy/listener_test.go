@@ -368,7 +368,7 @@ func TestListenerQueryLogger(t *testing.T) {
 
 func TestListenerTransactionManager(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	tm := pool.NewTransactionManager(30*time.Minute, 5*time.Minute, log)
+	tm := pool.NewTransactionManager(30*time.Minute, 5*time.Minute, 0, log)
 
 	l := &Listener{
 		transactionMgr: tm,

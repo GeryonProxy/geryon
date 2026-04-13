@@ -368,6 +368,121 @@ func TestStoreCleanupExpired(t *testing.T) {
 	}
 }
 
+func TestStoreInvalidateTables(t *testing.T) {
+	s := NewStore(1024*1024, 5*time.Minute)
+
+	s.Set("key1", []byte("value1"), []string{"users"}, time.Hour)
+	s.Set("key2", []byte("value2"), []string{"orders"}, time.Hour)
+	s.Set("key3", []byte("value3"), []string{"users", "orders"}, time.Hour)
+
+	// Invalidate by "users" table
+	s.InvalidateTables([]string{"users"})
+
+	_, hit := s.Get("key1")
+	if hit {
+		t.Error("key1 should be invalidated (users table)")
+	}
+
+	_, hit = s.Get("key2")
+	if !hit {
+		t.Error("key2 should still exist (orders table, not affected)")
+	}
+
+	_, hit = s.Get("key3")
+	if hit {
+		t.Error("key3 should be invalidated (users table)")
+	}
+}
+
+func TestStoreStartCleanup(t *testing.T) {
+	s := NewStore(1024*1024, 5*time.Minute)
+
+	s.Set("expire", []byte("value"), nil, 50*time.Millisecond)
+	s.Set("persist", []byte("value"), nil, time.Hour)
+
+	// Start cleanup with short interval
+	ticker := s.StartCleanup(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	// Wait for cleanup to run
+	time.Sleep(150 * time.Millisecond)
+
+	// Expired entry should be gone
+	_, hit := s.Get("expire")
+	if hit {
+		t.Error("expired entry should be cleaned up")
+	}
+
+	// Persistent entry should remain
+	_, hit = s.Get("persist")
+	if !hit {
+		t.Error("non-expired entry should remain")
+	}
+}
+
+func TestStoreStats_HitRate(t *testing.T) {
+	s := NewStore(1024*1024, 5*time.Minute)
+	s.Set("k", []byte("v"), nil, time.Hour)
+
+	// 2 hits
+	s.Get("k")
+	s.Get("k")
+	// 1 miss
+	s.Get("nonexistent")
+
+	stats := s.Stats()
+	if stats.Entries != 1 {
+		t.Errorf("Entries = %d, want 1", stats.Entries)
+	}
+	if stats.Hits != 2 {
+		t.Errorf("Hits = %d, want 2", stats.Hits)
+	}
+	if stats.Misses != 1 {
+		t.Errorf("Misses = %d, want 1", stats.Misses)
+	}
+	// Hit rate should be 2/3 * 100 = ~66.67%
+	if stats.HitRate < 66.0 || stats.HitRate > 67.0 {
+		t.Errorf("HitRate = %.2f, want ~66.67", stats.HitRate)
+	}
+}
+
+func TestKey_String(t *testing.T) {
+	k := Key{
+		Query:      "SELECT * FROM users",
+		Normalized: "select * from users",
+	}
+	s := k.String()
+	if s == "" {
+		t.Error("String() returned empty")
+	}
+}
+
+func TestRulesEngineShouldCache_DefaultTrue(t *testing.T) {
+	re := NewRulesEngine()
+	// Default: cache everything when no rules match
+	if !re.ShouldCache("RANDOM_QUERY") {
+		t.Error("ShouldCache should return true by default (cache everything)")
+	}
+
+	// Add a rule that disables caching for SELECT
+	re.AddRule("SELECT.*", time.Minute, false)
+	if re.ShouldCache("SELECT * FROM users") {
+		t.Error("ShouldCache should return false for SELECT when rule disables it")
+	}
+}
+
+func BenchmarkStoreInvalidateTables(b *testing.B) {
+	s := NewStore(100*1024*1024, 5*time.Minute)
+	for i := 0; i < 100; i++ {
+		s.Set(fmt.Sprintf("key-%d", i), []byte("value"), []string{"table1"}, time.Hour)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.InvalidateTables([]string{"table1"})
+	}
+}
+
 func BenchmarkStoreSet(b *testing.B) {
 	s := NewStore(100*1024*1024, 5*time.Minute)
 	value := []byte("benchmark-value-data")

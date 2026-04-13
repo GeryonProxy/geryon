@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GeryonProxy/geryon/internal/config"
 )
@@ -466,4 +467,119 @@ func ParseAuthMode(s string) (AuthMode, error) {
 	default:
 		return ModePassthrough, fmt.Errorf("invalid auth mode: %s", s)
 	}
+}
+
+// AuthLimiter tracks failed authentication attempts per source IP
+// and enforces temporary lockouts to prevent brute-force attacks.
+type AuthLimiter struct {
+	mu            sync.Mutex
+	attempts      map[string]*ipAuthAttempts
+	maxAttempts   int
+	window        time.Duration
+	lockoutPeriod time.Duration
+}
+
+type ipAuthAttempts struct {
+	count     int
+	firstFail time.Time
+	locked    bool
+	lockUntil time.Time
+}
+
+// NewAuthLimiter creates a rate limiter with defaults:
+// 10 failed attempts per 5-minute window, 5-minute lockout.
+func NewAuthLimiter() *AuthLimiter {
+	return &AuthLimiter{
+		attempts:      make(map[string]*ipAuthAttempts),
+		maxAttempts:   10,
+		window:        5 * time.Minute,
+		lockoutPeriod: 5 * time.Minute,
+	}
+}
+
+// NewAuthLimiterConfig creates a rate limiter with custom limits.
+func NewAuthLimiterConfig(maxAttempts int, window, lockoutPeriod time.Duration) *AuthLimiter {
+	return &AuthLimiter{
+		attempts:      make(map[string]*ipAuthAttempts),
+		maxAttempts:   maxAttempts,
+		window:        window,
+		lockoutPeriod: lockoutPeriod,
+	}
+}
+
+// RecordFailure records a failed authentication attempt for the given IP.
+// Returns true if the IP is now locked out.
+func (al *AuthLimiter) RecordFailure(ip string) bool {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+
+	entry, exists := al.attempts[ip]
+	if !exists {
+		entry = &ipAuthAttempts{
+			firstFail: time.Now(),
+		}
+		al.attempts[ip] = entry
+	}
+
+	// Check if lockout has expired
+	if entry.locked && time.Now().After(entry.lockUntil) {
+		// Reset after lockout expires
+		entry.count = 1
+		entry.firstFail = time.Now()
+		entry.locked = false
+		return false
+	}
+
+	// Already locked
+	if entry.locked {
+		return true
+	}
+
+	// Clean up old entries outside the window
+	if time.Since(entry.firstFail) > al.window {
+		entry.count = 1
+		entry.firstFail = time.Now()
+		return false
+	}
+
+	entry.count++
+	if entry.count >= al.maxAttempts {
+		entry.locked = true
+		entry.lockUntil = time.Now().Add(al.lockoutPeriod)
+		return true
+	}
+
+	return false
+}
+
+// RecordSuccess resets the failure counter for an IP after successful auth.
+func (al *AuthLimiter) RecordSuccess(ip string) {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	delete(al.attempts, ip)
+}
+
+// IsLimited returns true if the IP is currently locked out.
+func (al *AuthLimiter) IsLimited(ip string) bool {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+
+	entry, exists := al.attempts[ip]
+	if !exists {
+		return false
+	}
+
+	// Clean up expired entries
+	if time.Since(entry.firstFail) > al.window {
+		delete(al.attempts, ip)
+		return false
+	}
+
+	if entry.locked && time.Now().After(entry.lockUntil) {
+		// Lockout expired, clean up
+		delete(al.attempts, ip)
+		return false
+	}
+
+	return entry.locked
 }

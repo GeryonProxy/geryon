@@ -115,8 +115,14 @@ func (ts *TransactionStrategy) OnQuery(ctx context.Context, s *Session, msg *com
 		return conn, nil
 	}
 
-	// Acquire a new connection
-	conn, err := ts.pool.Acquire(ctx)
+	// Acquire a new connection, respecting target role if set
+	var conn *ServerConn
+	var err error
+	if role := s.TargetRole(); role != "" {
+		conn, err = ts.pool.AcquireToRole(ctx, role)
+	} else {
+		conn, err = ts.pool.Acquire(ctx)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to acquire server connection: %w", err)
 	}
@@ -191,8 +197,14 @@ func (ss *StatementStrategy) OnClientDisconnect(s *Session) error {
 
 // OnQuery acquires a connection for each statement.
 func (ss *StatementStrategy) OnQuery(ctx context.Context, s *Session, msg *common.Message) (*ServerConn, error) {
-	// Always acquire a fresh connection
-	conn, err := ss.pool.Acquire(ctx)
+	// Always acquire a fresh connection, respecting target role if set
+	var conn *ServerConn
+	var err error
+	if role := s.TargetRole(); role != "" {
+		conn, err = ss.pool.AcquireToRole(ctx, role)
+	} else {
+		conn, err = ss.pool.Acquire(ctx)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to acquire server connection: %w", err)
 	}

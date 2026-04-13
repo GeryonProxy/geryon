@@ -140,10 +140,23 @@ func TestUnquote(t *testing.T) {
 		{`"quoted"`, "quoted"},
 		{`'single'`, "single"},
 		{`unquoted`, "unquoted"},
-		{`"`, `"`},           // Single quote - not valid
-		{``, ``},             // Empty
-		{`""`, ``},           // Empty quotes
+		{`"`, `"`},             // Single quote - not valid
+		{``, ``},               // Empty
+		{`""`, ``},             // Empty quotes
 		{`  "spaced"  `, "spaced"}, // With surrounding spaces
+		// Escape sequences in double-quoted strings
+		{`"hello\nworld"`, "hello\nworld"},
+		{`"tab\there"`, "tab\there"},
+		{`"back\\slash"`, "back\\slash"},
+		{`"say \"hi\""`, `say "hi"`},
+		{`"it's"`, "it's"},           // Single quote in double-quoted
+		{`"line1\nline2"`, "line1\nline2"},
+		// Single-quoted: backslash is literal, '' becomes '
+		{`'it''s'`, "it's"},
+		{`'no\escape'`, `no\escape`},
+		// Hex and Unicode
+		{`"\x41"`, "A"},
+		{`"\u0041"`, "A"},
 	}
 
 	for _, tt := range tests {
@@ -154,34 +167,77 @@ func TestUnquote(t *testing.T) {
 	}
 }
 
-func TestParseBool(t *testing.T) {
+func TestStripComment(t *testing.T) {
 	tests := []struct {
 		input    string
-		expected bool
+		expected string
 	}{
-		{"true", true},
-		{"TRUE", true},
-		{"True", true},
-		{"yes", true},
-		{"YES", true},
-		{"1", true},
-		{"on", true},
-		{"ON", true},
-		{"false", false},
-		{"FALSE", false},
-		{"no", false},
-		{"0", false},
-		{"off", false},
-		{"maybe", false},
-		{"", false},
-		{"  true  ", true}, // With spaces
-		{"  false  ", false},
+		// Comments outside quotes should be stripped
+		{"value # comment", "value "},
+		{"true  # enabled", "true  "},
+		// Comments inside double quotes should be preserved
+		{`"has#hash"`, `"has#hash"`},
+		{`"pass#word" # comment`, `"pass#word" `},
+		// Comments inside single quotes should be preserved
+		{`'has#hash'`, `'has#hash'`},
+		{`'hash' # comment`, `'hash' `},
+		// No comment
+		{"plain value", "plain value"},
+		// Hash without preceding space (not a comment)
+		{"value#notcomment", "value#notcomment"},
+		// Empty
+		{"", ""},
+		// Only comment
+		{"# full line comment", "# full line comment"},
 	}
 
 	for _, tt := range tests {
-		result := parseBool(tt.input)
+		result := stripComment(tt.input)
 		if result != tt.expected {
-			t.Errorf("parseBool(%q) = %v, want %v", tt.input, result, tt.expected)
+			t.Errorf("stripComment(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestParseBool(t *testing.T) {
+	tests := []struct {
+		input       string
+		expected    bool
+		expectError bool
+	}{
+		{"true", true, false},
+		{"TRUE", true, false},
+		{"True", true, false},
+		{"yes", true, false},
+		{"YES", true, false},
+		{"1", true, false},
+		{"on", true, false},
+		{"ON", true, false},
+		{"false", false, false},
+		{"FALSE", false, false},
+		{"no", false, false},
+		{"0", false, false},
+		{"off", false, false},
+		{"", false, true},         // Invalid
+		{"maybe", false, true},    // Invalid
+		{"  true  ", true, false}, // With spaces
+		{"  false  ", false, false},
+		{"yse", false, true}, // Typo should error
+	}
+
+	for _, tt := range tests {
+		result, err := parseBool(tt.input)
+		if tt.expectError {
+			if err == nil {
+				t.Errorf("parseBool(%q) should error, got %v", tt.input, result)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("parseBool(%q) unexpected error: %v", tt.input, err)
+			}
+			if result != tt.expected {
+				t.Errorf("parseBool(%q) = %v, want %v", tt.input, result, tt.expected)
+			}
 		}
 	}
 }
@@ -509,6 +565,78 @@ func TestParseYAML_EmptyAndComments(t *testing.T) {
 				t.Error("parseYAML returned nil config")
 			}
 		})
+	}
+}
+
+func TestParseYAML_InvalidBool(t *testing.T) {
+	content := `
+global:
+  log_level: info
+
+admin:
+  rest:
+    auth:
+      enabled: yse
+`
+	_, err := parseYAML(content)
+	if err == nil {
+		t.Error("parseYAML should fail with invalid boolean value")
+	}
+}
+
+func TestParseYAML_HashInQuotedValue(t *testing.T) {
+	// # inside quoted values should be preserved
+	content := `
+global:
+  log_level: info
+
+pools:
+  - name: "test"
+    listen:
+      host: 127.0.0.1
+      port: 5432
+    body: postgresql
+    mode: transaction
+    backend:
+      auth:
+        password_file: "/etc/geryon/secret#file"
+`
+	cfg, err := parseYAML(content)
+	if err != nil {
+		t.Fatalf("parseYAML failed: %v", err)
+	}
+	if len(cfg.Pools) != 1 {
+		t.Fatalf("expected 1 pool, got %d", len(cfg.Pools))
+	}
+	if cfg.Pools[0].Backend.Auth.PasswordFile != "/etc/geryon/secret#file" {
+		t.Errorf("PasswordFile = %q, want /etc/geryon/secret#file", cfg.Pools[0].Backend.Auth.PasswordFile)
+	}
+}
+
+func TestParseYAML_EscapeSequences(t *testing.T) {
+	content := `
+global:
+  log_level: info
+
+pools:
+  - name: "test\npool"
+    listen:
+      host: 127.0.0.1
+      port: 5432
+    body: postgresql
+    mode: transaction
+`
+	cfg, err := parseYAML(content)
+	if err != nil {
+		t.Fatalf("parseYAML failed: %v", err)
+	}
+	if len(cfg.Pools) != 1 {
+		t.Fatalf("expected 1 pool, got %d", len(cfg.Pools))
+	}
+	// Escape sequences in double-quoted values should be processed
+	expected := "test\npool"
+	if cfg.Pools[0].Name != expected {
+		t.Errorf("Pool.Name = %q, want %q", cfg.Pools[0].Name, expected)
 	}
 }
 

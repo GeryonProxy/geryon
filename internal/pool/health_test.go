@@ -39,7 +39,7 @@ func TestNewHealthChecker(t *testing.T) {
 		MaxFailures:   5,
 	}
 
-	hc := NewHealthChecker(cfg, log)
+	hc := NewHealthChecker(cfg, "postgresql", log)
 	if hc == nil {
 		t.Fatal("NewHealthChecker returned nil")
 	}
@@ -66,7 +66,7 @@ func TestNewHealthChecker_Defaults(t *testing.T) {
 		MaxFailures:   0,
 	}
 
-	hc := NewHealthChecker(cfg, log)
+	hc := NewHealthChecker(cfg, "postgresql", log)
 
 	if hc.checkQuery != "SELECT 1" {
 		t.Errorf("default checkQuery = %q, want SELECT 1", hc.checkQuery)
@@ -80,7 +80,7 @@ func TestNewHealthChecker_Defaults(t *testing.T) {
 // TestHealthChecker_AddBackend_Extended tests adding backends
 func TestHealthChecker_AddBackend_Extended(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -107,7 +107,7 @@ func TestHealthChecker_AddBackend_Extended(t *testing.T) {
 // TestHealthChecker_AddBackend_Duplicate tests adding the same backend twice
 func TestHealthChecker_AddBackend_Duplicate(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -130,7 +130,7 @@ func TestHealthChecker_AddBackend_Duplicate(t *testing.T) {
 // TestHealthChecker_RemoveBackend_Extended tests removing backends
 func TestHealthChecker_RemoveBackend_Extended(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -151,7 +151,7 @@ func TestHealthChecker_StartStop_Extended(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	hc := NewHealthChecker(&config.HealthConfig{
 		CheckInterval: "100ms",
-	}, log)
+	}, "postgresql", log)
 
 	// Should start without panic
 	hc.Start()
@@ -167,7 +167,7 @@ func TestHealthChecker_StartStop_Extended(t *testing.T) {
 // TestHealthChecker_Stats_Extended tests the Stats method
 func TestHealthChecker_Stats_Extended(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	// Add multiple backends with different statuses
 	backends := []*Backend{
@@ -226,7 +226,7 @@ func TestPerformCheck_Success(t *testing.T) {
 		}
 	}()
 
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -244,7 +244,7 @@ func TestPerformCheck_Failure(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	hc := NewHealthChecker(&config.HealthConfig{
 		CheckInterval: "1s",
-	}, log)
+	}, "postgresql", log)
 
 	// Use a port that's unlikely to be open
 	backend := &Backend{
@@ -280,7 +280,7 @@ func TestCheckBackend_Success(t *testing.T) {
 		}
 	}()
 
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -313,7 +313,7 @@ func TestCheckBackend_Failure(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	hc := NewHealthChecker(&config.HealthConfig{
 		MaxFailures: 3,
-	}, log)
+	}, "postgresql", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -377,7 +377,7 @@ func TestCheckBackend_Recovery(t *testing.T) {
 
 	hc := NewHealthChecker(&config.HealthConfig{
 		MaxFailures: 3,
-	}, log)
+	}, "", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -427,7 +427,7 @@ func TestParseDuration_Extended(t *testing.T) {
 // TestWaitForHealthy tests the WaitForHealthy method
 func TestWaitForHealthy(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -455,7 +455,7 @@ func TestWaitForHealthy(t *testing.T) {
 // TestWaitForHealthy_Timeout tests timeout in WaitForHealthy
 func TestWaitForHealthy_Timeout(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -531,7 +531,7 @@ func TestHealthChecker_RunChecks(t *testing.T) {
 		}
 	}()
 
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -550,7 +550,7 @@ func TestHealthChecker_RunChecks(t *testing.T) {
 // TestHealthChecker_GetHealth_NonExistent tests GetHealth for non-existent backend
 func TestHealthChecker_GetHealth_NonExistent(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -568,7 +568,7 @@ func TestHealthChecker_MultipleStartStop(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	hc := NewHealthChecker(&config.HealthConfig{
 		CheckInterval: "100ms",
-	}, log)
+	}, "postgresql", log)
 
 	// Multiple starts should be safe
 	hc.Start()
@@ -603,7 +603,7 @@ func TestBackendHealth_LatencyTracking(t *testing.T) {
 		}
 	}()
 
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "", log)
 
 	backend := &Backend{
 		Host: "127.0.0.1",
@@ -629,7 +629,7 @@ func TestBackendHealth_LatencyTracking(t *testing.T) {
 // TestHealthStats_EmptyBackends tests stats with no backends
 func TestHealthStats_EmptyBackends(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	hc := NewHealthChecker(&config.HealthConfig{}, log)
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
 
 	stats := hc.Stats()
 
@@ -639,5 +639,373 @@ func TestHealthStats_EmptyBackends(t *testing.T) {
 
 	if stats.AverageLatency != 0 {
 		t.Errorf("AverageLatency = %v, want 0", stats.AverageLatency)
+	}
+}
+
+// mockPostgreSQLServer creates a TCP listener that simulates a healthy PostgreSQL server.
+func mockPostgreSQLServer(t *testing.T) net.Listener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 1024)
+				// Read the 'Q' query message
+				if _, err := conn.Read(buf); err != nil {
+					return
+				}
+				// Send ReadyForQuery 'Z' response
+				// Format: 'Z' + 4-byte length (5) + status byte
+				resp := []byte{'Z', 0, 0, 0, 5, 'I'}
+				conn.Write(resp)
+			}()
+		}
+	}()
+
+	return listener
+}
+
+// mockMySQLServer creates a TCP listener that simulates a healthy MySQL server.
+func mockMySQLServer(t *testing.T) net.Listener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 1024)
+				// Read COM_QUERY packet
+				if _, err := conn.Read(buf); err != nil {
+					return
+				}
+				// Send OK packet response
+				// Format: 3-byte length (1) + 1-byte sequence + 0x00 (OK)
+				resp := []byte{1, 0, 0, 2, 0x00}
+				conn.Write(resp)
+			}()
+		}
+	}()
+
+	return listener
+}
+
+// mockMSSQLServer creates a TCP listener that simulates a healthy MSSQL server.
+func mockMSSQLServer(t *testing.T) net.Listener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 1024)
+				// Read TDS query packet
+				if _, err := conn.Read(buf); err != nil {
+					return
+				}
+				// Send TDS response header (8 bytes) + minimal payload
+				// Packet type 0x04 (Tabular Result), status end of message
+				resp := []byte{
+					0x04,       // Packet type: response
+					0x01,       // Status: end of message
+					0x00, 0x08, // Length: 8 (header only)
+					0x00, 0x01, // SPID
+					0x00, 0x00, // Packet ID, Window
+				}
+				conn.Write(resp)
+			}()
+		}
+	}()
+
+	return listener
+}
+
+// TestCheckPostgreSQL_Success tests PostgreSQL protocol health check
+func TestCheckPostgreSQL_Success(t *testing.T) {
+	listener := mockPostgreSQLServer(t)
+	defer listener.Close()
+
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
+
+	backend := &Backend{
+		Host: "127.0.0.1",
+		Port: listener.Addr().(*net.TCPAddr).Port,
+	}
+
+	err := hc.performCheck(backend)
+	if err != nil {
+		t.Errorf("checkPostgreSQL failed: %v", err)
+	}
+}
+
+// TestCheckPostgreSQL_Error tests PostgreSQL health check with failing server
+func TestCheckPostgreSQL_Error(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			// Accept but don't respond - causes timeout
+			conn.Close()
+		}
+	}()
+	defer listener.Close()
+
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{
+		CheckInterval: "1s",
+	}, "postgresql", log)
+	hc.timeout = 100 * time.Millisecond // Short timeout for test
+
+	backend := &Backend{
+		Host: "127.0.0.1",
+		Port: listener.Addr().(*net.TCPAddr).Port,
+	}
+
+	err = hc.performCheck(backend)
+	if err == nil {
+		t.Error("checkPostgreSQL should fail with non-responsive server")
+	}
+}
+
+// TestCheckMySQL_Success tests MySQL protocol health check
+func TestCheckMySQL_Success(t *testing.T) {
+	listener := mockMySQLServer(t)
+	defer listener.Close()
+
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, "mysql", log)
+
+	backend := &Backend{
+		Host: "127.0.0.1",
+		Port: listener.Addr().(*net.TCPAddr).Port,
+	}
+
+	err := hc.performCheck(backend)
+	if err != nil {
+		t.Errorf("checkMySQL failed: %v", err)
+	}
+}
+
+// TestCheckMySQL_Error tests MySQL health check with failing server
+func TestCheckMySQL_Error(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	defer listener.Close()
+
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{
+		CheckInterval: "1s",
+	}, "mysql", log)
+	hc.timeout = 100 * time.Millisecond
+
+	backend := &Backend{
+		Host: "127.0.0.1",
+		Port: listener.Addr().(*net.TCPAddr).Port,
+	}
+
+	err = hc.performCheck(backend)
+	if err == nil {
+		t.Error("checkMySQL should fail with non-responsive server")
+	}
+}
+
+// TestCheckMSSQL_Success tests MSSQL protocol health check
+func TestCheckMSSQL_Success(t *testing.T) {
+	listener := mockMSSQLServer(t)
+	defer listener.Close()
+
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, "mssql", log)
+
+	backend := &Backend{
+		Host: "127.0.0.1",
+		Port: listener.Addr().(*net.TCPAddr).Port,
+	}
+
+	err := hc.performCheck(backend)
+	if err != nil {
+		t.Errorf("checkMSSQL failed: %v", err)
+	}
+}
+
+// TestCheckMSSQL_Error tests MSSQL health check with failing server
+func TestCheckMSSQL_Error(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	defer listener.Close()
+
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{
+		CheckInterval: "1s",
+	}, "mssql", log)
+	hc.timeout = 100 * time.Millisecond
+
+	backend := &Backend{
+		Host: "127.0.0.1",
+		Port: listener.Addr().(*net.TCPAddr).Port,
+	}
+
+	err = hc.performCheck(backend)
+	if err == nil {
+		t.Error("checkMSSQL should fail with non-responsive server")
+	}
+}
+
+// TestCheckUnknownBody_Fallback tests fallback for unknown body type
+func TestCheckUnknownBody_Fallback(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	defer listener.Close()
+
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, "unknown", log)
+
+	backend := &Backend{
+		Host: "127.0.0.1",
+		Port: listener.Addr().(*net.TCPAddr).Port,
+	}
+
+	// Unknown body type should fallback to TCP-only check
+	err = hc.performCheck(backend)
+	if err != nil {
+		t.Errorf("unknown body fallback should succeed with TCP: %v", err)
+	}
+}
+
+// TestHealthChecker_PoolIntegration tests HealthChecker integration with Pool
+func TestHealthChecker_PoolIntegration(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Health: config.HealthConfig{
+			CheckInterval: "100ms",
+			CheckQuery:    "SELECT 1",
+			MaxFailures:   3,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+				{Host: "127.0.0.1", Port: 5433, Role: "replica"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	// HealthChecker should be created
+	hc := p.HealthChecker()
+	if hc == nil {
+		t.Fatal("Pool.HealthChecker() returned nil")
+	}
+
+	// Should have 2 backends registered
+	stats := hc.Stats()
+	if stats.Backends != 2 {
+		t.Errorf("Stats.Backends = %d, want 2", stats.Backends)
+	}
+
+	// Start health checks
+	p.StartHealthChecks()
+
+	// Stop via pool close
+	p.Close()
+}
+
+// TestHealthChecker_DefaultQuery tests default check query
+func TestHealthChecker_DefaultQuery(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{}, "postgresql", log)
+
+	if hc.checkQuery != "SELECT 1" {
+		t.Errorf("default checkQuery = %q, want SELECT 1", hc.checkQuery)
+	}
+}
+
+// TestHealthChecker_CustomQuery tests custom check query
+func TestHealthChecker_CustomQuery(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	hc := NewHealthChecker(&config.HealthConfig{
+		CheckQuery: "SELECT health_check()",
+	}, "postgresql", log)
+
+	if hc.checkQuery != "SELECT health_check()" {
+		t.Errorf("checkQuery = %q, want SELECT health_check()", hc.checkQuery)
 	}
 }

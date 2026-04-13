@@ -488,3 +488,48 @@ func TestSession_Strategy(t *testing.T) {
 		t.Error("Session.Strategy() should be nil when not set")
 	}
 }
+
+// TestSession_TargetRole tests target role getter/setter
+func TestSession_TargetRole(t *testing.T) {
+	log, _ := logger.New("error", "json")
+	cfg := &config.PoolConfig{
+		Name: "test",
+		Body: "postgresql",
+		Mode: "transaction",
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "localhost", Port: 5432, Role: "primary"},
+			},
+		},
+	}
+
+	p, err := NewPool(cfg, nil, log)
+	if err != nil {
+		t.Fatalf("NewPool failed: %v", err)
+	}
+
+	s := NewSession(p, nil)
+
+	// Default should be empty string
+	if role := s.TargetRole(); role != "" {
+		t.Errorf("TargetRole() = %q, want empty", role)
+	}
+
+	// Set to replica
+	s.SetTargetRole("replica")
+	if role := s.TargetRole(); role != "replica" {
+		t.Errorf("TargetRole() = %q, want %q", role, "replica")
+	}
+
+	// Set to primary
+	s.SetTargetRole("primary")
+	if role := s.TargetRole(); role != "primary" {
+		t.Errorf("TargetRole() = %q, want %q", role, "primary")
+	}
+
+	// Clear role
+	s.SetTargetRole("")
+	if role := s.TargetRole(); role != "" {
+		t.Errorf("TargetRole() = %q, want empty after clear", role)
+	}
+}

@@ -128,6 +128,21 @@ func (s *ServerConn) Conn() net.Conn {
 	return s.conn
 }
 
+// SetConnForTest sets the underlying connection for testing purposes.
+func (s *ServerConn) SetConnForTest(conn net.Conn) {
+	s.conn = conn
+}
+
+// NewServerConnForTest creates a ServerConn for testing purposes.
+func NewServerConnForTest(id uint64, conn net.Conn, backend *Backend) *ServerConn {
+	return &ServerConn{
+		id:        id,
+		conn:      conn,
+		backend:   backend,
+		createdAt: time.Now(),
+	}
+}
+
 // Backend returns the backend this connection is connected to.
 func (s *ServerConn) Backend() *Backend {
 	return s.backend
@@ -233,22 +248,20 @@ func (p *serverConnPool) release(conn *ServerConn) {
 
 	// Only add to idle pool if we're below max and connection is healthy
 	if len(p.idle) < p.maxSize {
-		// Perform connection state reset before returning to pool
+		// Perform connection state reset before returning to pool.
+		// This must complete BEFORE the connection becomes available again
+		// to prevent handing out connections in an inconsistent state.
 		if conn.codec != nil {
-			// Reset in background to avoid blocking
-			go func(c *ServerConn) {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := ResetConnection(ctx, c.conn, c.codec); err != nil {
-					// Reset failed, close the connection instead of returning to pool
-					c.Close()
-					return
-				}
-				c.MarkIdle()
-			}(conn)
-		} else {
-			conn.MarkIdle()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := ResetConnection(ctx, conn.conn, conn.codec); err != nil {
+				// Reset failed, close the connection
+				conn.Close()
+				cancel()
+				return
+			}
+			cancel()
 		}
+		conn.MarkIdle()
 		p.idle = append(p.idle, conn)
 	} else {
 		// Pool is full, close the connection
@@ -423,7 +436,7 @@ type Pool struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	closeCh         chan struct{}
-	healthTicker    *time.Ticker
+	healthChecker   *HealthChecker
 	txnManager      *TransactionManager
 }
 
@@ -477,7 +490,7 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 
 	// Initialize transaction manager
 	timeout := parseDuration(cfg.Limits.IdleTransactionTimeout, 30*time.Minute)
-	pool.txnManager = NewTransactionManager(timeout, 5*time.Minute, log)
+	pool.txnManager = NewTransactionManager(timeout, 5*time.Minute, 0, log)
 
 	// Initialize query result cache if enabled
 	if cfg.Cache.Enabled {
@@ -499,6 +512,9 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 		log.Info("Backend TLS enabled", "pool", cfg.Name, "mode", cfg.Backend.TLS.Mode)
 	}
 
+	// Initialize health checker with protocol-specific checks
+	pool.healthChecker = NewHealthChecker(&cfg.Health, cfg.Body, log)
+
 	// Initialize backends from config
 	for _, host := range cfg.Backend.Hosts {
 		backend := &Backend{
@@ -510,6 +526,7 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 		}
 		backend.Healthy.Store(true)
 		pool.backends = append(pool.backends, backend)
+		pool.healthChecker.AddBackend(backend)
 
 		if host.Role == "primary" {
 			pool.primary = backend
@@ -559,6 +576,37 @@ func (p *Pool) Acquire(ctx context.Context) (*ServerConn, error) {
 	}
 
 	// Wait for a connection to become available
+	waitTimeout := parseDuration(p.config.Limits.ConnectionTimeout, 5*time.Second)
+	conn, err := p.waitQueue.Wait(ctx, waitTimeout)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+// AcquireToRole gets a server connection from the pool targeting a specific backend role.
+func (p *Pool) AcquireToRole(ctx context.Context, role string) (*ServerConn, error) {
+	// Try to get from pool immediately (any connection works)
+	if conn := p.serverConns.acquire(); conn != nil {
+		return conn, nil
+	}
+
+	// Need to create a new connection targeting the specific role
+	if p.serverConns.size() < p.config.Limits.MaxServerConnections {
+		conn, err := p.createServerConnToRole(role)
+		if err != nil {
+			return nil, err
+		}
+		p.serverConns.addActive(conn)
+		return conn, nil
+	}
+
+	// Pool is at max capacity, wait for a connection
+	if conn := p.serverConns.acquire(); conn != nil {
+		return conn, nil
+	}
+
 	waitTimeout := parseDuration(p.config.Limits.ConnectionTimeout, 5*time.Second)
 	conn, err := p.waitQueue.Wait(ctx, waitTimeout)
 	if err != nil {
@@ -621,6 +669,45 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 	}
 
 	return nil, fmt.Errorf("failed to connect to any backend after %d attempts", maxRetries)
+}
+
+// createServerConnToRole creates a new server connection to a specific backend role.
+func (p *Pool) createServerConnToRole(role string) (*ServerConn, error) {
+	if len(p.backends) == 0 {
+		return nil, fmt.Errorf("no backends available")
+	}
+
+	maxRetries := 3
+	baseDelay := 100 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		backend := p.selectBackendByRole(role)
+		if backend == nil {
+			return nil, fmt.Errorf("no healthy %s backend available", role)
+		}
+
+		conn, err := p.tryConnect(backend)
+		if err == nil {
+			return conn, nil
+		}
+
+		backend.Healthy.Store(false)
+		p.log.Warn("Backend connection failed, marking unhealthy",
+			"backend", backend.Address(),
+			"error", err,
+			"attempt", attempt+1,
+		)
+
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<attempt)
+			if delay > 2*time.Second {
+				delay = 2 * time.Second
+			}
+			time.Sleep(delay)
+		}
+	}
+
+	return nil, fmt.Errorf("failed to connect to %s backend after %d attempts", role, maxRetries)
 }
 
 // loadBackendTLSConfig loads TLS configuration for backend connections.
@@ -737,6 +824,40 @@ func (p *Pool) selectBackendWithFallback() *Backend {
 	}
 
 	// Fallback: try any backend that is not draining
+	for _, backend := range p.backends {
+		if backend.Healthy.Load() && !backend.Draining.Load() {
+			return backend
+		}
+	}
+
+	return nil
+}
+
+// selectBackendByRole selects a healthy backend matching the requested role.
+// Falls back to any available backend if the requested role is unavailable.
+func (p *Pool) selectBackendByRole(role string) *Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	switch role {
+	case "replica":
+		// Round-robin across healthy replicas
+		for _, replica := range p.replicas {
+			if replica.Healthy.Load() && !replica.Draining.Load() {
+				return replica
+			}
+		}
+		// Fallback to primary
+		if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
+			return p.primary
+		}
+	case "primary":
+		if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
+			return p.primary
+		}
+	}
+
+	// Fallback: try any backend
 	for _, backend := range p.backends {
 		if backend.Healthy.Load() && !backend.Draining.Load() {
 			return backend
@@ -969,6 +1090,11 @@ func (p *Pool) TransactionManager() *TransactionManager {
 	return p.txnManager
 }
 
+// HealthChecker returns the health checker for this pool.
+func (p *Pool) HealthChecker() *HealthChecker {
+	return p.healthChecker
+}
+
 // GetCachedResult checks the query cache for a result.
 func (p *Pool) GetCachedResult(query string, params []byte) ([]byte, bool) {
 	if p.queryCache == nil {
@@ -1008,8 +1134,8 @@ func (p *Pool) InvalidateCache(table string) {
 func (p *Pool) Close() error {
 	p.cancel()
 	close(p.closeCh)
-	if p.healthTicker != nil {
-		p.healthTicker.Stop()
+	if p.healthChecker != nil {
+		p.healthChecker.Stop()
 	}
 	if p.txnManager != nil {
 		p.txnManager.Stop()
@@ -1082,6 +1208,9 @@ func (p *Pool) updateBackends(cfg *config.PoolConfig) {
 			p.log.Info("Removing backend from pool", "pool", p.name, "backend", key)
 			// Mark for draining
 			b.Draining.Store(true)
+			if p.healthChecker != nil {
+				p.healthChecker.RemoveBackend(b)
+			}
 		}
 	}
 
@@ -1091,6 +1220,9 @@ func (p *Pool) updateBackends(cfg *config.PoolConfig) {
 		if newBackends[key] {
 			backend := NewBackend(h.Host, h.Port, h.Role, h.Weight)
 			keptBackends = append(keptBackends, backend)
+			if p.healthChecker != nil {
+				p.healthChecker.AddBackend(backend)
+			}
 			p.log.Info("Adding new backend to pool", "pool", p.name, "backend", key, "role", h.Role)
 		}
 	}
@@ -1100,64 +1232,10 @@ func (p *Pool) updateBackends(cfg *config.PoolConfig) {
 }
 
 // StartHealthChecks starts the background health checking.
-func (p *Pool) StartHealthChecks(interval time.Duration) {
-	p.healthTicker = time.NewTicker(interval)
-	go func() {
-		for {
-			select {
-			case <-p.ctx.Done():
-				return
-			case <-p.healthTicker.C:
-				p.checkBackendHealth()
-			}
-		}
-	}()
-	p.log.Info("Health checks started", "pool", p.name, "interval", interval)
-}
-
-// checkBackendHealth checks the health of all backends.
-func (p *Pool) checkBackendHealth() {
-	p.mu.RLock()
-	backends := make([]*Backend, len(p.backends))
-	copy(backends, p.backends)
-	p.mu.RUnlock()
-
-	for _, backend := range backends {
-		go p.checkSingleBackend(backend)
-	}
-}
-
-// checkSingleBackend checks the health of a single backend.
-func (p *Pool) checkSingleBackend(backend *Backend) {
-	addr := backend.Address()
-
-	// Try to establish a connection
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
-	if err != nil {
-		wasHealthy := backend.Healthy.Load()
-		backend.Healthy.Store(false)
-		if wasHealthy {
-			p.log.Warn("Backend health check failed",
-				"pool", p.name,
-				"backend", addr,
-				"error", err,
-			)
-		}
-		return
-	}
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
-	conn.Close()
-
-	// Mark as healthy if it was unhealthy
-	wasHealthy := backend.Healthy.Load()
-	backend.Healthy.Store(true)
-	backend.LastCheck = time.Now()
-	if !wasHealthy {
-		p.log.Info("Backend became healthy",
-			"pool", p.name,
-			"backend", addr,
-		)
+func (p *Pool) StartHealthChecks() {
+	if p.healthChecker != nil {
+		p.healthChecker.Start()
+		p.log.Info("Health checks started", "pool", p.name, "interval", p.config.Health.CheckInterval)
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
+	"github.com/GeryonProxy/geryon/internal/stmt"
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
 )
 
@@ -45,6 +46,8 @@ type Listener struct {
 	cacheRules       *cache.RulesEngine
 	queryLogger      *logger.QueryLogger
 	transactionMgr   *pool.TransactionManager
+	authLimiter      *auth.AuthLimiter
+	router           *pool.Router
 	ctx              context.Context
 	cancel           context.CancelFunc
 	log              *logger.Logger
@@ -80,12 +83,14 @@ func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.C
 		log.Warn("Failed to create query logger", "error", err)
 	}
 
-	// Setup transaction manager
-	l.transactionMgr = pool.NewTransactionManager(
-		30*time.Minute, // transaction timeout
-		5*time.Minute,  // idle timeout
-		log,
-	)
+	// Setup transaction manager with configurable timeouts
+	txnTimeout := parseTxnDuration(l.config.Transaction.Timeout, 30*time.Minute)
+	txnIdleTimeout := parseTxnDuration(l.config.Transaction.IdleTimeout, 5*time.Minute)
+	txnCheckInterval := parseTxnDuration(l.config.Transaction.CheckInterval, 30*time.Second)
+	l.transactionMgr = pool.NewTransactionManager(txnTimeout, txnIdleTimeout, txnCheckInterval, log)
+
+	// Setup auth rate limiter (10 failures per 5min window, 5min lockout)
+	l.authLimiter = auth.NewAuthLimiter()
 
 	// Setup cache if enabled
 	if cfg.Cache.Enabled {
@@ -112,6 +117,20 @@ func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.C
 	if cfg.TLS.Mode != "disable" {
 		if err := l.setupTLS(); err != nil {
 			return nil, fmt.Errorf("failed to setup TLS: %w", err)
+		}
+	}
+
+	// Setup query router for read/write splitting
+	if cfg.Routing.ReadWriteSplit {
+		backends := poolInstance.GetBackends()
+		if len(backends) > 0 {
+			router, err := pool.NewRouter(&cfg.Routing, backends)
+			if err != nil {
+				log.Warn("Failed to create query router", "error", err)
+			} else {
+				l.router = router
+				log.Info("Read/write splitting enabled", "pool", cfg.Name)
+			}
 		}
 	}
 
@@ -157,6 +176,17 @@ func parseMemoryString(s string) int64 {
 	return value * multiplier
 }
 
+// parseTxnDuration parses a transaction timeout string like "30m", "5s" to time.Duration.
+func parseTxnDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return d
+	}
+	return defaultVal
+}
+
 // Start starts the listener.
 func (l *Listener) Start() error {
 	l.mu.Lock()
@@ -179,6 +209,11 @@ func (l *Listener) Start() error {
 
 	l.listener = ln
 	l.active.Store(true)
+
+	// Start protocol-aware health checks
+	if l.pool != nil {
+		l.pool.StartHealthChecks()
+	}
 
 	l.log.Info("Listener started",
 		"address", l.address,
@@ -223,7 +258,7 @@ func (l *Listener) handleConnection(conn net.Conn) {
 	}
 
 	// Create proxy session with cache, query logger, and transaction manager
-	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.tlsConfig, l.log)
+	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.authLimiter, l.router, l.tlsConfig, l.log)
 	if err != nil {
 		l.log.Error("Failed to create session", "error", err)
 		return
@@ -346,6 +381,9 @@ type ProxySession struct {
 	queryLogger     *logger.QueryLogger
 	transactionMgr  *pool.TransactionManager
 	transactionInfo *pool.TransactionInfo
+	authLimiter     *auth.AuthLimiter
+	router          *pool.Router
+	stmtRepreparer  *stmt.TransparentRepreparer
 	closed          atomic.Bool
 	queryCount      atomic.Int64
 	authenticated   atomic.Bool
@@ -358,6 +396,7 @@ type ProxySession struct {
 	// Query timing for logging
 	currentQuery    string
 	queryStartTime  time.Time
+	lastBoundStmt   string // last bound statement name for re-preparation
 }
 
 var (
@@ -365,7 +404,7 @@ var (
 )
 
 // NewProxySession creates a new proxy session.
-func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, tlsConfig *tls.Config, log *logger.Logger) (*ProxySession, error) {
+func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, authLimiter *auth.AuthLimiter, router *pool.Router, tlsConfig *tls.Config, log *logger.Logger) (*ProxySession, error) {
 	// Create pool strategy
 	strategy, err := pool.DefaultStrategyFactory.CreateStrategy(p)
 	if err != nil {
@@ -388,6 +427,9 @@ func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, user
 		cacheRules:     cacheRules,
 		queryLogger:    queryLogger,
 		transactionMgr: transactionMgr,
+		authLimiter:    authLimiter,
+		router:         router,
+		stmtRepreparer: stmt.NewTransparentRepreparer(stmt.NewManager(1000)),
 		tlsConfig:      tlsConfig,
 		log:            log,
 	}
@@ -475,7 +517,9 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 			// SSL Request
 			if ps.config.TLS.Mode != "disable" && ps.tlsConfig != nil {
 				// Send 'S' to indicate SSL supported
-				ps.clientConn.Write([]byte{'S'})
+				if _, err := ps.clientConn.Write([]byte{'S'}); err != nil {
+					return fmt.Errorf("failed to send SSL response: %w", err)
+				}
 				// Wrap connection with TLS
 				tlsConn := tls.Server(ps.clientConn, ps.tlsConfig)
 				if err := tlsConn.HandshakeContext(ctx); err != nil {
@@ -489,7 +533,9 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 				}
 			} else {
 				// Send 'N' to indicate SSL not supported
-				ps.clientConn.Write([]byte{'N'})
+				if _, err := ps.clientConn.Write([]byte{'N'}); err != nil {
+					return fmt.Errorf("failed to send SSL rejection: %w", err)
+				}
 			}
 			// Read actual startup message
 			return ps.handlePostgreSQLStartup(ctx)
@@ -566,7 +612,9 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 	if user == nil {
 		// Send error and close
 		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed")
-		ps.clientConn.Write(errMsg)
+		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
+			return fmt.Errorf("unknown user: %s, failed to send error: %w", ps.username, werr)
+		}
 		return fmt.Errorf("unknown user: %s", ps.username)
 	}
 
@@ -583,6 +631,15 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 
 // handlePostgreSQLAuth handles PostgreSQL authentication.
 func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.User) error {
+	// Check auth rate limiter before starting
+	clientIP := ps.clientConn.RemoteAddr().String()
+	if ps.authLimiter != nil && ps.authLimiter.IsLimited(clientIP) {
+		ps.log.Warn("Authentication blocked: client rate limited", "client", clientIP)
+		errMsg := postgresql.CreateErrorResponse("28P01", "too many failed attempts, try again later")
+		ps.clientConn.Write(errMsg)
+		return fmt.Errorf("client %s is rate limited", clientIP)
+	}
+
 	scramServer := auth.NewSCRAMServer(ps.userDB)
 
 	// Send AuthenticationSASL
@@ -632,8 +689,11 @@ func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.Use
 	// Parse client-first
 	state, err := scramServer.ParseClientFirst(clientFirst)
 	if err != nil {
+		ps.recordAuthFailure()
 		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed")
-		ps.clientConn.Write(errMsg)
+		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
+			return fmt.Errorf("authentication failed: %w (failed to send error: %v)", err, werr)
+		}
 		return err
 	}
 	ps.scramState = state
@@ -641,8 +701,11 @@ func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.Use
 	// Generate server-first
 	serverFirst, err := scramServer.GenerateServerFirst(state)
 	if err != nil {
+		ps.recordAuthFailure()
 		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed")
-		ps.clientConn.Write(errMsg)
+		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
+			return fmt.Errorf("authentication failed: %w (failed to send error: %v)", err, werr)
+		}
 		return err
 	}
 
@@ -677,8 +740,11 @@ func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.Use
 	// Verify client-final
 	ok, err := scramServer.VerifyClientFinal(state, string(finalData))
 	if err != nil || !ok {
+		ps.recordAuthFailure()
 		errMsg := postgresql.CreateErrorResponse("28P01", "authentication failed: invalid password")
-		ps.clientConn.Write(errMsg)
+		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
+			return fmt.Errorf("authentication failed: %w (failed to send error: %v)", err, werr)
+		}
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
@@ -719,6 +785,7 @@ func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.Use
 	}
 
 	ps.authenticated.Store(true)
+	ps.recordAuthSuccess()
 	ps.poolSession.SetAuthDone()
 
 	// Connect to backend
@@ -804,6 +871,7 @@ func (ps *ProxySession) forwardAuthFromBackend() error {
 			if authType == 0 {
 				// AuthenticationOK
 				ps.authenticated.Store(true)
+				ps.recordAuthSuccess()
 				ps.poolSession.SetAuthDone()
 				// Continue forwarding until ReadyForQuery
 				continue
@@ -962,6 +1030,7 @@ func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
 	}
 
 	ps.authenticated.Store(true)
+	ps.recordAuthSuccess()
 	ps.poolSession.SetAuthDone()
 
 	return nil
@@ -1181,6 +1250,7 @@ func (ps *ProxySession) forwardMySQLAuth() error {
 			case 0x00: // OK
 				return nil
 			case 0xff: // ERR
+				ps.recordAuthFailure()
 				return fmt.Errorf("authentication failed")
 			case 0xfe: // Auth switch request
 				// Read client response
@@ -1238,6 +1308,7 @@ func (ps *ProxySession) handleMSSQLStartup(ctx context.Context) error {
 	}
 
 	ps.authenticated.Store(true)
+	ps.recordAuthSuccess()
 	ps.poolSession.SetAuthDone()
 
 	return nil
@@ -1453,6 +1524,7 @@ func (ps *ProxySession) forwardMSSQLAuthResponse() error {
 				// Continue until we see Done
 			}
 			if tokenType == 0xAA { // Error
+				ps.recordAuthFailure()
 				return fmt.Errorf("authentication failed")
 			}
 		}
@@ -1471,6 +1543,21 @@ func (ps *ProxySession) OnQuery(ctx context.Context, msg *common.Message) (*pool
 	ps.queryCount.Add(1)
 	ps.poolSession.IncrementQueryCount()
 	ps.pool.IncrementQueryCount()
+
+	// Use router for read/write splitting if enabled
+	if ps.router != nil {
+		query, _ := ps.codec.ExtractQuery(msg)
+		if query != "" {
+			backend, err := ps.router.RouteQuery(query, ps.poolSession.InTransaction())
+			if err == nil && backend != nil {
+				if backend.Role == "replica" {
+					ps.poolSession.SetTargetRole("replica")
+				} else {
+					ps.poolSession.SetTargetRole("primary")
+				}
+			}
+		}
+	}
 
 	// Get server connection from strategy
 	conn, err := ps.poolSession.Strategy().OnQuery(ctx, ps.poolSession, msg)
@@ -1506,6 +1593,25 @@ func (ps *ProxySession) Close() error {
 	return nil
 }
 
+// recordAuthFailure records a failed authentication attempt for rate limiting.
+func (ps *ProxySession) recordAuthFailure() {
+	if ps.authLimiter != nil {
+		clientIP := ps.clientConn.RemoteAddr().String()
+		locked := ps.authLimiter.RecordFailure(clientIP)
+		if locked {
+			ps.log.Warn("Client IP locked out due to repeated auth failures", "client", clientIP)
+		}
+	}
+}
+
+// recordAuthSuccess resets the rate limiter counter for a client IP.
+func (ps *ProxySession) recordAuthSuccess() {
+	if ps.authLimiter != nil {
+		clientIP := ps.clientConn.RemoteAddr().String()
+		ps.authLimiter.RecordSuccess(clientIP)
+	}
+}
+
 // Relay handles bidirectional message forwarding.
 type Relay struct {
 	mu sync.Mutex
@@ -1520,23 +1626,53 @@ func NewRelay() *Relay {
 func (r *Relay) Run(ctx context.Context, clientConn net.Conn, session *pool.Session, codec common.Codec, ps *ProxySession) {
 	// Create error channels for both directions
 	errCh := make(chan error, 2)
+	// done signals the first goroutine to exit; closing both connections
+	// wakes up the other goroutine's blocked read
+	var done atomic.Bool
+	var closeOnce sync.Once
 
 	// Client -> Server
 	go func() {
 		errCh <- r.forwardClientToServer(ctx, clientConn, session, codec, ps)
+		done.Store(true)
 	}()
 
 	// Server -> Client
 	go func() {
 		errCh <- r.forwardServerToClient(ctx, clientConn, session, codec, ps)
+		done.Store(true)
 	}()
 
-	// Wait for first error
+	// Wait for first error or context cancellation
 	select {
 	case <-ctx.Done():
+	case <-errCh:
+	}
+
+	// Signal both goroutines to stop and close connections
+	closeOnce.Do(func() {
+		if ps.serverConn != nil && ps.serverConn.Conn() != nil {
+			ps.serverConn.Conn().Close()
+		}
+		if clientConn != nil {
+			clientConn.Close()
+		}
+	})
+
+	// Drain second goroutine result
+	select {
 	case err := <-errCh:
 		if err != nil && err != io.EOF {
 			ps.log.Debug("Relay error", "error", err)
+		}
+	default:
+	}
+
+	// Wait for both goroutines to exit (they're woken by connection close)
+	for n := 0; n < 2 && !done.Load(); n++ {
+		select {
+		case <-errCh:
+		case <-time.After(time.Second):
 		}
 	}
 }
@@ -1578,9 +1714,14 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			if ps.transactionMgr != nil {
 				upperQuery := strings.ToUpper(strings.TrimSpace(query))
 				if strings.HasPrefix(upperQuery, "BEGIN") || strings.HasPrefix(upperQuery, "START TRANSACTION") {
-					// Register new transaction
+					// Register new transaction with abort function
 					if ps.serverConn != nil {
-						ps.transactionInfo = ps.transactionMgr.Register(ps.id, ps.serverConn.ID())
+						abortFn := func() {
+							ps.sendRollbackToBackend()
+						}
+						ps.transactionInfo = ps.transactionMgr.Register(ps.id, ps.serverConn.ID(), abortFn)
+					} else {
+						ps.transactionInfo = ps.transactionMgr.Register(ps.id, 0, nil)
 					}
 				} else if strings.HasPrefix(upperQuery, "COMMIT") || strings.HasPrefix(upperQuery, "ROLLBACK") || strings.HasPrefix(upperQuery, "END") {
 					// End transaction
@@ -1597,7 +1738,7 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			}
 		}
 
-		// Handle prepared statements (Parse, Bind, Execute, Close)
+		// Handle prepared statements (Parse, Bind, Close)
 		if ps.poolSession.PreparedStatements() != nil && ps.config.Body == "postgresql" {
 			switch {
 			case codec.IsPrepare(msg):
@@ -1611,6 +1752,14 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 						"name", stmtName,
 						"query", query[:min(len(query), 50)],
 					)
+				}
+
+			case codec.IsBind(msg):
+				// Track bound statement name for re-preparation
+				if pgCodec, ok := codec.(*postgresql.PGCodec); ok {
+					if stmtName, err := pgCodec.ExtractBindStatementName(msg); err == nil && stmtName != "" {
+						ps.lastBoundStmt = stmtName
+					}
 				}
 
 			case codec.IsClose(msg):
@@ -1680,6 +1829,12 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			return err
 		}
 
+		// Re-prepare statement on new server connection if needed (statement mode pooling)
+		if ps.stmtRepreparer != nil && serverConn != nil && codec.IsExecute(msg) && ps.lastBoundStmt != "" {
+			ps.reprepareStatement(codec, serverConn.Conn(), ps.lastBoundStmt)
+			ps.lastBoundStmt = ""
+		}
+
 		// Update transaction server connection if needed
 		if ps.transactionInfo != nil && ps.transactionInfo.ServerConnID == 0 && serverConn != nil {
 			ps.transactionInfo.ServerConnID = serverConn.ID()
@@ -1732,6 +1887,62 @@ func isModificationQuery(query string) bool {
 func (ps *ProxySession) sendCachedResponse(clientConn net.Conn, data []byte) error {
 	_, err := clientConn.Write(data)
 	return err
+}
+
+// reprepareStatement checks if a bound statement needs re-preparation
+// on the current server connection, and sends the original Parse if needed.
+func (ps *ProxySession) reprepareStatement(codec common.Codec, serverConn net.Conn, boundStmtName string) {
+	if boundStmtName == "" {
+		return
+	}
+
+	connID := uint64(0)
+	if ps.serverConn != nil {
+		connID = ps.serverConn.ID()
+	}
+
+	_, needsReprep, err := ps.stmtRepreparer.PrepareIfNeeded(connID, boundStmtName)
+	if err != nil || !needsReprep {
+		return
+	}
+
+	// Statement needs re-preparation — get the original SQL and send Parse
+	if prepStmt, found := ps.poolSession.PreparedStatements().GetQuery(boundStmtName); found && prepStmt != nil {
+		query := prepStmt.Query
+		pgCodec, ok := codec.(*postgresql.PGCodec)
+		if !ok {
+			return
+		}
+		// Send Parse (named statement) to server before the Execute
+		parseMsg := &common.Message{
+			Type:    'P', // Parse
+			Payload: pgCodec.BuildParsePayload(boundStmtName, query, nil),
+		}
+		if err := codec.WriteMessage(serverConn, parseMsg); err != nil {
+			ps.log.Warn("Failed to re-prepare statement on server", "name", boundStmtName, "error", err)
+		} else {
+			ps.log.Debug("Statement re-prepared on server", "name", boundStmtName)
+		}
+	}
+}
+
+// sendRollbackToBackend sends a ROLLBACK to the backend server to abort an active transaction.
+// Called by the transaction manager when a timeout is detected.
+func (ps *ProxySession) sendRollbackToBackend() {
+	serverConn := ps.poolSession.ServerConn()
+	if serverConn == nil {
+		return
+	}
+	// Send ROLLBACK query to backend
+	rollbackMsg := &common.Message{
+		Type:    'Q', // Simple Query
+		Payload: append([]byte("ROLLBACK"), 0),
+	}
+	if err := ps.codec.WriteMessage(serverConn.Conn(), rollbackMsg); err != nil {
+		ps.log.Warn("Failed to send ROLLBACK to backend", "error", err)
+	}
+	// Close client connection to terminate the session
+	ps.clientConn.Close()
 }
 
 // forwardAndCapture forwards request to server and captures response for caching.

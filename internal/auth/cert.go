@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"crypto/x509"
 	"fmt"
 	"strings"
@@ -371,14 +372,13 @@ func (cm *CertificateMapper) RemoveMapping(fingerprint string) {
 	delete(cm.mappings, fingerprint)
 }
 
-// CertificateFingerprint returns a certificate fingerprint.
+// CertificateFingerprint returns a SHA-256 fingerprint of the certificate.
 func CertificateFingerprint(cert *x509.Certificate) string {
 	if cert == nil || cert.Raw == nil {
 		return ""
 	}
-	// Simple fingerprint: SHA-256 of raw certificate
-	// In production, use crypto/sha256
-	return fmt.Sprintf("%x", cert.Raw[:32])
+	hash := sha256.Sum256(cert.Raw)
+	return fmt.Sprintf("%x", hash)
 }
 
 // PeerCertificate extracts the peer certificate from a TLS connection state.

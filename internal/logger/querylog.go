@@ -372,8 +372,8 @@ func (ql *QueryLogger) updateStats(entry QueryLogEntry) {
 		if duration > ql.stats.MaxDuration {
 			ql.stats.MaxDuration = duration
 		}
-		// Running average
-		ql.stats.AvgDuration = (ql.stats.AvgDuration*(time.Duration(ql.stats.TotalQueries-1)) + duration) / time.Duration(ql.stats.TotalQueries)
+		// Numerically stable running average: avg += (delta / count)
+		ql.stats.AvgDuration += (duration - ql.stats.AvgDuration) / time.Duration(ql.stats.TotalQueries)
 	}
 
 	// Update top queries (simple implementation - could be optimized)
@@ -475,14 +475,6 @@ func (ql *QueryLogger) GetTopQueries(limit int) []QueryDigest {
 	result := make([]QueryDigest, limit)
 	copy(result, ql.stats.TopQueries[:limit])
 	return result
-}
-
-// min returns the minimum of two integers.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // secretPatterns matches common SQL patterns that may contain credentials.

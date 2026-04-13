@@ -41,6 +41,7 @@ type HealthChecker struct {
 	backends    map[string]*BackendHealth
 	config      *config.HealthConfig
 	checkQuery  string
+	body        string // protocol body: postgresql, mysql, mssql
 	interval    time.Duration
 	timeout     time.Duration
 	maxFailures int
@@ -63,13 +64,14 @@ type BackendHealth struct {
 }
 
 // NewHealthChecker creates a new health checker.
-func NewHealthChecker(cfg *config.HealthConfig, log *logger.Logger) *HealthChecker {
+func NewHealthChecker(cfg *config.HealthConfig, body string, log *logger.Logger) *HealthChecker {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	hc := &HealthChecker{
 		backends:    make(map[string]*BackendHealth),
 		config:      cfg,
 		checkQuery:  cfg.CheckQuery,
+		body:        body,
 		interval:    parseDuration(cfg.CheckInterval, 5*time.Second),
 		timeout:     parseDuration("5s", 5*time.Second),
 		maxFailures: cfg.MaxFailures,
@@ -235,12 +237,177 @@ func (hc *HealthChecker) performCheck(backend *Backend) error {
 	}
 	defer conn.Close()
 
-	// Set read deadline to prevent hanging on slow backend responses
+	// Set read/write deadlines
 	conn.SetReadDeadline(time.Now().Add(hc.timeout))
 	conn.SetWriteDeadline(time.Now().Add(hc.timeout))
 
-	// Protocol-specific health check would go here
-	// For now, we just check TCP connectivity
+	// Protocol-specific health check query
+	switch hc.body {
+	case "postgresql":
+		return hc.checkPostgreSQL(conn)
+	case "mysql":
+		return hc.checkMySQL(conn)
+	case "mssql":
+		return hc.checkMSSQL(conn)
+	default:
+		// Fallback to TCP-only
+		return nil
+	}
+}
+
+// checkPostgreSQL sends a simple query and waits for ReadyForQuery.
+func (hc *HealthChecker) checkPostgreSQL(conn net.Conn) error {
+	query := hc.checkQuery
+	if query == "" {
+		query = "SELECT 1"
+	}
+
+	// PostgreSQL Simple Query protocol: 'Q' + int32 length + query + null
+	payload := append([]byte(query), 0)
+	msgLen := 4 + len(payload)
+	packet := make([]byte, 5+len(payload))
+	packet[0] = 'Q'
+	packet[1] = byte(msgLen >> 24)
+	packet[2] = byte(msgLen >> 16)
+	packet[3] = byte(msgLen >> 8)
+	packet[4] = byte(msgLen)
+	copy(packet[5:], payload)
+
+	if _, err := conn.Write(packet); err != nil {
+		return fmt.Errorf("failed to send query: %w", err)
+	}
+
+	// Read responses until ReadyForQuery ('Z')
+	buf := make([]byte, 1024)
+	for {
+		// Read message type (1 byte)
+		if _, err := conn.Read(buf[:1]); err != nil {
+			return fmt.Errorf("failed to read response: %w", err)
+		}
+		msgType := buf[0]
+
+		// Read message length (4 bytes)
+		if _, err := conn.Read(buf[:4]); err != nil {
+			return fmt.Errorf("failed to read length: %w", err)
+		}
+		msgLen := int(buf[0])<<24 | int(buf[1])<<16 | int(buf[2])<<8 | int(buf[3])
+		payloadLen := msgLen - 4
+
+		// Discard payload
+		for payloadLen > 0 {
+			n := min(payloadLen, len(buf))
+			read, err := conn.Read(buf[:n])
+			if err != nil {
+				return fmt.Errorf("failed to read payload: %w", err)
+			}
+			payloadLen -= read
+		}
+
+		if msgType == 'Z' { // ReadyForQuery
+			return nil
+		}
+	}
+}
+
+// checkMySQL sends a COM_QUERY and checks for OK/ResultSet.
+func (hc *HealthChecker) checkMySQL(conn net.Conn) error {
+	query := hc.checkQuery
+	if query == "" {
+		query = "SELECT 1"
+	}
+
+	// MySQL COM_QUERY = 0x03
+	payload := make([]byte, 1+len(query))
+	payload[0] = 0x03 // COM_QUERY
+	copy(payload[1:], query)
+
+	// MySQL packet header: 3 bytes length + 1 byte sequence
+	header := make([]byte, 4)
+	header[0] = byte(len(payload) & 0xFF)
+	header[1] = byte((len(payload) >> 8) & 0xFF)
+	header[2] = byte((len(payload) >> 16) & 0xFF)
+	header[3] = 1 // sequence number
+
+	if _, err := conn.Write(append(header, payload...)); err != nil {
+		return fmt.Errorf("failed to send query: %w", err)
+	}
+
+	// Read response header (4 bytes)
+	respHeader := make([]byte, 4)
+	if _, err := conn.Read(respHeader); err != nil {
+		return fmt.Errorf("failed to read response header: %w", err)
+	}
+
+	respLen := int(respHeader[0]) | int(respHeader[1])<<8 | int(respHeader[2])<<16
+	if respLen == 0 || respLen > 1<<24 {
+		return fmt.Errorf("invalid response length: %d", respLen)
+	}
+
+	// Read response payload
+	respPayload := make([]byte, respLen)
+	if _, err := conn.Read(respPayload); err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check for OK packet (0x00) or ResultSet header
+	switch respPayload[0] {
+	case 0x00: // OK packet
+		return nil
+	case 0xff: // Error packet
+		return fmt.Errorf("MySQL query error")
+	default:
+		// ResultSet - health check succeeded
+		return nil
+	}
+}
+
+// checkMSSQL sends a SQL batch and checks for response.
+func (hc *HealthChecker) checkMSSQL(conn net.Conn) error {
+	query := hc.checkQuery
+	if query == "" {
+		query = "SELECT 1"
+	}
+
+	// TDS header (8 bytes) for SQL Batch (type 0x01)
+	queryBytes := []byte(query)
+	payloadLen := 8 + len(queryBytes) + 2 // header + query + terminator
+	if payloadLen > 1<<16 {
+		return fmt.Errorf("query too large")
+	}
+
+	packet := make([]byte, payloadLen)
+	packet[0] = 0x01 // TDS_QUERY
+	packet[1] = 0x01 // Status: end of message
+	packet[2] = byte(payloadLen >> 8)
+	packet[3] = byte(payloadLen)
+	packet[4] = 0x00 // SPID high
+	packet[5] = 0x01 // SPID low
+	packet[6] = 0x00 // Packet ID
+	packet[7] = 0x00 // Window
+
+	// SQL Batch header (8 bytes): AllHeaders length + header type
+	copy(packet[8:], queryBytes)
+
+	if _, err := conn.Write(packet); err != nil {
+		return fmt.Errorf("failed to send query: %w", err)
+	}
+
+	// Read TDS response header
+	respHeader := make([]byte, 8)
+	if _, err := conn.Read(respHeader); err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	respLen := int(respHeader[2])<<8 | int(respHeader[3])
+	if respLen < 8 || respLen > 1<<16 {
+		return fmt.Errorf("invalid response length: %d", respLen)
+	}
+
+	// Read response payload
+	respPayload := make([]byte, respLen-8)
+	if _, err := conn.Read(respPayload); err != nil {
+		return fmt.Errorf("failed to read response payload: %w", err)
+	}
 
 	return nil
 }

@@ -636,3 +636,422 @@ func TestLoadClientConfig_Modes(t *testing.T) {
 		}
 	}
 }
+
+func TestNewConfig(t *testing.T) {
+	cfg := NewConfig()
+	if cfg == nil {
+		t.Fatal("NewConfig returned nil")
+	}
+	if cfg.serverConfig != nil {
+		t.Error("serverConfig should be nil initially")
+	}
+	if cfg.clientConfig != nil {
+		t.Error("clientConfig should be nil initially")
+	}
+	if cfg.tlsMode != "" {
+		t.Errorf("tlsMode = %q, want empty", cfg.tlsMode)
+	}
+}
+
+func TestParseCertificateInfo_EmptyData(t *testing.T) {
+	_, err := ParseCertificateInfo([]byte(""))
+	if err == nil {
+		t.Error("ParseCertificateInfo should fail for empty data")
+	}
+}
+
+func TestWriteCertificateToFile_Custom(t *testing.T) {
+	dir := t.TempDir()
+	certPath := dir + "/cert.pem"
+	keyPath := dir + "/key.pem"
+
+	err := WriteCertificateToFile([]byte("cert"), []byte("key"), certPath, keyPath)
+	if err != nil {
+		t.Fatalf("WriteCertificateToFile failed: %v", err)
+	}
+
+	// Verify files were created
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("Failed to read cert: %v", err)
+	}
+	if string(data) != "cert" {
+		t.Errorf("cert content = %q, want cert", string(data))
+	}
+
+	data, err = os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("Failed to read key: %v", err)
+	}
+	if string(data) != "key" {
+		t.Errorf("key content = %q, want key", string(data))
+	}
+}
+
+func TestWriteCertificateToFile_InvalidKeyPath(t *testing.T) {
+	err := WriteCertificateToFile([]byte("cert"), []byte("key"), os.DevNull, "/nonexistent/very/deep/path/key.pem")
+	if err == nil {
+		t.Error("WriteCertificateToFile should fail for invalid key path")
+	}
+}
+
+// Test LoadFromConfig with "require" mode using real certificates
+func TestConfig_LoadFromConfig_Require(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+
+	cfg := &config.TLSConfig{
+		Mode:     "require",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+	if !tlsCfg.IsEnabled() {
+		t.Error("Should be enabled")
+	}
+	if tlsCfg.Mode() != "require" {
+		t.Errorf("Mode = %q, want require", tlsCfg.Mode())
+	}
+	if tlsCfg.ServerConfig() == nil {
+		t.Error("ServerConfig should not be nil")
+	}
+	if tlsCfg.ClientConfig() == nil {
+		t.Error("ClientConfig should not be nil")
+	}
+}
+
+// Test LoadFromConfig with "allow" mode
+func TestConfig_LoadFromConfig_Allow(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+
+	cfg := &config.TLSConfig{
+		Mode:     "allow",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+	if tlsCfg.ServerConfig().ClientAuth != tls.RequestClientCert {
+		t.Errorf("ClientAuth = %v, want RequestClientCert", tlsCfg.ServerConfig().ClientAuth)
+	}
+}
+
+// Test LoadFromConfig with "prefer" mode
+func TestConfig_LoadFromConfig_Prefer(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+
+	cfg := &config.TLSConfig{
+		Mode:     "prefer",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+}
+
+// Test LoadFromConfig with "verify-ca" mode and CA file
+func TestConfig_LoadFromConfig_VerifyCA(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	caPath := filepath.Join(tmpDir, "ca.pem")
+
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+	os.WriteFile(caPath, certPEM, 0644)
+
+	cfg := &config.TLSConfig{
+		Mode:     "verify-ca",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+		CAFile:   caPath,
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+	if !tlsCfg.IsMTLS() {
+		t.Error("verify-ca should be mTLS")
+	}
+	if tlsCfg.ServerConfig().ClientAuth != tls.VerifyClientCertIfGiven {
+		t.Errorf("ClientAuth = %v, want VerifyClientCertIfGiven", tlsCfg.ServerConfig().ClientAuth)
+	}
+	if tlsCfg.ServerConfig().ClientCAs == nil {
+		t.Error("ClientCAs should be set")
+	}
+	if tlsCfg.ClientConfig().RootCAs == nil {
+		t.Error("ClientConfig RootCAs should be set")
+	}
+}
+
+// Test LoadFromConfig with "verify-full" mode and CA file
+func TestConfig_LoadFromConfig_VerifyFull(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	caPath := filepath.Join(tmpDir, "ca.pem")
+
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+	os.WriteFile(caPath, certPEM, 0644)
+
+	cfg := &config.TLSConfig{
+		Mode:     "verify-full",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+		CAFile:   caPath,
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+	if !tlsCfg.IsMTLS() {
+		t.Error("verify-full should be mTLS")
+	}
+	if tlsCfg.ServerConfig().ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Errorf("ClientAuth = %v, want RequireAndVerifyClientCert", tlsCfg.ServerConfig().ClientAuth)
+	}
+}
+
+// Test LoadFromConfig with invalid cert path
+func TestConfig_LoadFromConfig_InvalidCertPath(t *testing.T) {
+	cfg := &config.TLSConfig{
+		Mode:     "require",
+		CertFile: "/nonexistent/cert.pem",
+		KeyFile:  "/nonexistent/key.pem",
+	}
+
+	tlsCfg := NewConfig()
+	err := tlsCfg.LoadFromConfig(cfg)
+	if err == nil {
+		t.Error("Should fail with invalid cert path")
+	}
+}
+
+// Test LoadFromConfig with invalid CA file (verify-ca mode)
+func TestConfig_LoadFromConfig_InvalidCAFile_VerifyCA(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+
+	cfg := &config.TLSConfig{
+		Mode:     "verify-ca",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+		CAFile:   "/nonexistent/ca.pem",
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err == nil {
+		t.Error("Should fail with invalid CA file")
+	}
+}
+
+// Test LoadFromConfig with invalid CA PEM content
+func TestConfig_LoadFromConfig_InvalidCAPEMContent(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	caPath := filepath.Join(tmpDir, "ca.pem")
+
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+	os.WriteFile(caPath, []byte("not a valid PEM"), 0644)
+
+	cfg := &config.TLSConfig{
+		Mode:     "verify-ca",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+		CAFile:   caPath,
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err == nil {
+		t.Error("Should fail with invalid CA PEM content")
+	}
+}
+
+// Test LoadFromConfig with disable mode resets previous config
+func TestConfig_LoadFromConfig_DisableResetsConfig(t *testing.T) {
+	certPEM, keyPEM, _ := GenerateSelfSignedCert("localhost", time.Hour)
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+
+	tlsCfg := NewConfig()
+
+	// First enable TLS
+	cfg := &config.TLSConfig{
+		Mode:     "require",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+	}
+	tlsCfg.LoadFromConfig(cfg)
+	if !tlsCfg.IsEnabled() {
+		t.Error("Should be enabled after require mode")
+	}
+
+	// Then disable
+	cfg2 := &config.TLSConfig{Mode: "disable"}
+	tlsCfg.LoadFromConfig(cfg2)
+	if tlsCfg.IsEnabled() {
+		t.Error("Should be disabled after disable mode")
+	}
+	if tlsCfg.ServerConfig() != nil {
+		t.Error("ServerConfig should be nil after disable")
+	}
+	if tlsCfg.ClientConfig() != nil {
+		t.Error("ClientConfig should be nil after disable")
+	}
+}
+
+// Test LoadFromConfig with "require" mode and CA file (for client config RootCAs)
+func TestConfig_LoadFromConfig_RequireWithCA(t *testing.T) {
+	certPEM, keyPEM, err := GenerateSelfSignedCert("localhost", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	keyPath := filepath.Join(tmpDir, "key.pem")
+	caPath := filepath.Join(tmpDir, "ca.pem")
+
+	WriteCertificateToFile(certPEM, keyPEM, certPath, keyPath)
+	os.WriteFile(caPath, certPEM, 0644)
+
+	cfg := &config.TLSConfig{
+		Mode:     "require",
+		CertFile: certPath,
+		KeyFile:  keyPath,
+		CAFile:   caPath,
+	}
+
+	tlsCfg := NewConfig()
+	err = tlsCfg.LoadFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("LoadFromConfig failed: %v", err)
+	}
+	if tlsCfg.ClientConfig().RootCAs == nil {
+		t.Error("ClientConfig RootCAs should be set with CA file")
+	}
+}
+
+// Test GenerateSelfSignedCert with various hosts
+func TestGenerateSelfSignedCert_MultipleHosts(t *testing.T) {
+	hosts := []string{"localhost", "127.0.0.1", "example.com", "192.168.1.1"}
+	for _, host := range hosts {
+		certPEM, keyPEM, err := GenerateSelfSignedCert(host, time.Hour)
+		if err != nil {
+			t.Errorf("GenerateSelfSignedCert(%q) failed: %v", host, err)
+			continue
+		}
+		if len(certPEM) == 0 || len(keyPEM) == 0 {
+			t.Errorf("GenerateSelfSignedCert(%q) returned empty cert or key", host)
+		}
+	}
+}
+
+// Test ParseCertificateInfo with IP address
+func TestParseCertificateInfo_IP(t *testing.T) {
+	certPEM, _, err := GenerateSelfSignedCert("127.0.0.1", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	info, err := ParseCertificateInfo(certPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificateInfo failed: %v", err)
+	}
+	if len(info.IPAddresses) == 0 {
+		t.Error("Should have IP addresses")
+	}
+}
+
+// Test ValidateCertificate with expired cert
+func TestValidateCertificate_Expired(t *testing.T) {
+	// Generate a cert that's already expired
+	certPEM, _, err := GenerateSelfSignedCert("localhost", -1*time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	err = ValidateCertificate(certPEM, false, nil)
+	// May or may not fail depending on validation strictness, but should not panic
+	_ = err
+}
+
+// Test ValidateCertificate with empty DNS names
+func TestValidateCertificate_EmptyDNS(t *testing.T) {
+	certPEM, _, err := GenerateSelfSignedCert("127.0.0.1", time.Hour)
+	if err != nil {
+		t.Fatalf("GenerateSelfSignedCert failed: %v", err)
+	}
+
+	// Validate with DNS names that won't match the IP-only cert
+	err = ValidateCertificate(certPEM, true, []string{"example.com"})
+	if err == nil {
+		t.Error("Should fail for DNS name that doesn't match IP-only cert")
+	}
+}

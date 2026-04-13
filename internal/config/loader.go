@@ -11,6 +11,24 @@ import (
 // envVarPattern matches ${VAR} or ${VAR:-default} syntax.
 var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
+// stripComment removes inline comments that are outside quoted values.
+// A # inside "..." or '...' is preserved as part of the value.
+func stripComment(s string) string {
+	inDoubleQuote := false
+	inSingleQuote := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' && !inSingleQuote {
+			inDoubleQuote = !inDoubleQuote
+		} else if c == '\'' && !inDoubleQuote {
+			inSingleQuote = !inSingleQuote
+		} else if c == '#' && !inDoubleQuote && !inSingleQuote && i > 0 && s[i-1] == ' ' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
 // allowedEnvPrefix lists prefixes of environment variables that can be expanded
 // in config files. This prevents accidental exposure of system secrets.
 var allowedEnvPrefix = "GERYON_"
@@ -70,6 +88,7 @@ type parserState struct {
 	currentUser    *User
 	currentRule    *CacheRule
 	inList         bool
+	parseError     string // first parse error with line number
 }
 
 // parseYAML parses YAML content into Config.
@@ -102,10 +121,9 @@ func parseLine(state *parserState, line string, lineNum int) error {
 	// Calculate indent level (number of leading spaces)
 	indent := len(line) - len(strings.TrimLeft(line, " \t"))
 
-	// Remove inline comments (but preserve # in values)
-	if idx := strings.Index(trimmed, " #"); idx != -1 {
-		trimmed = strings.TrimSpace(trimmed[:idx])
-	}
+	// Remove inline comments (respecting quoted values)
+	trimmed = stripComment(trimmed)
+	trimmed = strings.TrimSpace(trimmed)
 
 	// Determine section from indent
 	sectionDepth := indent / 2
@@ -250,7 +268,11 @@ func parseAdminValue(state *parserState, key, value, parent string) error {
 	case "admin.rest.auth":
 		switch key {
 		case "enabled":
-			state.cfg.Admin.REST.Auth.Enabled = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			state.cfg.Admin.REST.Auth.Enabled = v
 		case "token":
 			state.cfg.Admin.REST.Auth.Token = value
 		}
@@ -262,7 +284,11 @@ func parseAdminValue(state *parserState, key, value, parent string) error {
 	case "admin.grpc.auth":
 		switch key {
 		case "enabled":
-			state.cfg.Admin.GRPC.Auth.Enabled = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			state.cfg.Admin.GRPC.Auth.Enabled = v
 		case "token":
 			state.cfg.Admin.GRPC.Auth.Token = value
 		}
@@ -276,14 +302,22 @@ func parseAdminValue(state *parserState, key, value, parent string) error {
 	case "admin.mcp.auth":
 		switch key {
 		case "enabled":
-			state.cfg.Admin.MCP.Auth.Enabled = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			state.cfg.Admin.MCP.Auth.Enabled = v
 		case "token":
 			state.cfg.Admin.MCP.Auth.Token = value
 		}
 	case "admin.dashboard":
 		switch key {
 		case "enabled":
-			state.cfg.Admin.Dashboard.Enabled = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			state.cfg.Admin.Dashboard.Enabled = v
 		case "listen":
 			state.cfg.Admin.Dashboard.Listen = value
 		case "path":
@@ -292,7 +326,11 @@ func parseAdminValue(state *parserState, key, value, parent string) error {
 	case "admin.dashboard.auth":
 		switch key {
 		case "enabled":
-			state.cfg.Admin.Dashboard.Auth.Enabled = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			state.cfg.Admin.Dashboard.Auth.Enabled = v
 		case "token":
 			state.cfg.Admin.Dashboard.Auth.Token = value
 		}
@@ -306,7 +344,11 @@ func parseClusterValue(state *parserState, key, value, parent string) error {
 	case "cluster":
 		switch key {
 		case "enabled":
-			state.cfg.Cluster.Enabled = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			state.cfg.Cluster.Enabled = v
 		case "node_id":
 			state.cfg.Cluster.NodeID = value
 		}
@@ -514,7 +556,11 @@ func parsePoolValue(state *parserState, key, value, parent string, indent int) e
 	if lastPart == "cache" || strings.HasPrefix(parent, "pools.cache") {
 		switch key {
 		case "enabled":
-			pool.Cache.Enabled = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			pool.Cache.Enabled = v
 		case "max_memory":
 			pool.Cache.MaxMemory = value
 		case "default_ttl":
@@ -527,7 +573,11 @@ func parsePoolValue(state *parserState, key, value, parent string, indent int) e
 	if lastPart == "routing" || strings.HasPrefix(parent, "pools.routing") {
 		switch key {
 		case "read_write_split":
-			pool.Routing.ReadWriteSplit = parseBool(value)
+			v, err := parseBool(value)
+			if err != nil {
+				return err
+			}
+			pool.Routing.ReadWriteSplit = v
 		}
 		return nil
 	}
@@ -548,19 +598,98 @@ func getParentSection(sections []string, depth int) string {
 	return strings.Join(sections[:depth], ".")
 }
 
+// unquote removes surrounding quotes and processes escape sequences.
+// Handles double-quoted (") and single-quoted (') strings per YAML spec.
+// Double-quoted strings process: \n, \t, \r, \\, \", \', \0, \xNN, \uNNNN
+// Single-quoted strings treat backslash literally (except '').
 func unquote(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
+		if s[0] == '"' && s[len(s)-1] == '"' {
+			return unescapeValue(s[1 : len(s)-1])
+		}
+		if s[0] == '\'' && s[len(s)-1] == '\'' {
+			// Single-quoted: only '' -> ' is an escape
+			return strings.ReplaceAll(s[1:len(s)-1], "''", "'")
 		}
 	}
 	return s
 }
 
-func parseBool(s string) bool {
+// unescapeValue processes escape sequences in double-quoted YAML strings.
+func unescapeValue(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				b.WriteByte('\n')
+				i++
+			case 't':
+				b.WriteByte('\t')
+				i++
+			case 'r':
+				b.WriteByte('\r')
+				i++
+			case '\\':
+				b.WriteByte('\\')
+				i++
+			case '"':
+				b.WriteByte('"')
+				i++
+			case '\'':
+				b.WriteByte('\'')
+				i++
+			case '0':
+				b.WriteByte(0)
+				i++
+			case 'x':
+				if i+3 < len(s) {
+					if v, err := strconv.ParseUint(s[i+2:i+4], 16, 8); err == nil {
+						b.WriteByte(byte(v))
+						i += 3
+					} else {
+						b.WriteByte('\\')
+						b.WriteByte('x')
+					}
+				} else {
+					b.WriteByte('\\')
+					b.WriteByte('x')
+				}
+			case 'u':
+				if i+5 < len(s) {
+					if v, err := strconv.ParseUint(s[i+2:i+6], 16, 16); err == nil {
+						b.WriteRune(rune(v))
+						i += 5
+					} else {
+						b.WriteByte('\\')
+						b.WriteByte('u')
+					}
+				} else {
+					b.WriteByte('\\')
+					b.WriteByte('u')
+				}
+			default:
+				b.WriteByte('\\')
+			}
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+func parseBool(s string) (bool, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
-	return s == "true" || s == "yes" || s == "1" || s == "on"
+	switch s {
+	case "true", "yes", "1", "on":
+		return true, nil
+	case "false", "no", "0", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean value: %q", s)
+	}
 }
 
 func parseInt(s string) int {

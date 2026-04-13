@@ -1,6 +1,8 @@
 package swim
 
 import (
+	"encoding/json"
+	"net"
 	"testing"
 	"time"
 
@@ -550,5 +552,601 @@ func TestRandomInt_Extended(t *testing.T) {
 		if n < 0 || n >= 10 {
 			t.Errorf("randomInt(10) = %d, want [0,10)", n)
 		}
+	}
+}
+
+// --- Tests for improved coverage on low-coverage functions ---
+
+func TestProtocol_receiveLoop_ValidMessage(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p1 := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p1.Start(); err != nil {
+		t.Fatalf("Start p1 failed: %v", err)
+	}
+	defer p1.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Get p1's actual address from its listener
+	p1Addr := p1.listener.LocalAddr().String()
+
+	// Create a second protocol to send a sync message to p1
+	log2, _ := logger.New("debug", "text")
+	p2 := NewProtocol("node-2", "127.0.0.1:0", log2)
+	if err := p2.Start(); err != nil {
+		t.Fatalf("Start p2 failed: %v", err)
+	}
+	defer p2.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Send a sync message from p2 to p1
+	msg := Message{
+		Type:    MsgSync,
+		Source:  "node-2",
+		Payload: []byte("127.0.0.1:0"),
+	}
+
+	// Use p2's sendMessage to send to p1's address
+	if err := p2.sendMessage(p1Addr, msg); err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	// Wait for p1 to process the message
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify p1 received the sync and added node-2
+	p1.mu.RLock()
+	_, exists := p1.members["node-2"]
+	p1.mu.RUnlock()
+
+	if !exists {
+		t.Error("node-2 should exist in p1's member list after receiving sync")
+	}
+}
+
+func TestProtocol_receiveLoop_InvalidJSON(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer p.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	addr := p.listener.LocalAddr().String()
+
+	// Create a raw UDP connection and send invalid JSON
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		t.Fatalf("Failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Send invalid JSON - receiveLoop should log and continue, not crash
+	_, err = conn.Write([]byte("not valid json"))
+	if err != nil {
+		t.Fatalf("Failed to write: %v", err)
+	}
+
+	// Wait a bit to ensure receiveLoop processes it
+	time.Sleep(50 * time.Millisecond)
+
+	// Protocol should still be running and functional
+	if p.isStopping() {
+		t.Error("Protocol should still be running after invalid JSON")
+	}
+}
+
+func TestProtocol_probeRandomMember_WithMember(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p1 := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p1.Start(); err != nil {
+		t.Fatalf("Start p1 failed: %v", err)
+	}
+	defer p1.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	_ = p1.listener.LocalAddr().String()
+
+	// Create a second protocol to respond to pings
+	log2, _ := logger.New("debug", "text")
+	p2 := NewProtocol("node-2", "127.0.0.1:0", log2)
+	if err := p2.Start(); err != nil {
+		t.Fatalf("Start p2 failed: %v", err)
+	}
+	defer p2.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	p2Addr := p2.listener.LocalAddr().String()
+
+	// Manually add p2 as a member of p1 with the real address
+	p1.mu.Lock()
+	p1.members["node-2"] = &Member{
+		ID:      "node-2",
+		Address: p2Addr,
+		State:   StateAlive,
+	}
+	p1.mu.Unlock()
+
+	// Probe should send a ping and eventually get an ack
+	p1.probeRandomMember()
+
+	// Wait for the ack to be processed
+	time.Sleep(200 * time.Millisecond)
+
+	// The member should still be alive (got ack)
+	p1.mu.RLock()
+	member := p1.members["node-2"]
+	p1.mu.RUnlock()
+
+	if member == nil {
+		t.Fatal("node-2 should still be in member list")
+	}
+	if member.State == StateDead {
+		t.Error("node-2 should not be dead after successful probe")
+	}
+}
+
+func TestProtocol_probeRandomMember_Timeout(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer p.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Set a very short probe timeout for testing
+	p.probeTimeout = 10 * time.Millisecond
+
+	// Add a member pointing to a non-existent address so it won't respond
+	p.mu.Lock()
+	p.members["node-2"] = &Member{
+		ID:      "node-2",
+		Address: "127.0.0.1:1", // port 1 - unlikely to have a listener
+		State:   StateAlive,
+	}
+	p.mu.Unlock()
+
+	// Probe the member - it won't respond
+	p.probeRandomMember()
+
+	// Wait for probe timeout to trigger suspect
+	time.Sleep(100 * time.Millisecond)
+
+	p.mu.RLock()
+	member := p.members["node-2"]
+	p.mu.RUnlock()
+
+	if member == nil {
+		t.Fatal("node-2 should still be in member list")
+	}
+	if member.State != StateSuspect {
+		t.Errorf("node-2 should be suspect after probe timeout, got state %v", member.State)
+	}
+}
+
+func TestProtocol_handlePingReq_ValidPayload(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p1 := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p1.Start(); err != nil {
+		t.Fatalf("Start p1 failed: %v", err)
+	}
+	defer p1.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	_ = p1.listener.LocalAddr().String()
+
+	// Create a target node
+	log2, _ := logger.New("debug", "text")
+	p2 := NewProtocol("node-2", "127.0.0.1:0", log2)
+	if err := p2.Start(); err != nil {
+		t.Fatalf("Start p2 failed: %v", err)
+	}
+	defer p2.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	p2Addr := p2.listener.LocalAddr().String()
+
+	// Create a PingReq message with valid payload targeting node-2
+	payload, _ := json.Marshal(struct {
+		Target string `json:"target"`
+	}{Target: p2Addr})
+
+	msg := Message{
+		Type:    MsgPingReq,
+		Source:  "node-3",
+		Payload: payload,
+	}
+
+	// handlePingReq should forward a ping to the target
+	p1.handlePingReq(msg)
+
+	// Wait for p2 to receive the forwarded ping
+	time.Sleep(100 * time.Millisecond)
+
+	// node-3 should have been added to p2 via the forwarded ping (or at least p1 sent the message)
+	// The key thing is no panic occurred
+}
+
+func TestProtocol_handlePingReq_InvalidPayload(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	msg := Message{
+		Type:    MsgPingReq,
+		Source:  "node-2",
+		Payload: []byte("not json"),
+	}
+
+	// Should not panic
+	p.handlePingReq(msg)
+}
+
+func TestProtocol_Join_SelfSkip(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:7946", log)
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer p.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Join with self address should skip and return error (no valid seeds)
+	err := p.Join([]string{"127.0.0.1:7946"})
+	if err == nil {
+		t.Error("Join with only self should return error")
+	}
+}
+
+func TestProtocol_Join_AllSeedsFail(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer p.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Join with invalid addresses that will fail DNS resolution
+	err := p.Join([]string{"invalid-host-that-does-not-exist:7946"})
+	if err == nil {
+		t.Error("Join with invalid seed should return error")
+	}
+}
+
+func TestProtocol_Join_ValidSeed(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p1 := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p1.Start(); err != nil {
+		t.Fatalf("Start p1 failed: %v", err)
+	}
+	defer p1.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	p1Addr := p1.listener.LocalAddr().String()
+
+	// Create p2 and have it join p1
+	log2, _ := logger.New("debug", "text")
+	p2 := NewProtocol("node-2", "127.0.0.1:0", log2)
+	if err := p2.Start(); err != nil {
+		t.Fatalf("Start p2 failed: %v", err)
+	}
+	defer p2.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	err := p2.Join([]string{p1Addr})
+	if err != nil {
+		t.Errorf("Join should succeed with valid seed: %v", err)
+	}
+
+	// Wait for processing
+	time.Sleep(100 * time.Millisecond)
+
+	// p1 should have node-2 in its member list
+	p1.mu.RLock()
+	_, exists := p1.members["node-2"]
+	p1.mu.RUnlock()
+
+	if !exists {
+		t.Error("p1 should have node-2 as a member after join")
+	}
+}
+
+func TestProtocol_Start_InvalidAddress(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "not-a-valid-address:xxx", log)
+
+	err := p.Start()
+	if err == nil {
+		p.Stop()
+		t.Error("Start should fail with invalid address")
+	}
+}
+
+func TestProtocol_Members_MixedStates(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	// Add members in various states
+	p.mu.Lock()
+	p.members["node-2"] = &Member{ID: "node-2", State: StateAlive}
+	p.members["node-3"] = &Member{ID: "node-3", State: StateSuspect}
+	p.members["node-4"] = &Member{ID: "node-4", State: StateDead}
+	p.members["node-5"] = &Member{ID: "node-5", State: StateAlive}
+	p.mu.Unlock()
+
+	members := p.Members()
+
+	// Should only return alive members
+	if len(members) != 2 {
+		t.Errorf("Members() returned %d members, want 2", len(members))
+	}
+
+	for _, m := range members {
+		if m.State != StateAlive {
+			t.Errorf("Members() returned member %s in state %v, want Alive", m.ID, m.State)
+		}
+	}
+}
+
+func TestProtocol_receiveLoop_TwoNodeCluster(t *testing.T) {
+	log1, _ := logger.New("debug", "text")
+	p1 := NewProtocol("node-1", "127.0.0.1:0", log1)
+	if err := p1.Start(); err != nil {
+		t.Fatalf("Start p1 failed: %v", err)
+	}
+	defer p1.Stop()
+
+	log2, _ := logger.New("debug", "text")
+	p2 := NewProtocol("node-2", "127.0.0.1:0", log2)
+	if err := p2.Start(); err != nil {
+		t.Fatalf("Start p2 failed: %v", err)
+	}
+	defer p2.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	_ = p1.listener.LocalAddr().String()
+	p2Addr := p2.listener.LocalAddr().String()
+
+	// Send a ping from p1 to p2
+	pingMsg := Message{
+		Type:   MsgPing,
+		Source: "node-1",
+	}
+	if err := p1.sendMessage(p2Addr, pingMsg); err != nil {
+		t.Fatalf("Failed to send ping: %v", err)
+	}
+
+	// Wait for p2 to process the ping and send ack
+	time.Sleep(100 * time.Millisecond)
+
+	// p2 should have node-1 as a member
+	p2.mu.RLock()
+	m, exists := p2.members["node-1"]
+	p2.mu.RUnlock()
+
+	if !exists {
+		t.Error("p2 should have node-1 as a member after receiving ping")
+	} else if m.State != StateAlive {
+		t.Errorf("node-1 state = %v, want Alive", m.State)
+	}
+}
+
+func TestProtocol_sendMessage_NoListener(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+	// Not started, so listener is nil - sendMessage will panic
+
+	msg := Message{Type: MsgPing, Source: "node-1"}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("sendMessage should panic with nil listener")
+		}
+	}()
+	p.sendMessage("127.0.0.1:7946", msg)
+}
+
+func TestProtocol_sendMessage_InvalidAddr(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer p.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	msg := Message{Type: MsgPing, Source: "node-1"}
+	err := p.sendMessage("invalid-addr", msg)
+	if err == nil {
+		t.Error("sendMessage should fail with invalid address")
+	}
+}
+
+func TestProtocol_checkSuspects_NoTimeout(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	// Add a suspect member with recent LastProbe (should NOT time out)
+	p.mu.Lock()
+	p.members["node-2"] = &Member{
+		ID:        "node-2",
+		State:     StateSuspect,
+		LastProbe: time.Now(), // Just probed
+	}
+	p.suspectTimeout = 1 * time.Hour // Very long timeout
+	p.mu.Unlock()
+
+	p.checkSuspects()
+
+	p.mu.RLock()
+	state := p.members["node-2"].State
+	p.mu.RUnlock()
+
+	if state != StateSuspect {
+		t.Errorf("State = %v, want Suspect (should not time out yet)", state)
+	}
+}
+
+func TestProtocol_suspectMember_AlreadySuspect(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	p.mu.Lock()
+	p.members["node-2"] = &Member{ID: "node-2", State: StateSuspect}
+	p.mu.Unlock()
+
+	// Suspect an already-suspect member - should return early, no broadcast
+	p.suspectMember("node-2")
+
+	p.mu.RLock()
+	state := p.members["node-2"].State
+	p.mu.RUnlock()
+
+	if state != StateSuspect {
+		t.Errorf("State = %v, want Suspect (should remain unchanged)", state)
+	}
+}
+
+func TestProtocol_markDead_AlreadyDead(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	evCh := p.Events()
+
+	p.mu.Lock()
+	p.members["node-2"] = &Member{ID: "node-2", State: StateDead, Incarnation: 1}
+	p.mu.Unlock()
+
+	// Mark already-dead member - should still fire event
+	p.markDead("node-2")
+
+	select {
+	case ev := <-evCh:
+		if ev.Type != EventMemberLeave {
+			t.Errorf("Event type = %v, want EventMemberLeave", ev.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Should have received leave event even for already-dead member")
+	}
+}
+
+func TestProtocol_handleDead_HigherIncarnation(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	p.mu.Lock()
+	p.members["node-2"] = &Member{ID: "node-2", State: StateAlive, Incarnation: 5}
+	p.mu.Unlock()
+
+	// Dead message with lower incarnation - should NOT mark dead
+	msg := Message{
+		Type:        MsgDead,
+		Source:      "node-3",
+		Target:      "node-2",
+		Incarnation: 3,
+	}
+	p.handleDead(msg)
+
+	p.mu.RLock()
+	state := p.members["node-2"].State
+	p.mu.RUnlock()
+
+	if state != StateAlive {
+		t.Errorf("State = %v, want Alive (should not mark dead with lower incarnation)", state)
+	}
+}
+
+func TestProtocol_handleDead_NonExistent(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	// Should not panic with non-existent target
+	msg := Message{
+		Type:        MsgDead,
+		Source:      "node-3",
+		Target:      "node-99",
+		Incarnation: 1,
+	}
+	p.handleDead(msg)
+}
+
+func TestProtocol_updateMember_EmptyAddr(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p := NewProtocol("node-1", "127.0.0.1:0", log)
+
+	evCh := p.Events()
+
+	// Update with empty address - should still add the member (empty addr is allowed)
+	p.updateMember("node-2", "", StateAlive, 1)
+
+	if _, exists := p.members["node-2"]; !exists {
+		t.Error("Member should be added even with empty address")
+	}
+
+	// Should receive join event
+	select {
+	case ev := <-evCh:
+		if ev.Type != EventMemberJoin {
+			t.Errorf("Event type = %v, want EventMemberJoin", ev.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Should have received join event")
+	}
+}
+
+func TestProtocol_gossip_WithMembers(t *testing.T) {
+	log, _ := logger.New("debug", "text")
+	p1 := NewProtocol("node-1", "127.0.0.1:0", log)
+	if err := p1.Start(); err != nil {
+		t.Fatalf("Start p1 failed: %v", err)
+	}
+	defer p1.Stop()
+
+	log2, _ := logger.New("debug", "text")
+	p2 := NewProtocol("node-2", "127.0.0.1:0", log2)
+	if err := p2.Start(); err != nil {
+		t.Fatalf("Start p2 failed: %v", err)
+	}
+	defer p2.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	p2Addr := p2.listener.LocalAddr().String()
+
+	// Add p2 as member of p1 with real address
+	p1.mu.Lock()
+	p1.members["node-2"] = &Member{
+		ID:      "node-2",
+		Address: p2Addr,
+		State:   StateAlive,
+	}
+	p1.mu.Unlock()
+
+	// Gossip should send member list to p2
+	p1.gossip()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// p2 should have received the gossip with member info about node-1
+	p2.mu.RLock()
+	_, exists := p2.members["node-1"]
+	p2.mu.RUnlock()
+
+	if !exists {
+		t.Error("p2 should have node-1 in its member list after gossip")
 	}
 }

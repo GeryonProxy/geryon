@@ -277,3 +277,132 @@ func TestTransparentRepreparer_ExecuteOnAny(t *testing.T) {
 		t.Error("executeFn should have been called")
 	}
 }
+
+// --- GetMissingStatements (0% coverage) ---
+
+func TestManager_GetMissingStatements(t *testing.T) {
+	m := NewManager(10)
+	m.MarkPreparedOnConn(1, "s1")
+	m.MarkPreparedOnConn(1, "s3")
+
+	missing := m.GetMissingStatements(1, []string{"s1", "s2", "s3", "s4"})
+	if len(missing) != 2 {
+		t.Fatalf("GetMissingStatements = %v, want 2 missing", missing)
+	}
+	found := make(map[string]bool)
+	for _, name := range missing {
+		found[name] = true
+	}
+	if !found["s2"] || !found["s4"] {
+		t.Errorf("Missing should be [s2, s4], got %v", missing)
+	}
+}
+
+func TestManager_GetMissingStatements_AllPrepared(t *testing.T) {
+	m := NewManager(10)
+	m.MarkPreparedOnConn(1, "s1")
+	m.MarkPreparedOnConn(1, "s2")
+
+	missing := m.GetMissingStatements(1, []string{"s1", "s2"})
+	if len(missing) != 0 {
+		t.Errorf("GetMissingStatements = %v, want empty", missing)
+	}
+}
+
+func TestManager_GetMissingStatements_EmptyList(t *testing.T) {
+	m := NewManager(10)
+	missing := m.GetMissingStatements(1, []string{})
+	if len(missing) != 0 {
+		t.Errorf("GetMissingStatements = %v, want empty for empty input", missing)
+	}
+}
+
+// --- ExecuteOnAny error path ---
+
+func TestTransparentRepreparer_ExecuteOnAny_Error(t *testing.T) {
+	m := NewManager(10)
+	r := NewTransparentRepreparer(m)
+
+	err := r.ExecuteOnAny(1, "nonexistent", func() error {
+		t.Error("executeFn should not be called on error")
+		return nil
+	})
+	if err == nil {
+		t.Error("Should return error for nonexistent statement")
+	}
+}
+
+func TestTransparentRepreparer_ExecuteOnAny_AlreadyPrepared(t *testing.T) {
+	m := NewManager(10)
+	m.GetCache().Put(&Statement{Name: "s1", SQL: "SELECT 1"})
+	r := NewTransparentRepreparer(m)
+
+	// First call prepares
+	r.ExecuteOnAny(1, "s1", func() error { return nil })
+
+	// Second call - already prepared, needed=false path
+	executed := false
+	err := r.ExecuteOnAny(1, "s1", func() error {
+		executed = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ExecuteOnAny (already prepared) failed: %v", err)
+	}
+	if !executed {
+		t.Error("executeFn should still be called even when already prepared")
+	}
+}
+
+// --- evictLRU with already-removed statement ---
+
+func TestCache_EvictLRU_AlreadyRemoved(t *testing.T) {
+	c := NewCache(3)
+
+	c.Put(&Statement{Name: "s1", SQL: "SQL1"})
+	c.Put(&Statement{Name: "s2", SQL: "SQL2"})
+	c.Put(&Statement{Name: "s3", SQL: "SQL3"})
+
+	// Remove s1 via Remove (doesn't remove from lruList)
+	c.Remove("s1")
+
+	// Now evict by adding s4 - this should trigger evictLRU which finds
+	// s1 in lruList but not in statements map
+	c.Put(&Statement{Name: "s4", SQL: "SQL4"})
+
+	// s2 should still be there (s1 was already removed from statements)
+	if c.Get("s2") == nil {
+		t.Error("s2 should still exist")
+	}
+}
+
+func TestCache_GetBySQL_NotFound(t *testing.T) {
+	c := NewCache(10)
+	if c.GetBySQL("nonexistent") != nil {
+		t.Error("GetBySQL should return nil for nonexistent SQL")
+	}
+}
+
+func TestRemapper_GetServerID_NotFound(t *testing.T) {
+	r := NewRemapper()
+	if _, ok := r.GetServerID("nonexistent"); ok {
+		t.Error("Should not find nonexistent client name")
+	}
+}
+
+func TestRemapper_GetClientName_NotFound(t *testing.T) {
+	r := NewRemapper()
+	if _, ok := r.GetClientName(999); ok {
+		t.Error("Should not find nonexistent server ID")
+	}
+}
+
+func TestRemapper_Remove_NotFound(t *testing.T) {
+	r := NewRemapper()
+	r.Remove("nonexistent") // Should not panic
+}
+
+func TestCache_Remove_NotFound(t *testing.T) {
+	c := NewCache(10)
+	c.Remove("nonexistent") // Should not panic
+}

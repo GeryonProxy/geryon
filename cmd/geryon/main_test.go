@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/GeryonProxy/geryon/internal/config"
 )
 
 func TestParseDuration(t *testing.T) {
@@ -388,17 +390,88 @@ func TestGenerateSelfSignedCert_Concurrent(t *testing.T) {
 	}
 }
 
-// TestGeneratePasswordHash_Exists tests that the function exists and is callable
-func TestGeneratePasswordHash_Exists(t *testing.T) {
-	// The generatePasswordHash function reads password from stdin
-	// and outputs a SCRAM-SHA-256 hash. Testing it requires mocking stdin.
-	// This test verifies the function exists and has the correct signature.
-	// Full integration testing would require:
-	// 1. Mocking os.Stdin with a password
-	// 2. Capturing stdout to verify hash format
-	// 3. Verifying the hash starts with "SCRAM-SHA-256$"
+// TestGeneratePasswordHash_NonTerminal tests the error path when stdin is not a terminal
+func TestGeneratePasswordHash_NonTerminal(t *testing.T) {
+	// Redirect stdout to suppress output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
 
-	// Document the function behavior
-	t.Log("generatePasswordHash() reads password from stdin")
-	t.Log("Outputs SCRAM-SHA-256 password hash to stdout")
+	err := generatePasswordHash()
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	_ = buf.String()
+
+	if err == nil {
+		t.Error("Should fail when stdin is not a terminal")
+	}
+	if !strings.Contains(err.Error(), "read password") {
+		t.Errorf("Error should mention reading password: %v", err)
+	}
+}
+
+// TestGenerateSelfSignedCert_WriteCertError tests cert write failure
+func TestGenerateSelfSignedCert_WriteCertError(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	defer os.Chdir(originalDir)
+	os.Chdir(tmpDir)
+
+	// Create a directory where the cert file should be written
+	os.MkdirAll("geryon.crt", 0755)
+
+	err := generateSelfSignedCert()
+	if err == nil {
+		t.Error("Should fail when cert path is a directory")
+	}
+	if !strings.Contains(err.Error(), "write certificate") {
+		t.Errorf("Error should mention writing certificate: %v", err)
+	}
+}
+
+// TestGenerateSelfSignedCert_WriteKeyError tests key write failure
+func TestGenerateSelfSignedCert_WriteKeyError(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	defer os.Chdir(originalDir)
+	os.Chdir(tmpDir)
+
+	// Create a directory where the key file should be written
+	os.MkdirAll("geryon.key", 0755)
+
+	err := generateSelfSignedCert()
+	if err == nil {
+		t.Error("Should fail when key path is a directory")
+	}
+	if !strings.Contains(err.Error(), "write private key") {
+		t.Errorf("Error should mention writing private key: %v", err)
+	}
+}
+
+// TestCfgHolder_StoreAndLoad tests atomic config holder operations
+func TestCfgHolder_StoreAndLoad(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Global.LogLevel = "debug"
+
+	cfgHolder.Store(cfg)
+	loaded := cfgHolder.Load()
+
+	if loaded != cfg {
+		t.Error("cfgHolder should round-trip the same config pointer")
+	}
+	if loaded.Global.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want debug", loaded.Global.LogLevel)
+	}
+}
+
+// TestCfgHolder_Nil tests loading from uninitialized cfgHolder
+func TestCfgHolder_Nil(t *testing.T) {
+	// cfgHolder might already have a value from other tests, but Load should never panic
+	loaded := cfgHolder.Load()
+	// It may be nil or non-nil, just verify no panic
+	_ = loaded
 }

@@ -1,283 +1,262 @@
 # Project Roadmap
 
-> Based on comprehensive codebase analysis performed on 2026-04-11
+> Based on comprehensive codebase audit performed on 2026-04-11
 > This roadmap prioritizes work needed to bring the project to production quality.
+> **Key change from previous roadmap:** Priorities reflect actual code state — dead code integration and critical bug fixes come before feature completion.
 
 ## Current State Assessment
 
-**Status:** Geryon is approximately 98% feature-complete with a functional core (PostgreSQL, MySQL, MSSQL protocols; connection pooling; management APIs; clustering framework). The codebase demonstrates high quality with ~55% test coverage and zero external dependencies beyond golang.org/x libraries.
+**Status:** Geryon is approximately 70% complete. The core proxy relay works for basic bidirectional forwarding, but critical bugs exist in metrics, auth, and connection pooling. Many advertised features (query cache, prepared statement proxy, read/write splitting, deadlock detection) are implemented as standalone components but never wired into the actual relay path.
 
-**Key Blockers for Production Readiness:**
-1. YAML config parser uses basic string parsing (not full YAML spec)
-2. MSSQL NTLM passthrough incomplete (affects Windows Authentication users)
-3. Some TODO items in critical paths (pool timeouts, transaction tracking)
+**Critical Blockers for Production Readiness:**
+1. Server connections not reused from pool — defeats purpose of connection pooler
+2. Histogram Sum returns garbage — monitoring is broken
+3. Certificate fingerprint uses raw bytes, not hash — auth bypass possible
+4. SQL injection in SmartResetter temp table cleanup
+5. Mock frontends (~3000 lines) are dead code — misleading architecture
 
 **What's Working Well:**
-- Full PostgreSQL and MySQL protocol implementations
-- Three pooling modes (session, transaction, statement) fully functional
-- REST/gRPC/MCP APIs complete with authentication
-- Web dashboard with real-time SSE streaming
-- Raft consensus and SWIM gossip clustering foundation
-- Comprehensive test coverage with race detection
+- Bidirectional relay in `internal/proxy/listener.go` for basic proxy forwarding
+- SCRAM-SHA-256 authentication with hand-rolled PBKDF2
+- Connection state reset (DISCARD ALL, COM_RESET_CONNECTION, sp_reset_connection)
+- REST API, MCP server, and basic dashboard endpoints
+- Atomic config access for hot-reload
+- SQL tokenizer for query classification
 
 ---
 
-## Phase 1: Critical Fixes (Week 1-2)
+## Phase 1: Critical Bug Fixes (Week 1-2)
 
-### Must-fix items blocking basic functionality
+### P0 — Must fix before ANY production deployment
 
-- [ ] **Fix YAML Parser** — `internal/config/loader.go`
-  - Current implementation uses basic string splitting
-  - Replace with proper YAML parsing or complete custom parser
-  - Affected: Config loading for complex YAML structures
+- [ ] **Fix Histogram Sum Calculation** — `internal/metrics/metrics.go:195`
+  - Current: `math.Float64frombits(h.sumBits.Load())` — IEEE 754 bits are not additive
+  - Fix: Store actual float64 sum in a separate atomic field or use mutex for sum
+  - Effort: 2 hours
+  - Impact: All histogram metrics currently return garbage Sum() values
+
+- [ ] **Fix Certificate Fingerprint** — `internal/auth/cert.go:375-382`
+  - Current: `fmt.Sprintf("%x", cert.Raw[:32])` — first 32 raw bytes, not a hash
+  - Fix: Use `crypto/sha256.Sum256(cert.Raw)` for proper fingerprint
+  - Effort: 1 hour
+  - Impact: Potential auth bypass — two different certs could share first 32 bytes
+
+- [ ] **Fix SQL Injection in SmartResetter** — `internal/pool/reset.go:281`
+  - Current: `fmt.Sprintf("DROP TABLE IF EXISTS %s", table)` — unsanitized interpolation
+  - Fix: Validate table names against `[a-zA-Z_][a-zA-Z0-9_]*` pattern or use identifier quoting
+  - Effort: 2 hours
+  - Impact: SQL injection if attacker can influence table names
+
+- [ ] **Fix Server Connection Reuse** — `internal/pool/pool.go` + strategy files
+  - Current: `Acquire()` may create new TCP connections instead of reusing from pool
+  - Fix: Wire up `servers` slice reuse — check for idle connections before creating new ones
+  - Effort: 16 hours
+  - Impact: Without this, Geryon is NOT a connection pooler — every client creates new backend connection
+
+- [ ] **Delete or Integrate Mock Frontends** — `internal/protocols/`
+  - Current: ~3000 lines of unused protocol frontends
+  - Option A: Delete entirely (recommended if relay in listener.go is the permanent approach)
+  - Option B: Integrate as the actual protocol handlers (larger refactor)
+  - Effort: 8 hours (delete) or 40 hours (integrate)
+  - Impact: Maintenance burden, misleading architecture documentation
+
+**Phase 1 Total:** 29 hours (delete approach) or 61 hours (integrate approach)
+
+---
+
+## Phase 2: Wire Up Dead Features (Week 3-5)
+
+### P1 — Advertised features that don't actually work
+
+- [ ] **Wire Transaction Manager into Relay** — `internal/pool/transaction.go` + `internal/proxy/listener.go`
+  - Current: TransactionManager exists, `checkTimeouts()` sets status but doesn't abort backend
+  - Fix: Register transactions in relay, send ROLLBACK to backend on timeout
   - Effort: 16 hours
 
-- [ ] **Address Critical TODOs** — Various files
-  - `internal/pool/pool.go:394` — Configurable wait queue timeout (currently hardcoded 5s)
-  - `internal/pool/pool.go` — Backend authentication implementation
-  - `internal/api/rest/server.go` — Pool configuration update endpoint
-  - `internal/cluster/coordinator.go` — Leader tracking from Raft
+- [ ] **Wire Query Cache into Relay** — `internal/cache/` + `internal/proxy/listener.go`
+  - Current: Cache exists with LRU+TTL but never instantiated in relay path
+  - Fix: Check cache before forwarding SELECT queries, store results on response
+  - Effort: 16 hours
+
+- [ ] **Wire Prepared Statement Proxy** — `internal/stmt/cache.go` + `internal/proxy/listener.go`
+  - Current: TransparentRepreparer exists but never instantiated
+  - Fix: Intercept PREPARE/EXECUTE/DEALLOCATE, use cache for re-preparation
+  - Effort: 16 hours
+
+- [ ] **Wire Read/Write Splitting** — `internal/pool/routing.go` + `internal/proxy/listener.go`
+  - Current: Router with round-robin replica selection exists but not used
+  - Fix: Classify queries with tokenizer, route to primary/replica accordingly
   - Effort: 12 hours
 
-- [ ] **Complete Transaction Manager** — `internal/pool/`
-  - Implement `GetActiveTransactions()` method (referenced in REST API)
-  - Complete TODO in `internal/pool/session.go` for message handling
-  - Effort: 8 hours
+- [ ] **Fix Dashboard Connection Endpoint** — `internal/api/dashboard/server_test.go:197`
+  - Current: `TestDashboard_ConnectionsEndpoint` fails with connection refused
+  - Fix: Race condition in test or server startup — add sync/wait for server ready
+  - Effort: 4 hours
 
-**Phase 1 Total:** 36 hours
+- [ ] **Delete DeadlockDetector** — `internal/pool/transaction.go:352-461`
+  - Current: Exists but never instantiated
+  - Fix: Delete entirely (can re-implement later if needed)
+  - Effort: 1 hour
+
+- [ ] **Delete ConnectionTracker** — `internal/pool/tracker.go`
+  - Current: Exists but never wired into main code paths
+  - Fix: Delete entirely
+  - Effort: 1 hour
+
+**Phase 2 Total:** 66 hours
 
 ---
 
-## Phase 2: Core Completion (Week 3-6)
+## Phase 3: Security & Hardening (Week 6-7)
 
-### Complete missing core features from specification
+### P1 — Security improvements
+
+- [ ] **Add Auth Rate Limiting** — `internal/auth/auth.go`
+  - Current: No rate limiting on SCRAM-SHA-256 handshakes
+  - Fix: Add per-IP or per-connection rate limiter using `golang.org/x/time/rate`
+  - Effort: 8 hours
+
+- [ ] **Handle Write Errors in Relay** — `internal/proxy/listener.go`
+  - Current: `io.Copy` write errors ignored in relay goroutines
+  - Fix: Propagate errors, close both directions on write failure
+  - Effort: 8 hours
+
+- [ ] **Fix Running Average Overflow** — `internal/logger/querylog.go:376`
+  - Current: Running average can overflow with enough samples
+  - Fix: Use Welford's online algorithm or cap samples
+  - Effort: 2 hours
+
+- [ ] **Fix `min()` Shadowing Builtin** — `internal/logger/querylog.go:481`
+  - Current: `min()` shadows Go 1.21 builtin
+  - Fix: Rename to `minInt()` or remove (use builtin)
+  - Effort: 1 hour
+
+- [ ] **Use Full SHA256 for Prepared Statement Hash** — `internal/pool/prepared.go:332`
+  - Current: `hex.EncodeToString(h[:8])` — 64 bits, collision risk at scale
+  - Fix: Use full 32-byte hash: `hex.EncodeToString(h[:])`
+  - Effort: 1 hour
+
+- [ ] **Replace Fragile YAML Parser** — `internal/config/loader.go`
+  - Current: Line-by-line, indent-based custom parser
+  - Fix: Either use `gopkg.in/yaml.v3` (adds 1 dependency) or significantly harden custom parser
+  - Effort: 16 hours
+
+- [ ] **Make Timeouts Configurable** — `internal/pool/transaction.go`
+  - Current: 30-min txn timeout, 5-min idle, 30-sec check interval hardcoded
+  - Fix: Accept as constructor parameters, expose via config
+  - Effort: 4 hours
+
+**Phase 3 Total:** 40 hours
+
+---
+
+## Phase 4: Protocol Completeness (Week 8-10)
+
+### P2 — Complete missing protocol features
 
 - [ ] **MSSQL NTLM Passthrough** — `internal/protocols/mssql/`
-  - Spec: T065, Task T065
   - Windows Authentication support for enterprise users
-  - Test exists but implementation incomplete
   - Effort: 40 hours (complex protocol)
 
 - [ ] **MSSQL Prepared Statements** — `internal/protocols/mssql/`
-  - Spec: T069, Task T069
   - Implement sp_prepare/sp_execute/sp_unprepare
-  - Test exists but implementation incomplete
   - Effort: 24 hours
 
-- [ ] **Complete Pool Features** — `internal/pool/`
-  - Weighted replica selection (TODO in pool.go)
-  - Backend authentication (TODO in pool.go)
-  - Full read/write splitting with fallback
-  - Effort: 16 hours
+- [ ] **PostgreSQL Extended Query Protocol** — `internal/protocol/postgresql/`
+  - Verify Parse/Bind/Execute fully works through relay
+  - Effort: 8 hours
 
-- [ ] **Dashboard Connection Tracking** — `internal/api/dashboard/`
-  - TODO in server.go
-  - Live connection table with filtering
-  - Effort: 12 hours
+- [ ] **Health Check Protocol Queries** — `internal/pool/health.go`
+  - Current: TCP-only health checks (dial and close)
+  - Fix: Add protocol-specific health queries (SELECT 1 for PG/MySQL, SELECT 1 for MSSQL)
+  - Effort: 8 hours
 
-**Phase 2 Total:** 92 hours
+**Phase 4 Total:** 80 hours
 
 ---
 
-## Phase 3: Hardening (Week 7-8)
+## Phase 5: Testing & Validation (Week 11-13)
 
-### Security, error handling, edge cases
+### P1 — Test coverage for critical paths
 
-- [ ] **Input Validation Hardening**
-  - Add stricter validation for all user inputs
-  - Path traversal protection for file operations
-  - SQL injection audit (tokenzier boundaries)
+- [ ] **Integration Tests for Relay** — `internal/proxy/listener.go`
+  - Test bidirectional relay with actual database backends
+  - Test connection reuse behavior
+  - Effort: 24 hours
+
+- [ ] **Concurrency Tests for Pool** — `internal/pool/`
+  - Test Acquire/Release under concurrent load
+  - Test pool exhaustion and wait queue behavior
   - Effort: 16 hours
 
-- [ ] **Error Handling Improvements**
-  - Wrap all errors with proper context
-  - Add custom error types for better handling
-  - Improve error messages for users
-  - Effort: 12 hours
-
-- [ ] **Graceful Degradation**
-  - Circuit breaker pattern for backend failures
-  - Retry logic with exponential backoff
-  - Better handling of partial cluster failures
+- [ ] **Raft Edge Case Tests** — `internal/raft/`
+  - Test leader election, network partitions, log replication
   - Effort: 16 hours
 
-- [ ] **Connection Pool Hardening**
-  - Handle edge cases in pool exhaustion
-  - Better cleanup of orphaned connections
-  - Stress testing under extreme load
-  - Effort: 12 hours
-
-**Phase 3 Total:** 56 hours
-
----
-
-## Phase 4: Testing (Week 9-12)
-
-### Comprehensive test coverage
-
-- [ ] **Increase Unit Test Coverage**
-  - Target: 75% overall coverage (from ~55%)
-  - Focus on `internal/raft/` and `internal/swim/` (currently ~50-60%)
-  - Add missing tests for error paths
-  - Effort: 40 hours
-
-- [ ] **Integration Test Expansion**
-  - Complete 3-node cluster integration tests
-  - Add more multi-protocol test scenarios
-  - Test all three pooling modes with real databases
-  - Effort: 32 hours
-
-- [ ] **Fuzz Testing**
-  - Add fuzz tests for protocol parsers
-  - Fuzz test SQL tokenizer
-  - Fuzz test config parsing
+- [ ] **Fuzz Testing for Protocol Parsers** — `internal/protocol/`
+  - Fuzz PostgreSQL, MySQL, MSSQL message parsers
   - Effort: 16 hours
 
-- [ ] **Load Testing**
-  - Create automated load test suite
+- [ ] **Load Testing** — `benchmarks/`
   - Test 10K+ concurrent connections
   - Memory leak validation under sustained load
-  - Benchmark performance targets
   - Effort: 24 hours
 
-- [ ] **Chaos Testing**
-  - Expand existing chaos_test.go
-  - Network partition simulations
-  - Backend failure injection
-  - Graceful degradation validation
+- [ ] **Fix Integration Test Timeout** — `integration-tests/`
+  - Current: Tests timeout at 512s
+  - Fix: Either mock database backends or provide test containers
   - Effort: 16 hours
 
-**Phase 4 Total:** 128 hours
+**Phase 5 Total:** 112 hours
 
 ---
 
-## Phase 5: Performance & Optimization (Week 13-14)
+## Phase 6: Clustering Production Readiness (Week 14-15)
 
-### Performance tuning and optimization
+### P2 — Make clustering actually work
 
-- [ ] **Memory Optimization**
-  - Implement buffer pooling with `sync.Pool`
-  - Reduce allocations in hot paths
-  - Profile and optimize memory usage per connection
-  - Target: < 8KB per idle connection
+- [ ] **Consolidate Raft Implementations** — `internal/raft/`
+  - Current: Simplified Raft is active, full Raft was planned but never completed
+  - Fix: Choose one implementation and make it production-ready
   - Effort: 24 hours
 
-- [ ] **Query Latency Optimization**
-  - Optimize SQL tokenizer (cache compiled regex)
-  - Reduce lock contention in metrics collection
-  - Profile query proxy overhead
-  - Target: < 100μs per query
+- [ ] **Fix hasMajority Bug** — `internal/raft/`
+  - Current: May incorrectly report quorum
+  - Fix: Proper majority calculation: `(n/2) + 1`
+  - Effort: 2 hours
+
+- [ ] **SWIM Production Hardening** — `internal/swim/`
+  - Current: Basic implementation, not production-ready
+  - Fix: Add failure detection tuning, network partition handling
   - Effort: 16 hours
 
-- [ ] **Cache Optimization**
-  - Optimize cache key generation
-  - Improve write invalidation performance
-  - Add cache warming for hot queries
+- [ ] **Cluster Integration Tests** — `internal/cluster/`
+  - 3-node cluster test with leader election
+  - Network partition simulation
+  - Effort: 16 hours
+
+**Phase 6 Total:** 58 hours
+
+---
+
+## Phase 7: Documentation & Release (Week 16-17)
+
+- [ ] **Operations Guide** — Production deployment, monitoring, troubleshooting
+  - Effort: 16 hours
+
+- [ ] **API Documentation** — OpenAPI/Swagger spec for REST API
   - Effort: 12 hours
 
-- [ ] **Connection Pool Tuning**
-  - Optimize wait queue signaling
-  - Reduce connection acquisition latency
-  - Target: < 1ms connection setup
+- [ ] **Architecture Documentation** — Sequence diagrams, protocol flow docs
+  - Effort: 12 hours
+
+- [ ] **CI/CD Improvements** — Security scanning (gosec), performance regression tests
   - Effort: 8 hours
 
-**Phase 5 Total:** 60 hours
-
----
-
-## Phase 6: Documentation & DX (Week 15-16)
-
-### Documentation and developer experience
-
-- [ ] **API Documentation**
-  - Generate OpenAPI/Swagger spec for REST API
-  - Document gRPC service definitions
-  - Add API usage examples
-  - Effort: 16 hours
-
-- [ ] **Architecture Documentation**
-  - Document internal architecture for contributors
-  - Add sequence diagrams for key flows
-  - Document protocol implementations
-  - Effort: 20 hours
-
-- [ ] **Operations Guide**
-  - Create production deployment guide
-  - Document monitoring and alerting
-  - Add troubleshooting guide
-  - Create runbook for common issues
-  - Effort: 16 hours
-
-- [ ] **Developer Documentation**
-  - CONTRIBUTING.md with development workflow
-  - Code style guide
-  - Testing guidelines
-  - Architecture Decision Records (ADRs)
-  - Effort: 12 hours
-
-**Phase 6 Total:** 64 hours
-
----
-
-## Phase 7: Release Preparation (Week 17-18)
-
-### Final production preparation
-
-- [ ] **CI/CD Pipeline Completion**
-  - Add integration test stage to CI
-  - Add performance regression tests
-  - Add security scanning (gosec)
-  - Add dependency vulnerability scanning
-  - Effort: 12 hours
-
-- [ ] **Docker Production Optimization**
-  - Optimize Docker image size further
-  - Add health checks to Dockerfile
-  - Create docker-compose production template
-  - Add Kubernetes deployment examples
-  - Effort: 12 hours
-
-- [ ] **Release Automation**
-  - Complete .goreleaser.yml configuration
-  - Automate changelog generation
-  - Add release signing
-  - Create release checklist
+- [ ] **Final Security Audit** — gosec, manual review of all fixed vulnerabilities
   - Effort: 8 hours
 
-- [ ] **Monitoring & Observability**
-  - Add OpenTelemetry tracing support
-  - Create Grafana dashboard templates
-  - Add alertmanager rules
-  - Document metrics and their meaning
-  - Effort: 16 hours
-
-- [ ] **Final Security Audit**
-  - Run gosec security scanner
-  - Review all TODOs for security implications
-  - Penetration testing basics
-  - Certificate validation testing
-  - Effort: 12 hours
-
-**Phase 7 Total:** 60 hours
-
----
-
-## Beyond v1.0: Future Enhancements
-
-### Features and improvements for future versions
-
-- [ ] **Kubernetes Operator** — Helm chart + CRD for cloud-native deployments
-- [ ] **Query Plan Cache** — Cache query plans for repeated queries
-- [ ] **Adaptive Pool Sizing** — Auto-scale pool sizes based on load
-- [ ] **Connection Prefetching** — Predictive connection warming
-- [ ] **Plugin System** — Custom middleware for query transformation
-- [ ] **Query Rewriting** — Automatic query optimization
-- [ ] **Cross-Database Federation** — Query across different database types
-- [ ] **PostgreSQL COPY Protocol** — Full COPY IN/OUT support
-- [ ] **PostgreSQL LISTEN/NOTIFY** — Event forwarding
-- [ ] **MSSQL Bulk Copy** — BCP protocol support
-- [ ] **WebSocket Support** — Real-time dashboard updates
-- [ ] **REST API v2** — GraphQL or improved REST design
+**Phase 7 Total:** 56 hours
 
 ---
 
@@ -285,15 +264,15 @@
 
 | Phase | Estimated Hours | Priority | Dependencies |
 |-------|-----------------|----------|--------------|
-| Phase 1: Critical Fixes | 36h | CRITICAL | None |
-| Phase 2: Core Completion | 92h | HIGH | Phase 1 |
-| Phase 3: Hardening | 56h | HIGH | Phase 1 |
-| Phase 4: Testing | 128h | HIGH | Phase 2, 3 |
-| Phase 5: Performance | 60h | MEDIUM | Phase 4 |
-| Phase 6: Documentation | 64h | MEDIUM | Phase 4 |
-| Phase 7: Release Prep | 60h | HIGH | Phase 4, 5, 6 |
-| **Total** | **496 hours** | | |
-| **~12 weeks** (1 FTE) | | | |
+| Phase 1: Critical Bug Fixes | 29-61h | CRITICAL | None |
+| Phase 2: Wire Up Dead Features | 66h | CRITICAL | Phase 1 |
+| Phase 3: Security & Hardening | 40h | HIGH | Phase 1 |
+| Phase 4: Protocol Completeness | 80h | MEDIUM | Phase 2 |
+| Phase 5: Testing & Validation | 112h | HIGH | Phase 2 |
+| Phase 6: Clustering | 58h | MEDIUM | Phase 1 |
+| Phase 7: Documentation & Release | 56h | MEDIUM | Phase 5 |
+| **Total** | **441-473 hours** | | |
+| **~11-12 weeks** (1 FTE) | | | |
 
 ---
 
@@ -301,25 +280,25 @@
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
-| NTLM implementation complexity | High | Medium | Allocate extra time; consider postponing to v1.1 |
-| Test coverage gaps reveal bugs | Medium | High | Prioritize Phase 4; add fuzz testing |
-| Performance targets not met | Medium | Medium | Early benchmarking in Phase 5; set realistic targets |
-| Breaking changes needed for YAML parser | Medium | Medium | Backward compatibility layer; deprecation warnings |
-| Clustering issues in production | Medium | High | Thorough testing in Phase 4; beta program |
-| Scope creep | High | Low | Strict adherence to roadmap; defer non-critical features |
+| Connection reuse fix reveals deeper architectural issues | High | High | Prototype fix first before full implementation |
+| Mock frontend integration is too complex to justify | Medium | Medium | Delete approach (8h) is the safe fallback |
+| Raft consolidation requires complete rewrite | Medium | High | Use simplified Raft, document limitations |
+| Protocol tests require real databases that are hard to CI | High | Medium | Use Docker containers in CI (already in docker-compose) |
+| Scope creep from "while we're here" refactors | High | Low | Strict adherence to roadmap phases |
 
 ---
 
 ## Milestones
 
-| Milestone | Target Date | Deliverables | Success Criteria |
-|-----------|-------------|--------------|------------------|
-| Alpha 1 | Week 2 | Critical fixes complete | All tests pass, no TODOs in critical paths |
-| Alpha 2 | Week 6 | Core features complete | NTLM working, all spec features implemented |
-| Beta 1 | Week 12 | Testing complete | 75% coverage, load tests pass |
-| Beta 2 | Week 14 | Performance optimized | Targets met, benchmarks published |
-| RC 1 | Week 16 | Documentation complete | Full docs, ops guide ready |
-| v1.0.0 | Week 18 | Production release | Security audit pass, signed release |
+| Milestone | Target | Deliverables | Success Criteria |
+|-----------|--------|--------------|------------------|
+| M1: Critical Fixes | Week 2 | All P0 bugs fixed | `go test -race ./...` passes, no critical bugs |
+| M2: Features Wired | Week 5 | Cache, txns, routing functional | End-to-end test of wired features |
+| M3: Hardened | Week 7 | Security fixes complete | gosec clean, no injection vectors |
+| M4: Protocol Complete | Week 10 | All protocol features working | Integration tests pass |
+| M5: Tested | Week 13 | 75%+ coverage, load tests pass | All tests green, benchmarks published |
+| M6: Cluster Ready | Week 15 | Raft+SWIM production-ready | 3-node cluster test passes |
+| M7: v1.0.0 | Week 17 | Production release | Security audit pass, docs complete |
 
 ---
 
@@ -327,11 +306,11 @@
 
 For fastest time to production:
 
-- **1 Senior Go Engineer** — Phases 1, 2, 3, 5 (core implementation)
-- **1 QA/Testing Engineer** — Phase 4 (testing infrastructure)
-- **1 Technical Writer/DevOps** — Phase 6, 7 (docs, CI/CD, release)
+- **1 Senior Go Engineer** — Phases 1, 2, 3, 4 (core implementation)
+- **1 QA Engineer** — Phase 5 (testing infrastructure)
+- **1 Technical Writer/DevOps** — Phase 7 (docs, CI/CD, release)
 
-Total: 3 FTEs for 6 weeks, or 1 FTE for 18 weeks
+Total: 3 FTEs for 6 weeks, or 1 FTE for 17 weeks
 
 ---
 
