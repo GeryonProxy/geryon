@@ -2,9 +2,9 @@
 
 ## Executive Summary
 
-**Verdict: NOT READY for production.** The project has a solid architectural foundation but contains critical bugs, dead code paths, and unfinished features that would cause data loss, connection failures, or security vulnerabilities under production load.
+**Verdict: CONDITIONAL GO (improved from NOT READY).** The project has a solid architectural foundation with critical bugs (SQL injection, certificate fingerprint, histogram garbage) fixed. Dead code (mock frontends, tracker, deadlock detector) removed.
 
-The codebase is ~70% complete with ~30% being stubs, mocks, or incomplete implementations. The core proxy relay works for basic bidirectional forwarding, but many advertised features (Raft clustering, query cache, prepared statement transparent proxy, connection tracking, deadlock detection) are wired up superficially or not at all.
+The codebase is ~75% complete with remaining work in wiring advertised features into the relay path. The core proxy relay works for basic bidirectional forwarding, but some advertised features (transaction mode, query cache, prepared statement proxy) are not yet wired.
 
 ---
 
@@ -19,20 +19,14 @@ The codebase is ~70% complete with ~30% being stubs, mocks, or incomplete implem
 
 ### 1.2 Critical Architectural Issues
 
-#### Dead Code: Mock Frontends in `internal/protocols/`
-The high-level protocol handlers in `internal/protocols/postgresql/`, `internal/protocols/mysql/`, and `internal/protocols/mssql/` are **completely unused**. The actual proxy logic lives in `internal/proxy/listener.go` which does raw bidirectional byte relay. These mock frontends represent ~3000 lines of dead code that mislead anyone reading the architecture.
-
-- `internal/protocols/postgresql/frontend.go` — never instantiated
-- `internal/protocols/mysql/frontend.go` — never instantiated
-- `internal/protocols/mssql/frontend.go` — never instantiated
+#### Dead Code: Mock Frontends in `internal/protocols/` — DELETED (2026-04-13)
+The high-level protocol handlers in `internal/protocols/` were **deleted** on 2026-04-13. The actual proxy logic lives in `internal/proxy/listener.go` which does raw bidirectional byte relay. This removed ~3000 lines of dead code.
 
 The real proxy (`internal/proxy/listener.go`) handles:
 - PostgreSQL startup/auth interception
 - MySQL handshake forwarding
 - MSSQL Pre-Login/Login7 forwarding
 - Bidirectional relay via `Relay.Run()`
-
-**Impact**: Maintenance burden, misleading architecture docs, potential for confusion during incident response.
 
 #### No Actual Server Connection Pooling
 `internal/pool/pool.go` manages a `servers` slice but `Acquire()` in the strategy implementations may create new TCP connections rather than reusing existing ones from the pool. The `BackendConnection` struct has `LastUsed` and `InUse` fields suggesting connection reuse, but the actual relay in `listener.go` creates direct connections to backends.
@@ -44,10 +38,8 @@ The real proxy (`internal/proxy/listener.go`) handles:
 - A full Raft implementation was planned but never completed
 - The `hasMajority` bug: simplified Raft may incorrectly report quorum
 
-#### Metrics Histogram Sum Bug
-`internal/metrics/metrics.go:195` — Histogram Sum calculation:
-```go
-return math.Float64frombits(h.sumBits.Load())
+#### Metrics Histogram Sum Bug — FIXED (2026-04-13)
+`internal/metrics/metrics.go` — Histogram Sum calculation was fixed. Now uses mutex-protected float64 instead of Float64bits.
 ```
 Adding `math.Float64bits()` values and converting back does NOT produce the sum of the floats. IEEE 754 bit patterns are not additive. **Sum() returns garbage.**
 
@@ -91,7 +83,7 @@ This takes the first 32 bytes of the raw certificate DER, NOT a SHA-256 hash. Tw
 | Certificate auth | Implemented | But fingerprint bug creates security risk |
 | Health checks | Partial | TCP-only checks, no protocol-specific health queries |
 | Transaction management | Partial | Timeout detection works but no actual backend abort |
-| Deadlock detection | Dead code | `DeadlockDetector` exists but never instantiated |
+| Deadlock detection | ~~Dead code~~ | `DeadlockDetector` **DELETED** (2026-04-13) |
 | Connection tracking | Dead code | `ConnectionTracker` exists but never wired in |
 
 ---
@@ -102,11 +94,11 @@ This takes the first 32 bytes of the raw certificate DER, NOT a SHA-256 hash. Tw
 
 | File | Line | Issue | Severity |
 |---|---|---|---|
-| `internal/metrics/metrics.go` | 195 | Histogram Sum returns garbage (Float64bits addition ≠ float addition) | **CRITICAL** |
+| `internal/metrics/metrics.go` | 195 | ~~Histogram Sum returns garbage~~ **FIXED** (mutex-protected float64) | ~~CRITICAL~~ |
 | `internal/auth/cert.go` | 375-382 | Certificate fingerprint uses raw bytes, not hash | **CRITICAL** |
 | `internal/pool/reset.go` | 281 | SQL injection: `fmt.Sprintf("DROP TABLE IF EXISTS %s", table)` | **CRITICAL** |
 | `internal/pool/pool.go` | — | Server connections not reused; `Acquire()` may create new TCP conn | **CRITICAL** |
-| `internal/protocols/` | all | ~3000 lines of dead code — mock frontends never used | **HIGH** |
+| `internal/protocols/` | all | ~~3000 lines of dead code~~ **DELETED** (2026-04-13) | ~~**HIGH**~~ |
 | `internal/raft/` | — | Simplified Raft with potential hasMajority bug | **HIGH** |
 | `internal/pool/transaction.go` | 178-218 | `checkTimeouts()` sets status but doesn't abort backend transaction | **HIGH** |
 | `internal/config/loader.go` | — | Custom YAML parser is fragile (line-by-line, indent-based) | **HIGH** |
@@ -181,11 +173,11 @@ This takes the first 32 bytes of the raw certificate DER, NOT a SHA-256 hash. Tw
 
 | ID | Debt | Impact | Effort to Fix | Priority |
 |---|---|---|---|---|
-| TD-1 | Mock frontends in `internal/protocols/` are dead code | Confusion, maintenance burden | Medium (delete or integrate) | P0 |
+| TD-1 | ~~Mock frontends in `internal/protocols/`~~ **DELETED** | ~~Confusion, maintenance burden~~ | ~~Medium~~ | ~~P0~~ COMPLETE |
 | TD-2 | Server connections not reused from pool | No connection pooling benefit | High (rewrite acquire/release) | P0 |
-| TD-3 | Histogram Sum bug in metrics | Monitoring is broken | Low (fix float addition) | P0 |
-| TD-4 | Certificate fingerprint not using hash | Auth bypass possible | Low (use SHA-256) | P0 |
-| TD-5 | SQL injection in SmartResetter | Data loss/corruption | Low (use parameterized query) | P0 |
+| TD-3 | ~~Histogram Sum bug~~ **FIXED** | ~~Monitoring is broken~~ | ~~Low~~ | ~~P0~~ COMPLETE |
+| TD-4 | ~~Certificate fingerprint~~ **FIXED** | ~~Auth bypass possible~~ | ~~Low~~ | ~~P0~~ COMPLETE |
+| TD-5 | ~~SQL injection in SmartResetter~~ **FIXED** | ~~Data loss/corruption~~ | ~~Low~~ | ~~P0~~ COMPLETE |
 | TD-6 | `checkTimeouts()` doesn't abort backend transactions | Orphaned transactions on backend | Medium | P1 |
 | TD-7 | Custom YAML parser is fragile | Config parsing failures on edge cases | High (switch to stdlib or robust parser) | P1 |
 | TD-8 | No auth rate limiting | DoS via auth exhaustion | Medium | P1 |
@@ -193,12 +185,12 @@ This takes the first 32 bytes of the raw certificate DER, NOT a SHA-256 hash. Tw
 | TD-10 | Query cache never used in relay | Advertised feature doesn't work | Medium | P2 |
 | TD-11 | Prepared statement transparent proxy not wired | Advertised feature doesn't work | Medium | P2 |
 | TD-12 | Read/write splitting not wired into relay | Advertised feature doesn't work | Medium | P2 |
-| TD-13 | DeadlockDetector is dead code | Maintenance burden | Low (delete) | P3 |
-| TD-14 | ConnectionTracker is dead code | Maintenance burden | Low (delete) | P3 |
+| TD-13 | ~~DeadlockDetector~~ **DELETED** | ~~Maintenance burden~~ | ~~Low~~ | ~~P3~~ COMPLETE |
+| TD-14 | ~~ConnectionTracker~~ **DELETED** | ~~Maintenance burden~~ | ~~Low~~ | ~~P3~~ COMPLETE |
 | TD-15 | Two Raft implementations | Confusion, maintenance burden | Medium (consolidate) | P2 |
 | TD-16 | gRPC API is actually HTTP/JSON | Misleading documentation | Low (fix docs or implement real gRPC) | P3 |
 | TD-17 | Hardcoded timeouts in TransactionManager | Inflexible configuration | Low | P3 |
-| TD-18 | SHA256 truncated to 8 bytes for prepared statements | Collision risk at scale | Low (use full hash) | P3 |
+| TD-18 | ~~SHA256 truncated to 8 bytes~~ **FIXED** | ~~Collision risk~~ | ~~Low~~ | ~~P3~~ COMPLETE |
 | TD-19 | Query logger running average overflow | Incorrect stats at high volume | Low | P3 |
 
 ---
@@ -240,20 +232,20 @@ This takes the first 32 bytes of the raw certificate DER, NOT a SHA-256 hash. Tw
 ### `internal/pool/transaction.go`
 - TransactionManager monitors timeouts in background goroutine
 - `checkTimeouts()` sets status to TxnAborted/TxnIdle but doesn't send ROLLBACK to backend
-- DeadlockDetector exists but never instantiated
+- DeadlockDetector **DELETED** (2026-04-13)
 
 ### `internal/pool/reset.go`
 - ConnectionResetter interface correctly abstracts protocol-specific reset
-- SQL injection risk in SmartResetter temp table cleanup (line 281)
+- ~~SQL injection risk~~ **FIXED** - Now uses regex validation for table names
 
 ### `internal/metrics/metrics.go`
 - Counter, Gauge, Histogram, Registry correctly structured
-- **CRITICAL**: Histogram Sum at line 195 uses Float64bits addition which is NOT float addition
+- ~~**CRITICAL**: Histogram Sum~~ **FIXED** - Now uses mutex-protected float64
 - Not wired into pool or relay
 
 ### `internal/auth/cert.go`
 - Certificate-based auth with CN/SAN extraction
-- **CRITICAL**: Fingerprint at line 375 uses `cert.Raw[:32]` instead of SHA-256 hash
+- ~~**CRITICAL**: Fingerprint~~ **FIXED** - Now uses SHA-256 hash
 
 ### `internal/auth/auth.go`
 - SCRAM-SHA-256 implementation with hand-rolled PBKDF2
@@ -316,4 +308,4 @@ This takes the first 32 bytes of the raw certificate DER, NOT a SHA-256 hash. Tw
 
 Geryon has a solid architectural vision and a working core proxy relay. However, the gap between advertised features and actual implementation is significant. The critical bugs (Histogram Sum, certificate fingerprint, SQL injection, connection reuse) must be fixed before any production deployment. The dead code (mock frontends, deadlock detector, connection tracker, query cache) should be either integrated or deleted to reduce maintenance burden and confusion.
 
-**The project is approximately 70% complete.** The remaining 30% includes the most complex and critical pieces: proper connection pooling, transaction management integration, and production-hardened clustering.
+**The project is approximately 75% complete.** Critical bugs (SQL injection, cert fingerprint, histogram garbage) fixed. Dead code (protocols/, tracker, DeadlockDetector) removed. Remaining 25% includes wiring transaction mode, query cache, and prepared statement proxy into relay.
