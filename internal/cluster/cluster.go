@@ -640,7 +640,7 @@ func (s *SwimGossip) probe(target *Node) {
 	// Set read deadline for the probe
 	conn.SetReadDeadline(time.Now().Add(s.probeTimeout))
 
-	// Node responded, mark as alive
+	// Node responded, mark as alive - hold mutex for entire update
 	s.mu.Lock()
 	s.alive[target.ID] = time.Now()
 	delete(s.suspected, target.ID)

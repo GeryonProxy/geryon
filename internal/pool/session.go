@@ -29,6 +29,7 @@ type Session struct {
 	bytesIn     atomic.Int64
 	bytesOut    atomic.Int64
 	lastQuery   string
+	targetRole  atomic.Value // string: "primary" or "replica"
 	stmtTracker *SessionPreparedStatements
 }
 
@@ -222,6 +223,19 @@ func (s *Session) SetLastQuery(query string) {
 	s.lastQuery = query
 }
 
+// TargetRole returns the target backend role for the next query.
+func (s *Session) TargetRole() string {
+	if v := s.targetRole.Load(); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// SetTargetRole sets the target backend role ("primary" or "replica") for the next query.
+func (s *Session) SetTargetRole(role string) {
+	s.targetRole.Store(role)
+}
+
 // PreparedStatements returns the session's prepared statement tracker.
 func (s *Session) PreparedStatements() *SessionPreparedStatements {
 	return s.stmtTracker
@@ -291,7 +305,7 @@ func (s *Session) HandleMessage(msg *common.Message) error {
 		// Extract query for logging/tracing
 		query, err := codec.ExtractQuery(msg)
 		if err == nil && query != "" {
-			s.lastQuery = query
+			s.SetLastQuery(query)
 		}
 
 		// Acquire server connection via strategy

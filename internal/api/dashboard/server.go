@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"embed"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -87,11 +88,20 @@ func (s *Server) Start() error {
 		WriteTimeout: 30 * time.Second,
 	}
 
+	ready := make(chan struct{})
 	go func() {
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		ln, err := net.Listen("tcp", s.config.Listen)
+		if err != nil {
+			s.log.Error("Dashboard server error", "error", err)
+			return
+		}
+		close(ready)
+		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
 			s.log.Error("Dashboard server error", "error", err)
 		}
 	}()
+
+	<-ready
 
 	s.log.Info("Dashboard server started", "path", s.config.Path)
 	return nil
@@ -142,7 +152,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		if parts[1] != s.authToken {
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.authToken)) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}

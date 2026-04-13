@@ -2,6 +2,7 @@ package rest
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -239,7 +241,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		if parts[1] != s.config.Auth.Token {
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.config.Auth.Token)) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -249,25 +251,24 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 }
 
 // rateLimiter implements a simple token bucket rate limiter per IP.
+// Uses sync.Map for concurrent access without mutex contention.
 type rateLimiter struct {
-	mu        sync.Mutex
-	limiters  map[string]*rate.Limiter
-	lastSeen  map[string]time.Time
+	limiters  sync.Map // map[string]*rate.Limiter
+	lastSeen  sync.Map // map[string]time.Time
 	rate      rate.Limit
 	burst     int
-	maxSize   int
+	maxSize   atomic.Int64
 	cleanupTTL time.Duration
+	size      atomic.Int64
 }
 
 func newRateLimiter(r rate.Limit, burst int) *rateLimiter {
 	rl := &rateLimiter{
-		limiters:  make(map[string]*rate.Limiter),
-		lastSeen:  make(map[string]time.Time),
 		rate:      r,
 		burst:     burst,
-		maxSize:   10000,
 		cleanupTTL: 5 * time.Minute,
 	}
+	rl.maxSize.Store(10000)
 	go rl.periodicCleanup()
 	return rl
 }
@@ -276,44 +277,52 @@ func (rl *rateLimiter) periodicCleanup() {
 	ticker := time.NewTicker(rl.cleanupTTL)
 	defer ticker.Stop()
 	for range ticker.C {
-		rl.mu.Lock()
 		now := time.Now()
-		for ip, last := range rl.lastSeen {
-			if now.Sub(last) > rl.cleanupTTL {
-				delete(rl.limiters, ip)
-				delete(rl.lastSeen, ip)
+		rl.lastSeen.Range(func(key, value interface{}) bool {
+			if last, ok := value.(time.Time); ok {
+				if now.Sub(last) > rl.cleanupTTL {
+					rl.limiters.Delete(key)
+					rl.lastSeen.Delete(key)
+					rl.size.Add(-1)
+				}
 			}
-		}
-		rl.mu.Unlock()
+			return true
+		})
 	}
 }
 
 func (rl *rateLimiter) GetLimiter(ip string) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
+	// Check if IP already has a limiter
+	if limiter, ok := rl.limiters.Load(ip); ok {
+		rl.lastSeen.Store(ip, time.Now()) // Update last seen
+		return limiter.(*rate.Limiter)
+	}
 
 	// Evict oldest entry if at capacity
-	if len(rl.limiters) >= rl.maxSize {
+	if rl.size.Load() >= rl.maxSize.Load() {
 		var oldestIP string
 		var oldestTime time.Time
-		for ip, last := range rl.lastSeen {
-			if oldestIP == "" || last.Before(oldestTime) {
-				oldestIP = ip
-				oldestTime = last
+		rl.lastSeen.Range(func(key, value interface{}) bool {
+			if last, ok := value.(time.Time); ok {
+				if oldestIP == "" || last.Before(oldestTime) {
+					oldestIP = key.(string)
+					oldestTime = last
+				}
 			}
-		}
+			return true
+		})
 		if oldestIP != "" {
-			delete(rl.limiters, oldestIP)
-			delete(rl.lastSeen, oldestIP)
+			rl.limiters.Delete(oldestIP)
+			rl.lastSeen.Delete(oldestIP)
+			rl.size.Add(-1)
 		}
 	}
 
-	rl.lastSeen[ip] = time.Now()
-	limiter, ok := rl.limiters[ip]
-	if !ok {
-		limiter = rate.NewLimiter(rl.rate, rl.burst)
-		rl.limiters[ip] = limiter
-	}
+	// Create new limiter
+	limiter := rate.NewLimiter(rl.rate, rl.burst)
+	rl.limiters.Store(ip, limiter)
+	rl.lastSeen.Store(ip, time.Now())
+	rl.size.Add(1)
 	return limiter
 }
 

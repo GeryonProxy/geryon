@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -142,7 +143,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		if parts[1] != s.authToken {
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.authToken)) != 1 {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
