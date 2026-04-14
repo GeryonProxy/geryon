@@ -271,6 +271,18 @@ func (l *Listener) handleConnection(conn net.Conn) {
 	// Ensure counter is decremented on all exit paths (H-3 fix)
 	defer l.pool.DecrementClientCount()
 
+	// Set TCP keepalive to prevent half-open connections
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+
+	// Set read deadline for slowloris protection
+	idleTimeout := parseDuration(l.config.Limits.MaxIdleTime, 5*time.Minute)
+	if idleTimeout > 0 {
+		conn.SetReadDeadline(time.Now().Add(idleTimeout))
+	}
+
 	// Create proxy session with cache, query logger, and transaction manager
 	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.authLimiter, l.router, l.tlsConfig, l.log)
 	if err != nil {
@@ -2214,8 +2226,17 @@ func (ps *ProxySession) reprepareStatement(codec common.Codec, serverConn net.Co
 func (ps *ProxySession) sendRollbackToBackend() {
 	serverConn := ps.poolSession.ServerConn()
 	if serverConn == nil {
+		ps.log.Warn("sendRollbackToBackend: no server connection to rollback")
 		return
 	}
+
+	// Ensure connection is released back to pool after rollback
+	defer func() {
+		if serverConn != nil {
+			ps.poolSession.Strategy().OnClientDisconnect(ps.poolSession)
+		}
+	}()
+
 	// Send ROLLBACK query to backend
 	rollbackMsg := &common.Message{
 		Type:    'Q', // Simple Query
@@ -2223,9 +2244,13 @@ func (ps *ProxySession) sendRollbackToBackend() {
 	}
 	if err := ps.codec.WriteMessage(serverConn.Conn(), rollbackMsg); err != nil {
 		ps.log.Warn("Failed to send ROLLBACK to backend", "error", err)
+	} else {
+		ps.log.Info("Transaction rolled back due to timeout",
+			"client", ps.clientConn.RemoteAddr(),
+			"username", ps.username,
+			"pool", ps.config.Name,
+		)
 	}
-	// Close client connection to terminate the session
-	ps.clientConn.Close()
 }
 
 // forwardAndCapture forwards request to server and captures response for caching.
@@ -2497,4 +2522,16 @@ func (ps *ProxySession) authenticateWithCertificate() error {
 	ps.log.Info("Client authenticated via certificate", "username", username, "cn", cert.Subject.CommonName)
 
 	return nil
+}
+
+// parseDuration parses a duration string with a default fallback.
+func parseDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }

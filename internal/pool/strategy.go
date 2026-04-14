@@ -60,9 +60,36 @@ func (ss *SessionStrategy) OnClientDisconnect(s *Session) error {
 	return nil
 }
 
-// OnQuery returns the existing server connection.
+// OnQuery returns the existing server connection, respecting target role for read/write splitting.
 func (ss *SessionStrategy) OnQuery(ctx context.Context, s *Session, msg *common.Message) (*ServerConn, error) {
-	return s.ServerConn(), nil
+	conn := s.ServerConn()
+	targetRole := s.TargetRole()
+
+	// If target role is set and differs from current connection's role (or no conn held),
+	// acquire a connection to the correct backend
+	if targetRole != "" && conn != nil {
+		currentRole := conn.Backend().Role
+		if currentRole != targetRole {
+			// Role changed mid-session - release old conn and acquire new one
+			ss.pool.Release(conn)
+			conn = nil
+		}
+	}
+
+	if conn == nil {
+		var err error
+		if targetRole != "" {
+			conn, err = ss.pool.AcquireToRole(ctx, targetRole)
+		} else {
+			conn, err = ss.pool.Acquire(ctx)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire server connection: %w", err)
+		}
+		s.SetServerConn(conn)
+	}
+
+	return conn, nil
 }
 
 // OnQueryComplete does nothing in session mode (connection held).
