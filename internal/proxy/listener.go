@@ -1211,6 +1211,13 @@ func (ps *ProxySession) forwardAuthToBackend() error {
 
 // handleMySQLStartup handles MySQL startup handshake.
 func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
+	// Check rate limiter before starting MySQL authentication (M-4 fix)
+	clientIP := ps.clientConn.RemoteAddr().String()
+	if ps.authLimiter != nil && ps.authLimiter.IsLimited(clientIP) {
+		ps.log.Warn("Authentication blocked: client rate limited", "client", clientIP)
+		return fmt.Errorf("too many failed attempts, try again later")
+	}
+
 	// For MySQL, we need to connect to backend first to get the handshake
 	// Connect to backend
 	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
