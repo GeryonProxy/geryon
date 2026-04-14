@@ -1,452 +1,524 @@
-# GeryonProxy Architecture Security Report
+# GeryonProxy Security Architecture Report
 
 **Project:** GeryonProxy - Multi-Database Connection Pooler
-**Language:** Go (100% of codebase)
-**Go Version:** 1.26.1
-**Dependencies:** stdlib only (zero external runtime dependencies)
-**Total Go Files:** 108
+**Language:** Go 1.26.1 (100% stdlib, zero external runtime dependencies)
+**Files:** 108 Go source files
+**Date:** 2026-04-14
 
 ---
 
-## 1. Technology Stack Detection
+## 1. Entry Points
 
-### Primary Language
-- **Go** is the sole language used in this project (100% of 108 .go files)
+### 1.1 Network Listeners
 
-### Framework Detection
-GeryonProxy uses **no external HTTP frameworks**. All APIs are built with `net/http` from the Go standard library.
+All network listeners are configurable via `geryon.yaml`. Default binds are localhost-only for admin interfaces.
 
-### External Dependencies (go.mod)
+| Interface | Default Address | Protocol | Purpose |
+|-----------|-----------------|----------|---------|
+| PostgreSQL Proxy | `0.0.0.0:5432` | PostgreSQL Wire | Database connection pooling |
+| MySQL Proxy | `0.0.0.0:3306` | MySQL Wire | Database connection pooling |
+| MSSQL Proxy | `0.0.0.0:1433` | TDS Protocol | Database connection pooling |
+| REST API | `127.0.0.1:8080` | HTTP | Admin management interface |
+| gRPC API | `127.0.0.1:9090` | HTTP/2 | Admin management interface |
+| MCP Server | `127.0.0.1:8081` | HTTP/SSE | Admin management interface |
+| Dashboard | `127.0.0.1:8082` | HTTP | Web dashboard |
+| Raft Cluster | Configurable | Raft | Distributed consensus |
+| Gossip Cluster | Configurable | SWIM | Node discovery |
+
+### 1.2 CLI Entry Point
+
+**File:** `cmd/geryon/main.go`
+
+```go
+// Command-line flags (lines 37-44)
+--config           // Path to configuration file
+--validate         // Validate config without starting
+--version          // Print version and exit
+--generate-config  // Generate example configuration
+--generate-password // Generate SCRAM-SHA-256 password hash
+--generate-cert    // Generate self-signed TLS certificate
 ```
-module github.com/GeryonProxy/geryon
-go 1.26.1
-require (
-    golang.org/x/term v0.36.0
-    golang.org/x/time v0.15.0
-)
-require golang.org/x/sys v0.37.0 // indirect
+
+### 1.3 Signal Handling
+
+The proxy handles three signals:
+- **SIGINT/SIGTERM** (lines 273-276): Graceful shutdown - stops listeners, closes pools
+- **SIGHUP** (lines 260-272): Hot configuration reload via `config.HotReload()`
+
+### 1.4 Proxy Listener Startup
+
+**File:** `internal/proxy/listener.go`
+
+Each pool creates a `Listener` (lines 59-141) that:
+1. Creates TCP listener on configured host:port
+2. Optionally wraps with TLS via `tls.NewListener()`
+3. Starts protocol-aware health checks
+4. Runs `acceptLoop()` goroutine for incoming connections
+
+```go
+// Listener creation chain (main.go lines 144-165)
+for _, poolCfg := range cfg.Pools {
+    listener, err := proxy.NewListener(pool, poolCfg, codec, userDB, log)
+    listener.Start()
+}
 ```
 
 ---
 
-## 2. Application Type Classification
+## 2. Trust Boundaries
 
-GeryonProxy is a **database proxy/pooler** that operates as both a CLI tool and a network service.
+### 2.1 Client-to-Proxy Boundary
 
-### Network Ports
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| 5432 | PostgreSQL | Database proxy |
-| 3306 | MySQL | Database proxy |
-| 1433 | MSSQL | Database proxy |
-| 8080 | HTTP | REST API admin |
-| 9090 | HTTP/2 | gRPC API admin |
-| 8081 | HTTP | MCP Server admin |
-| 8082 | HTTP | Web Dashboard admin |
+**Location:** `internal/proxy/listener.go:254-306` (`handleConnection`)
 
----
+Untrusted input enters the system at this boundary:
+- Client network connections from application clients
+- Startup message parameters (username, database, SSL preferences)
+- SQL query payloads
+- Authentication credentials
 
-## 3. Entry Points Mapping
+**Trust boundary enforcement:**
+- `MaxClientConnections` limit check (line 266)
+- Client connection counter atomic increment (line 266)
+- Connection deadline set to prevent slowloris (line 248)
 
-### CLI Entry Point: cmd/geryon/main.go
-- Lines 36-393
+### 2.2 Admin API Boundary
 
-### TCP Listeners: internal/proxy/listener.go
-- Lines 33-54, 191-227
+**Location:** `internal/api/rest/server.go:224-251` (`withAuth`)
 
-### HTTP API Servers
-- REST: internal/api/rest/server.go
-- gRPC: internal/api/grpc/server.go
-- MCP: internal/api/mcp/server.go
-- Dashboard: internal/api/dashboard/server.go
+All admin API endpoints require Bearer token authentication:
+```go
+// Token comparison using constant-time equality
+subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.config.Auth.Token))
+```
 
----
+**Security headers applied to all responses:**
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `X-XSS-Protection: 1; mode=block`
+- `Cache-Control: no-store, no-cache, must-revalidate`
 
-## 4. Data Flow Map
+### 2.3 Backend-to-Proxy Boundary
 
-Client -> TCP Listener -> ProxySession -> handleStartup() -> connectToBackend() -> Pool.Acquire() -> Backend connection -> Relay.Run()
+**Location:** `internal/pool/pool.go:798-848` (`tryConnect`)
 
----
+The proxy initiates connections to backend databases. Backend responses are treated as untrusted and validated:
+- PostgreSQL message type validation
+- MySQL packet length bounds checking (`maxMySQLPayload = 16<<20`)
+- TDS message length validation
 
-## 5. Trust Boundaries
+### 2.4 Configuration File Boundary
 
-### Authentication
-- UserDatabase: internal/auth/auth.go (lines 36-113)
-- SCRAMServer: internal/auth/auth.go (lines 115-277)
-- AuthLimiter: internal/auth/auth.go (lines 472-585)
-- CertAuthenticator: internal/auth/cert.go (lines 38-92)
+**Location:** `internal/config/loader.go:36-53`
 
-### Input Validation
-- Startup message parsing: proxy/listener.go lines 496-604
-- Username validation: proxy/listener.go lines 597-604
-- Pool name regex: internal/api/rest/server.go line 365
-
-### Rate Limiting
-- REST API: internal/api/rest/server.go lines 251-337
-- gRPC: internal/api/grpc/server.go lines 191-276
-- MCP: internal/api/mcp/server.go lines 154-234
-- Dashboard: internal/api/dashboard/server.go lines 163-243
-- Auth: internal/auth/auth.go lines 472-585
+Configuration is loaded from disk with environment variable expansion restricted to `GERYON_*` prefix only (line 34):
+```go
+var allowedEnvPrefix = "GERYON_"
+```
 
 ---
 
-## 6. External Integrations
+## 3. Authentication & Authorization
 
-### Database Backend Connections
-- Pool: internal/pool/pool.go (lines 417-441)
-- ServerConn: internal/pool/pool.go (lines 104-177)
-- Manager: internal/pool/manager.go (lines 15-20)
+### 3.1 Authentication Mechanisms
 
-### Backend TLS Configuration
-- internal/pool/pool.go lines 713-752
+#### PostgreSQL: SCRAM-SHA-256 (Interception Mode)
 
-### Metrics Export
-- internal/metrics/metrics.go
-- Prometheus format via GET /metrics
+**Files:**
+- Server: `internal/auth/auth.go:115-277` (`SCRAMServer`)
+- Client: `internal/auth/scram.go:138-245` (`SCRAMClient`)
+- Password generation: `internal/auth/scram.go:15-43`
 
----
+**Flow:** `handlePostgreSQLAuth()` (lines 663-824)
+1. Client sends `SASLInitialResponse` with mechanism `SCRAM-SHA-256`
+2. Server parses `client-first-message` (GS2 header + nonce)
+3. Server generates `server-first-message` with salt and server nonce
+4. Client sends `client-final-message` with proof
+5. Server verifies proof using stored key
+6. Server sends `server-final-message` with server signature
+7. Authentication success: `authenticated.Store(true)`
 
-## 7. Authentication Architecture
+**Password hash format:**
+```
+SCRAM-SHA-256$<iterations>:<salt>$<storedkey>:<serverkey>
+```
+- Iterations: 120000 (OWASP 2023+ recommendation)
+- Salt: 32 bytes random
+- StoredKey: SHA256(ClientKey)
+- ServerKey: HMAC-SaltedPassword, "Server Key"
 
-### PostgreSQL SCRAM-SHA-256
-- File: internal/auth/scram.go
-- Hash format: SCRAM-SHA-256\$<iterations>:<salt>:<storedkey>:<serverkey>
+#### MySQL: Handshake V10 (Passthrough)
 
-### MySQL Caching SHA-2
-- Passthrough to backend
+**File:** `internal/proxy/listener.go:1167-1274`
 
-### MSSQL TDS Authentication
-- Passthrough to backend
+MySQL authentication is passthrough - the proxy forwards the handshake between client and backend without interception.
 
-### Client Certificate Authentication
-- File: internal/auth/cert.go
-- Modes: CertAuthDisabled, CertAuthCN, CertAuthSAN, CertAuthEither
+#### MSSQL: TDS Login7 (Passthrough)
 
----
+**File:** `internal/proxy/listener.go:1522-1551`
 
-## 8. File Structure Analysis
+MSSQL authentication is passthrough via `forwardMSSQLLogin7()`.
 
-Key directories:
-- cmd/geryon/ - Main entry point
-- internal/auth/ - Authentication logic
-- internal/pool/ - Connection pooling
-- internal/proxy/ - Client listeners
-- internal/api/ - Management APIs
-- internal/protocol/ - Database wire protocols
-- internal/tlsutil/ - TLS utilities
-- internal/logger/ - Logging
-- internal/metrics/ - Prometheus metrics
-- internal/config/ - Configuration
+### 3.2 Authorization
 
----
+**File:** `internal/auth/auth.go:16-33`
 
-## 9. Detected Security Controls
+Pool access authorization via `User.CanAccessPool()`:
+```go
+func (u *User) CanAccessPool(poolName string) bool {
+    for _, allowed := range u.AllowedPools {
+        if allowed == "*" || allowed == poolName {
+            return true
+        }
+    }
+    return false
+}
+```
 
-### TLS Support
-- Server TLS: internal/tlsutil/tls.go lines 13-59
-- Client TLS: internal/tlsutil/tls.go lines 62-107
-- Min version: TLS 1.2
+**Authorization check location:** `proxy/listener.go:644-652`
+```go
+if !user.CanAccessPool(ps.pool.Name()) {
+    errMsg := postgresql.CreateErrorResponse("28000", "access to pool denied")
+    ps.clientConn.Write(errMsg)
+    return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
+}
+```
 
-### Connection State Reset
-- PostgreSQL DISCARD ALL: internal/pool/reset.go lines 21-57
-- MySQL COM_RESET_CONNECTION: internal/pool/reset.go lines 59-89
-- MSSQL sp_reset_connection: internal/pool/reset.go lines 91-127
+### 3.3 Client Certificate Authentication (mTLS)
 
-### Security Headers
-- X-Content-Type-Options: nosniff
-- X-Frame-Options: DENY
-- X-XSS-Protection: 1; mode=block
+**File:** `internal/proxy/listener.go:2419-2460`
 
-### Error Message Sanitization
-- internal/api/rest/server.go lines 347-362
+Optional TLS client certificate authentication via `authenticateWithCertificate()`:
+1. Extract identity from certificate CN or SAN
+2. Validate certificate NotBefore/NotAfter
+3. Map certificate to user in UserDatabase
 
----
+### 3.4 Brute Force Protection
 
-## 10. Detected Languages Summary
+**File:** `internal/auth/auth.go:472-585`
 
-| Language | Files | Percentage |
-|----------|-------|------------|
-| Go | 108 | 100% |
+`AuthLimiter` tracks failed authentication attempts per source IP:
+```go
+// Default limits
+maxAttempts:   10
+window:        5 * time.Minute
+lockoutPeriod: 5 * time.Minute
+```
 
----
+**Applied in:**
+- PostgreSQL interception auth: `proxy/listener.go:665-672`
+- MySQL/MSSQL passthrough: rate limiting not applied (relies on backend)
 
-## Appendix: Key Code References
+### 3.5 Admin API Authentication
 
-### Authentication
-- proxy/listener.go:478-793
-- auth/auth.go:115-277
-- auth/cert.go:59-92
+**File:** `internal/api/rest/server.go:224-251`
 
-### Input Parsing
-- proxy/listener.go:496-604
-- protocol/common/message.go:269-394
-- config/loader.go:37-80
-
-### Connection Handling
-- proxy/listener.go:1625-1678
-- pool/pool.go:754-804
-- pool/reset.go:29-127
-
-### TLS Configuration
-- tlsutil/tls.go:13-59
-- tlsutil/tls.go:62-107
-- pool/pool.go:713-752
-
-### Rate Limiting
-- auth/auth.go:472-585
-- api/rest/server.go:251-337
-- api/grpc/server.go:191-276
-- api/mcp/server.go:154-234
+Bearer token authentication for all admin endpoints:
+- Header format: `Authorization: Bearer <token>`
+- Constant-time comparison to prevent timing attacks
 
 ---
 
-*Document generated for security vulnerability scanning purposes.*
-*Last updated: 2026-04-13*
+## 4. Data Flow
+
+### 4.1 Client Connection Lifecycle
+
+```
+Client TCP Connection
+        |
+        v
+proxy.Listener.acceptLoop()  [listener.go:235-251]
+        |
+        v
+proxy.Listener.handleConnection()  [listener.go:254-306]
+        |  - Atomic client count increment
+        |  - MaxClientConnections check
+        |  - Creates ProxySession
+        v
+proxy.ProxySession.Handle()  [listener.go:474-499]
+        |
+        +---> handleStartup()  [listener.go:501-513]
+        |         |
+        |         +---> handlePostgreSQLStartup() [listener.go:516-661]
+        |         |         - Parse startup message (max 10000 bytes, max 64 params)
+        |         |         - Validate username/database for null bytes/control chars
+        |         |         - User lookup via userDB.GetUser()
+        |         |         - Pool access check via user.CanAccessPool()
+        |         |         +---> handlePostgreSQLAuth() (interception mode)
+        |         |         |         - AuthLimiter check
+        |         |         |         - SCRAM server authentication
+        |         |         +---> connectToBackend() (passthrough mode)
+        |         |
+        |         +---> handleMySQLStartup() [listener.go:1168-1274]
+        |         |         - Passthrough to backend
+        |         |
+        |         +---> handleMSSQLStartup() [listener.go:1523-1552]
+        |                   - Passthrough to backend
+        |
+        +---> poolSession.Strategy().OnClientConnect()  [pool/strategy.go]
+        |         - Acquires server connection from pool
+        |         - Handles backend authentication
+        |
+        v
+proxy.Relay.Run()  [listener.go:1862-1915]
+        |
+        +---> forwardClientToServer()  [listener.go:1918-2108]
+        |         - codec.ReadMessage() - reads from client
+        |         - IsQuery() - checks if SQL query
+        |         - RouteQuery() - read/write splitting
+        |         - Cache check (if enabled)
+        |         - OnQuery() - get server connection
+        |         - codec.WriteMessage() - send to backend
+        |
+        +---> forwardServerToClient()  [listener.go:2295-2410]
+                  - codec.ReadMessage() - reads from backend
+                  - codec.WriteMessage() - send to client
+```
+
+### 4.2 Backend Connection Pool
+
+**File:** `internal/pool/pool.go:461-485`
+
+```
+Pool.Acquire()  [pool.go:600-630]
+        |
+        +---> serverConnPool.acquire() - get from idle pool
+        |
+        +---> createServerConn() - create new connection
+        |         - selectBackendWithFallback()
+        |         - tryConnect(backend) - TCP/TLS connection
+        |         - Backend auth via authenticateToBackend()
+        |
+        +---> waitQueue.Wait() - wait for available connection
+        |
+        v
+Pool.Release()  [pool.go:663-672]
+        |
+        +---> waitQueue.Signal() - give to waiting client
+        |
+        +---> serverConnPool.release() - return to idle pool
+                    - ResetConnection() - protocol-specific cleanup
+```
+
+### 4.3 Connection State Reset (Pool Reset)
+
+**File:** `internal/pool/reset.go`
+
+Before returning a connection to the idle pool, state is reset:
+
+**PostgreSQL:** `DISCARD ALL` command
+**MySQL:** `COM_RESET_CONNECTION` (5.7.3+) or `COM_CHANGE_USER`
+**MSSQL:** RPC request for `sp_reset_connection`
+
+---
+
+## 5. Secret Handling
+
+### 5.1 Password Storage
+
+**User passwords (interception mode):**
+- Format: `SCRAM-SHA-256$<iterations>:<salt>$<storedkey>:<serverkey>`
+- Stored in: `config.Auth.Users[].PasswordHash`
+- Loaded via: `auth.UserDatabase.LoadFromConfig()` [auth.go:48-68]
 
+**Backend passwords:**
+- Storage: Files referenced via `backend.auth.password_file`
+- Loading: `proxy/listener.go:850-860`
+- Example: `password_file: "/etc/geryon/secrets/pg"`
 
-## Detailed Architecture Analysis
+### 5.2 Password Processing
 
-### Protocol Codec Interface
-File: internal/protocol/common/message.go (lines 35-82)
+**Password hashing (generation):** `auth.GenerateSCRAMSHA256()` [scram.go:15-43]
+```go
+salt := make([]byte, 32)
+iterations := 120000
+saltedPassword := pbkdf2Key([]byte(password), salt, iterations, 32, sha256.New)
+clientKey := hmacSum(saltedPassword, []byte("Client Key"))
+storedKey := sha256.Sum256(clientKey)
+```
+
+**Password verification:** `auth.VerifySCRAMSHA256()` [scram.go:91-136]
+- Uses `subtle.ConstantTimeCompare()` for timing-safe comparison
+
+### 5.3 Memory Security
+
+**Password zeroing (M-11 fix):** `cmd/geryon/main.go:341-346`
+```go
+defer func() {
+    for i := range passwordBytes {
+        passwordBytes[i] = 0
+    }
+}()
+```
+
+**Backend password zeroing:** `proxy/listener.go:856-859`
+```go
+for i := range passwordBytes {
+    passwordBytes[i] = 0
+}
+```
 
-The Codec interface defines the contract for all database protocol implementations:
-- ReadMessage(), WriteMessage() for message I/O
-- IsStartup(), IsTerminate(), IsQuery() for message type detection
-- IsTransactionBegin(), IsTransactionEnd() for transaction boundaries
-- ExtractQuery() for SQL extraction
-- GenerateResetSequence() for connection pool reset
+### 5.4 TLS Secrets
 
-### PostgreSQL Frontend Handler
-File: internal/protocol/postgresql/codec.go
-
-Handles PostgreSQL wire protocol messages including:
-- StartupMessage (handshake)
-- SASL/SCRAM authentication
-- SimpleQuery and ExtendedQuery protocols
-- Parse, Bind, Execute, Close for prepared statements
-- Function call protocol
-
-### MySQL Frontend Handler  
-File: internal/protocol/mysql/codec.go
-
-Handles MySQL wire protocol messages including:
-- HandshakeV10 (initial handshake)
-- Client handshake response
-- COM_QUERY, COM_STMT_PREPARE, COM_STMT_EXECUTE
-- Binary protocol for prepared statements
-
-### MSSQL Frontend Handler
-File: internal/protocol/mssql/codec.go
-
-Handles TDS (Tabular Data Stream) protocol including:
-- Pre-Login negotiation
-- Login7 authentication
-- SQLBatch and RPC requests
-- Attention signals (cancel, disconnect)
-
-### Pool Modes
-File: internal/pool/pool.go (lines 22-57)
-
-Three pooling strategies:
-- ModeSession: Connections held for entire client session
-- ModeTransaction: Connections released after each transaction
-- ModeStatement: Connections released after each statement
-
-### Backend Selection Strategies
-File: internal/pool/strategy.go
-
-- Weighted round-robin for load balancing
-- Read/write splitting based on query type
-- Primary fallback when replicas unavailable
-
-### Health Checking
-File: internal/pool/health.go
-
-Backend health checks with configurable:
-- CheckInterval: How often to check backends
-- CheckQuery: SQL query to execute
-- MaxFailures: Failures before marking unhealthy
-
-### Query Cache
-File: internal/cache/store.go
-
-LRU cache for query results with:
-- Table-based invalidation
-- TTL support
-- Memory limits
-
-### Cluster Coordination
-File: internal/cluster/cluster.go
-
-SWIM-based membership and failure detection
-Raft consensus for distributed state
-
-### Configuration Hot Reload
-File: internal/config/watcher.go
-
-Monitors config file for changes and triggers graceful reload
-Safe reload validates changes before applying
-
-### Connection Idle Timeout
-File: internal/pool/pool.go
-
-max_idle_time: Maximum time a connection can be idle before closing
-max_connection_lifetime: Maximum total lifetime of a connection
-
-### Query Timeout
-File: internal/pool/pool.go
-
-query_timeout: Maximum time a query can execute before being cancelled
-connection_timeout: Time to wait for a backend connection
-
-### Idle Transaction Timeout
-File: internal/pool/pool.go
-
-idle_transaction_timeout: Maximum time a transaction can be idle before rollback
-
-### Prepared Statement Cache
-File: internal/pool/prepared.go
-
-Transparent re-preparation on new backend connections
-Tracks statement name to SQL mapping
-Automatic re-prepare on connection acquisition in statement mode
-
-### Query Routing
-File: internal/pool/routing.go
-
-RouteQuery() determines backend based on:
-- Query type (SELECT vs INSERT/UPDATE/DELETE)
-- Transaction state
-- User-specified routing hints
-
-### Transaction Manager
-File: internal/pool/transaction.go
-
-Tracks active transactions with:
-- Timeout enforcement
-- Idle timeout enforcement
-- Automatic rollback on timeout
-
-### Logger
-File: internal/logger/logger.go
-
-Structured logging with:
-- JSON and text formats
-- Log levels: debug, info, warn, error
-- Configurable output
-
-### Query Logger
-File: internal/logger/querylog.go
-
-Per-pool query logging with:
-- Query text
-- Execution time
-- Rows returned
-- Client address
-- Cache hit/miss
-
-### Metrics Registry
-File: internal/metrics/metrics.go
-
-In-memory metrics with:
-- Counter, Gauge, Histogram types
-- Prometheus text format export
-- Per-pool and global metrics
-
-### TLS Configuration
-File: internal/tlsutil/config.go
-
-CipherSuites12() returns allowed TLS 1.2 cipher suites
-Enforces strong cryptography
-
-### Certificate Authentication
-File: internal/auth/cert.go
-
-Certificate validation:
-- Expiry checking via NotBefore/NotAfter
-- Identity extraction from CN or SAN
-- Wildcard pattern matching
-- Certificate-to-user mapping
-
-### SCRAM Implementation
-File: internal/auth/scram.go
-
-Full SCRAM-SHA-256 implementation:
-- PBKDF2 with SHA-256
-- HMAC-based signatures
-- Server and client nonces
-- Auth message construction
-
-### Auth Rate Limiter
-File: internal/auth/auth.go
-
-Per-IP tracking:
-- Failed attempt counting
-- Sliding window
-- Automatic lockout
-- Lockout duration
-
-### REST API Middleware
-File: internal/api/rest/server.go
-
-- withLogging: Request logging
-- withSecurityHeaders: Security headers
-- withCORS: Cross-origin requests
-- withAuth: Bearer token validation
-- withRateLimit: Per-IP rate limiting
-
-### Error Response Sanitization
-File: internal/api/rest/server.go
-
-writeError() ensures error messages do not leak:
-- Internal file paths
-- Connection strings
-- Stack traces
-- Database error details
-
-### Path Sanitization
-File: internal/proxy/listener.go
-
-Pool name sanitized before use:
-- Alphanumeric only
-- Underscores and hyphens allowed
-- Max 64 characters
-
-### Table Name Validation
-File: internal/pool/reset.go
-
-validTableName regex for cache invalidation:
-- Must start with letter or underscore
-- Alphanumeric and underscores only
-- Max 128 characters
-
-### Command-line Flags
-File: cmd/geryon/main.go
-
-- --config: Config file path
-- --validate: Validate config only
-- --version: Show version
-- --generate-config: Generate example config
-- --generate-password: Generate SCRAM password hash
-- --generate-cert: Generate self-signed TLS certificate
-
-### Signal Handling
-File: cmd/geryon/main.go
-
-- SIGINT/SIGTERM: Graceful shutdown
-- SIGHUP: Hot config reload
-
-### Admin API Ports (Default)
-File: internal/config/config.go
-
-- REST: 127.0.0.1:8080
-- gRPC: 127.0.0.1:9090
-- MCP: 127.0.0.1:8081
-- Dashboard: 127.0.0.1:8082
-
-### Config File Environment Variables
-File: internal/config/loader.go
-
-Only GERYON_* prefixed env vars expanded
-Syntax:  or default
-
+**Certificate loading:** `tlsutil.LoadServerConfig()` [tlsutil/config.go]
+- `tls.LoadX509KeyPair(certFile, keyFile)` for server cert
+- `x509.NewCertPool()` for CA certificates
+- Min TLS version: TLS 1.2
+
+**Cipher suites:** `tlsutil.CipherSuites12()` enforces strong cryptography
+
+### 5.5 Admin API Tokens
+
+**Storage:** `config.Admin.REST.Auth.Token` (plaintext in config)
+**Transport:** Bearer token in Authorization header
+**Comparison:** Constant-time via `subtle.ConstantTimeCompare()`
+
+---
+
+## 6. Configuration Security
+
+### 6.1 Configuration Loading
+
+**File:** `internal/config/loader.go:36-53`
+
+```go
+func Load(path string) (*Config, error) {
+    data, err := os.ReadFile(path)
+    expanded := expandEnvVars(string(data))  // Only GERYON_* vars
+    cfg, err := parseYAML(expanded)
+    return cfg, nil
+}
+```
+
+### 6.2 Environment Variable Expansion
+
+**File:** `internal/config/loader.go:55-79`
+
+Only `GERYON_*` prefixed variables are expanded:
+```go
+var allowedEnvPrefix = "GERYON_"
+```
+
+Syntax: `${VAR}` or `${VAR:-default}`
+
+### 6.3 Configuration Validation
+
+**File:** `internal/config/config.go:259-343`
+
+```go
+func Validate(cfg *Config) error {
+    // Admin listen addresses must be non-empty
+    // Admin auth requires token when enabled
+    // Pool names must be unique
+    // Pool body types: postgresql, mysql, mssql
+    // Pool modes: session, transaction, statement
+    // Port conflicts detected
+    // Cluster requires node_id and raft.listen when enabled
+}
+```
+
+### 6.4 Hot Reload
+
+**File:** `cmd/geryon/main.go:227-252`
+
+Configuration watched for changes via `config.NewWatcher()`:
+- Safe changes applied without restart (pool limits, auth users, log level)
+- Unsafe changes require restart (ports, body type, TLS cert paths)
+
+### 6.5 Security-Sensitive Configuration
+
+| Setting | Location | Risk |
+|---------|----------|------|
+| `admin.rest.auth.token` | Config file | Controls API access |
+| `admin.grpc.auth.token` | Config file | Controls gRPC access |
+| `admin.mcp.auth.token` | Config file | Controls MCP access |
+| `admin.dashboard.auth.token` | Config file | Controls dashboard access |
+| `auth.users[].password_hash` | Config file | Credentials |
+| `backend.auth.password_file` | Config file | Backend credentials |
+| `tls.cert_file` | Config file | TLS certificate |
+| `tls.key_file` | Config file | TLS private key |
+| `pools[].listen.host` | Config file | Binding address |
+| `pools[].listen.port` | Config file | Service exposure |
+
+### 6.6 Path Traversal Protection
+
+**File:** `internal/proxy/listener.go:79-81`
+```go
+safeName := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(cfg.Name, "_")
+qlConfig.Directory = filepath.Join("logs", "queries", safeName)
+```
+
+**Config path sanitization:** `cmd/geryon/main.go:78-79`
+```go
+safeConfigPath := filepath.Clean(*configPath)
+```
+
+---
+
+## Appendix: Security Component Map
+
+### Authentication Flow
+
+```
+Client Connection
+       |
+       v
+handleStartup()  [proxy/listener.go:501-513]
+       |
+       +---> postgresql: handlePostgreSQLStartup() [516-661]
+       |         |
+       |         +---> handlePostgreSQLAuth() [663-824]
+       |         |         - AuthLimiter check [665-672]
+       |         |         - SCRAMServer.ParseClientFirst() [721]
+       |         |         - SCRAMServer.GenerateServerFirst() [733]
+       |         |         - SCRAMServer.VerifyClientFinal() [772]
+       |         |         - recordAuthSuccess/recordAuthFailure()
+       |         |
+       |         +---> connectToBackend() [826-885]
+       |                   - authenticateToBackend() [888-976]
+       |                   - forwardAuthFromBackend() [1056-1125]
+       |
+       +---> mysql: handleMySQLStartup() [1168-1274]
+       |         - Passthrough auth to backend
+       |
+       +---> mssql: handleMSSQLStartup() [1523-1552]
+                 - Passthrough auth to backend
+```
+
+### Rate Limiting Layers
+
+```
+REST API: withRateLimit() [rest/server.go:329-346]
+         - Per-IP token bucket (10 req/s, burst 20)
+         - Periodic cleanup of old entries
+
+Auth Limiter: AuthLimiter [auth/auth.go:472-585]
+         - Per-IP failed attempt tracking
+         - 10 attempts per 5 min window
+         - 5 min lockout after failure
+
+gRPC: internal/api/grpc/server.go [191-276]
+MCP: internal/api/mcp/server.go [154-234]
+Dashboard: internal/api/dashboard/server.go [163-243]
+```
+
+### Input Validation Points
+
+| Location | Input Type | Validation |
+|----------|------------|------------|
+| listener.go:526 | Startup message length | 8 <= length <= 10000 |
+| listener.go:578 | Startup parameter count | max 64 params |
+| listener.go:579 | Startup parameter value length | max 256 bytes |
+| listener.go:621-627 | Username/database chars | No control chars (0x00-0x1F, 0x7F) |
+| listener.go:711 | SASL mechanism | Only "SCRAM-SHA-256" |
+| listener.go:1076 | Backend message length | 0 <= length <= maxMySQLPayload |
+| listener.go:1571 | MSSQL Pre-Login length | 0 <= length <= maxMySQLPayload |
+| listener.go:1645 | MSSQL Login7 length | 0 <= length <= maxMySQLPayload |
+| rest/server.go:374 | Pool name | Regex: `^[a-zA-Z0-9_-]{1,64}$` |
+| rest/server.go:440 | JSON body size | Max 1MB via `http.MaxBytesReader` |
+| pool/routing.go:56 | Routing rule pattern | `regexp.Compile()` with error check |
+
+---
+
+*Document generated: 2026-04-14*
+*Purpose: Security-focused architecture reconnaissance*
