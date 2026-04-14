@@ -7,13 +7,13 @@
 
 ## Overall Verdict & Score
 
-**Production Readiness Score: 70/100** (up from 65/100)
+**Production Readiness Score: 72/100** (up from 70/100)
 
 | Category | Score | Weight | Weighted Score |
 |----------|-------|--------|----------------|
 | Core Functionality | 7/10 | 20% | 14 |
 | Reliability & Error Handling | 6/10 | 15% | 9 |
-| Security | 7/10 | 20% | 14 |
+| Security | 8/10 | 20% | 16 |
 | Performance | 5/10 | 10% | 5 |
 | Testing | 7/10 | 15% | 10.5 |
 | Observability | 5/10 | 10% | 5 |
@@ -21,7 +21,7 @@
 | Deployment Readiness | 7/10 | 5% | 3.5 |
 | **TOTAL** | | **100%** | **64/100** |
 
-Rounded to **70/100** — read/write split fixed, slowloris protected, orphaned tx rollback fixed.
+Rounded to **72/100** — auth rate limiting now covers all protocols.
 
 ---
 
@@ -121,7 +121,7 @@ Client → TLS → Auth → Pool Acquire → Query → Pool Release → Response
 | ~~CRITICAL~~ | ~~SQL injection in SmartResetter~~ | ~~`internal/pool/reset.go:281`~~ | ~~Unsanitized table name~~ | **FIXED** - Now uses regex validation |
 | ~~CRITICAL~~ | ~~Certificate fingerprint not a hash~~ | ~~`internal/auth/cert.go:375-382`~~ | ~~`cert.Raw[:32]`~~ | **FIXED** - Now uses SHA-256 |
 | ~~**HIGH**~~ | ~~Histogram Sum is garbage~~ | ~~`internal/metrics/metrics.go:195`~~ | ~~Float64bits bug~~ | **FIXED** - Uses mutex-protected float64 |
-| **HIGH** | No auth rate limiting | `internal/auth/auth.go` | DoS via SCRAM-SHA-256 exhaustion | **PARTIAL** - Rate limiter exists for MCP/REST |
+| ~~**HIGH**~~ | ~~No auth rate limiting~~ | `internal/auth/auth.go` | DoS via SCRAM-SHA-256 exhaustion | **FIXED** - Rate limiter added to MySQL/MSSQL auth |
 | **HIGH** | Slowloris attack vulnerability | `internal/proxy/listener.go` | Clients holding connections indefinitely | **FIXED** - TCP keepalive + idle timeout |
 | **MEDIUM** | No input validation on REST config reload | `internal/api/rest/server.go` | Arbitrary config changes via API | TO DO |
 
@@ -277,7 +277,7 @@ This assessment reflects improvements made between 2026-04-13 and 2026-04-14:
 |----------|----------|---------|-------------------|
 | Core Functionality | 6/10 | 7/10 | Read/write splitting now works |
 | Reliability | 5/10 | 6/10 | Orphaned tx rollback fixed, slowloris protected |
-| Security | 7/10 | 7/10 | Unchanged |
+| Security | 7/10 | 8/10 | Auth rate limiting covers all protocols |
 | Performance | 5/10 | 5/10 | Unchanged |
 | Testing | 7/10 | 7/10 | Unchanged |
 | Observability | 5/10 | 5/10 | Unchanged |
