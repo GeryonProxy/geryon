@@ -332,12 +332,21 @@ func (p *serverConnPool) closeAll() {
 	}
 }
 
+// waiter represents a client waiting for a server connection.
+type waiter struct {
+	conn    *ServerConn // connection to deliver, or nil if not yet delivered
+	ready   chan struct{} // closed when conn is ready
+	timedOut bool
+}
+
 // WaitQueue manages clients waiting for a server connection.
+// Uses sync.Cond to avoid race conditions between signal and timeout.
 type WaitQueue struct {
-	mu      sync.Mutex
-	waiters []chan *ServerConn
-	maxSize int
-	metrics waitQueueMetrics
+	mu       sync.Mutex
+	cond     *sync.Cond
+	waiters  []*waiter
+	maxSize  int
+	metrics  waitQueueMetrics
 }
 
 type waitQueueMetrics struct {
@@ -350,29 +359,31 @@ func NewWaitQueue(maxSize int) *WaitQueue {
 	if maxSize <= 0 {
 		maxSize = 1000 // Default cap
 	}
-	return &WaitQueue{
-		waiters: make([]chan *ServerConn, 0),
-		maxSize: maxSize,
+	wq := &WaitQueue{
+		waiters: make([]*waiter, 0),
+		maxSize:  maxSize,
 	}
+	wq.cond = sync.NewCond(&wq.mu)
+	return wq
 }
 
 // Wait blocks until a server connection is available or timeout.
 func (wq *WaitQueue) Wait(ctx context.Context, timeout time.Duration) (*ServerConn, error) {
-	ch := make(chan *ServerConn, 1)
+	w := &waiter{ready: make(chan struct{})}
 
 	wq.mu.Lock()
 	if len(wq.waiters) >= wq.maxSize {
 		wq.mu.Unlock()
 		return nil, fmt.Errorf("connection queue full (max %d)", wq.maxSize)
 	}
-	wq.waiters = append(wq.waiters, ch)
+	wq.waiters = append(wq.waiters, w)
 	wq.mu.Unlock()
 
+	// Remove waiter from queue on exit
 	defer func() {
 		wq.mu.Lock()
-		// Remove this waiter from the queue
-		for i, w := range wq.waiters {
-			if w == ch {
+		for i, waiter := range wq.waiters {
+			if waiter == w {
 				wq.waiters = append(wq.waiters[:i], wq.waiters[i+1:]...)
 				break
 			}
@@ -380,38 +391,71 @@ func (wq *WaitQueue) Wait(ctx context.Context, timeout time.Duration) (*ServerCo
 		wq.mu.Unlock()
 	}()
 
-	select {
-	case conn := <-ch:
-		return conn, nil
-	case <-time.After(timeout):
-		wq.metrics.totalTimeouts.Add(1)
-		return nil, fmt.Errorf("connection timeout")
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	// Wait for signal or timeout
+	var timeoutCh <-chan time.Time
+	if timeout > 0 {
+		timeoutCh = time.After(timeout)
+	}
+
+	for {
+		wq.mu.Lock()
+		if w.conn != nil {
+			wq.mu.Unlock()
+			wq.metrics.totalWaits.Add(1)
+			return w.conn, nil
+		}
+		if w.timedOut {
+			wq.mu.Unlock()
+			wq.metrics.totalTimeouts.Add(1)
+			return nil, fmt.Errorf("connection timeout")
+		}
+		wq.mu.Unlock()
+
+		select {
+		case <-w.ready:
+			// Got signal
+			wq.mu.Lock()
+			if w.conn != nil {
+				wq.mu.Unlock()
+				wq.metrics.totalWaits.Add(1)
+				return w.conn, nil
+			}
+			wq.mu.Unlock()
+		case <-timeoutCh:
+			wq.mu.Lock()
+			w.timedOut = true
+			wq.mu.Unlock()
+			wq.metrics.totalTimeouts.Add(1)
+			return nil, fmt.Errorf("connection timeout")
+		case <-ctx.Done():
+			wq.mu.Lock()
+			w.timedOut = true
+			wq.mu.Unlock()
+			return nil, ctx.Err()
+		}
 	}
 }
 
 // Signal gives a connection to the longest-waiting client.
+// Returns true if a waiter received the connection.
 func (wq *WaitQueue) Signal(conn *ServerConn) bool {
 	wq.mu.Lock()
 	defer wq.mu.Unlock()
 
-	for len(wq.waiters) > 0 {
-		// Get the first waiter (FIFO)
-		ch := wq.waiters[0]
-		wq.waiters = wq.waiters[1:]
-
-		select {
-		case ch <- conn:
-			wq.metrics.totalWaits.Add(1)
-			return true
-		default:
-			// Waiter already timed out or cancelled, try next
-			continue
-		}
+	if len(wq.waiters) == 0 {
+		return false
 	}
 
-	return false
+	// Get first waiter (FIFO)
+	w := wq.waiters[0]
+	wq.waiters = wq.waiters[1:]
+
+	// Deliver connection
+	w.conn = conn
+	close(w.ready)
+
+	wq.metrics.totalWaits.Add(1)
+	return true
 }
 
 // Pool manages a set of backend connections for a single listen endpoint.
@@ -438,6 +482,7 @@ type Pool struct {
 	closeCh         chan struct{}
 	healthChecker   *HealthChecker
 	txnManager      *TransactionManager
+	userConnCounts  sync.Map // map[string]*atomic.Int64 - per-user connection counts
 }
 
 // PoolStats contains pool statistics.
@@ -1020,6 +1065,46 @@ func (p *Pool) TryIncrementClientCount(max int64) bool {
 // DecrementClientCount decrements the client connection counter.
 func (p *Pool) DecrementClientCount() {
 	p.clientCount.Add(-1)
+}
+
+// TryIncrementUserCount atomically checks per-user limit and increments.
+// Returns false if the per-user limit would be exceeded.
+func (p *Pool) TryIncrementUserCount(username string, max int) bool {
+	if username == "" || max <= 0 {
+		return true // No limit configured
+	}
+
+	var counter *atomic.Int64
+	countInterface, loaded := p.userConnCounts.LoadOrStore(username, new(atomic.Int64))
+	if loaded {
+		counter = countInterface.(*atomic.Int64)
+	} else {
+		counter = countInterface.(*atomic.Int64)
+	}
+
+	for {
+		current := counter.Load()
+		if int(current) >= max {
+			return false
+		}
+		if counter.CompareAndSwap(current, current+1) {
+			return true
+		}
+		// Retry on CAS failure
+	}
+}
+
+// DecrementUserCount decrements the per-user connection counter.
+func (p *Pool) DecrementUserCount(username string) {
+	if username == "" {
+		return
+	}
+	countInterface, loaded := p.userConnCounts.Load(username)
+	if !loaded {
+		return
+	}
+	counter := countInterface.(*atomic.Int64)
+	counter.Add(-1)
 }
 
 // IncrementQueryCount increments the query counter.

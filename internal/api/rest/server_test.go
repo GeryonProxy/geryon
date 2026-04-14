@@ -329,7 +329,7 @@ func TestServer_MetricsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: false, Token: "test-token"},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil)
@@ -342,7 +342,9 @@ func TestServer_MetricsEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/metrics")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /metrics failed: %v", err)
 	}

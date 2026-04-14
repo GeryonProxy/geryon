@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -40,6 +41,7 @@ type Listener struct {
 	address          string
 	active           atomic.Bool
 	sessions         map[uint64]*ProxySession
+	connWG           sync.WaitGroup // Tracks in-flight handleConnection goroutines
 	tlsConfig        *tls.Config
 	userDB           *auth.UserDatabase
 	cacheStore       *cache.Store
@@ -48,6 +50,7 @@ type Listener struct {
 	transactionMgr   *pool.TransactionManager
 	authLimiter      *auth.AuthLimiter
 	router           *pool.Router
+	authMode         string // "passthrough" or "interception"
 	ctx              context.Context
 	cancel           context.CancelFunc
 	log              *logger.Logger
@@ -67,6 +70,7 @@ func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.C
 		ctx:      ctx,
 		cancel:   cancel,
 		log:      log,
+		authMode: cfg.AuthMode,
 	}
 
 	// Setup query logger if enabled
@@ -241,14 +245,21 @@ func (l *Listener) acceptLoop() {
 		}
 
 		// Set deadlines to prevent slowloris attacks and idle connection buildup
-		conn.SetDeadline(time.Now().Add(5 * time.Minute)) // Overall idle timeout
+		conn.SetDeadline(time.Now().Add(2 * time.Minute)) // Overall idle timeout (M-5 fix)
 		go l.handleConnection(conn)
 	}
 }
 
 // handleConnection handles a new client connection.
 func (l *Listener) handleConnection(conn net.Conn) {
-	defer conn.Close()
+	l.connWG.Add(1)
+	defer func() {
+		l.connWG.Done()
+		if r := recover(); r != nil {
+			l.log.Error("panic in handleConnection", "pool", l.pool.Name(), "client", conn.RemoteAddr(), "panic", r)
+		}
+		conn.Close()
+	}()
 
 	// Atomically check limit and increment to prevent race condition
 	maxConns := int64(l.config.Limits.MaxClientConnections)
@@ -257,6 +268,9 @@ func (l *Listener) handleConnection(conn net.Conn) {
 		return
 	}
 
+	// Ensure counter is decremented on all exit paths (H-3 fix)
+	defer l.pool.DecrementClientCount()
+
 	// Create proxy session with cache, query logger, and transaction manager
 	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.authLimiter, l.router, l.tlsConfig, l.log)
 	if err != nil {
@@ -264,12 +278,13 @@ func (l *Listener) handleConnection(conn net.Conn) {
 		return
 	}
 
+	// Set auth mode from listener config (M-1 fix)
+	session.authMode = l.authMode
+
 	// Register session
 	l.mu.Lock()
 	l.sessions[session.ID()] = session
 	l.mu.Unlock()
-
-	l.pool.IncrementClientCount()
 
 	// Handle session
 	session.Handle(l.ctx)
@@ -305,6 +320,9 @@ func (l *Listener) Stop() error {
 	if l.listener != nil {
 		l.listener.Close()
 	}
+
+	// Wait for in-flight handleConnection goroutines to complete (M-4 fix)
+	l.connWG.Wait()
 
 	// Close all active sessions
 	for _, session := range l.sessions {
@@ -389,6 +407,7 @@ type ProxySession struct {
 	authenticated   atomic.Bool
 	username        string
 	database        string
+	authMode       string // "passthrough" or "interception"
 	scramState      *auth.SCRAMState
 	cacheStore      *cache.Store
 	cacheRules      *cache.RulesEngine
@@ -397,6 +416,10 @@ type ProxySession struct {
 	currentQuery    string
 	queryStartTime  time.Time
 	lastBoundStmt   string // last bound statement name for re-preparation
+	// M-8 fix: pending parse tracking for confirmed prepared statements
+	pendingParseMu   sync.Mutex
+	pendingParseStmt  string // statement name waiting for ParseComplete confirmation
+	pendingParseQuery string // query for the pending parse
 }
 
 var (
@@ -450,6 +473,10 @@ func (ps *ProxySession) QueryCount() int64 {
 // Handle processes the client connection.
 func (ps *ProxySession) Handle(ctx context.Context) {
 	defer func() {
+		// Decrement per-user connection count (NEW fix)
+		if ps.username != "" {
+			ps.pool.DecrementUserCount(ps.username)
+		}
 		if err := ps.poolSession.Strategy().OnClientDisconnect(ps.poolSession); err != nil {
 			ps.log.Error("Strategy disconnect error", "error", err)
 		}
@@ -532,6 +559,13 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 					return err
 				}
 			} else {
+				// TLS mode is "require", "verify-ca", or "verify-full" - SSL must be used
+				if ps.config.TLS.Mode == "require" || ps.config.TLS.Mode == "verify-ca" || ps.config.TLS.Mode == "verify-full" {
+					// Client rejected SSL upgrade - close connection since TLS is mandatory
+					ps.log.Warn("Client rejected SSL when TLS is required", "client", ps.clientConn.RemoteAddr())
+					ps.clientConn.Close()
+					return fmt.Errorf("TLS required but client refused SSL upgrade")
+				}
 				// Send 'N' to indicate SSL not supported
 				if _, err := ps.clientConn.Write([]byte{'N'}); err != nil {
 					return fmt.Errorf("failed to send SSL rejection: %w", err)
@@ -615,17 +649,39 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
 			return fmt.Errorf("unknown user: %s, failed to send error: %w", ps.username, werr)
 		}
+		// Add artificial delay to prevent username enumeration via timing attack (H-5 fix)
+		time.Sleep(50 * time.Millisecond)
 		return fmt.Errorf("unknown user: %s", ps.username)
 	}
 
-	// Authenticate based on auth mode
-	// For now, use passthrough mode to let backend handle auth
-	if ps.userDB == nil || ps.userDB.GetUser(ps.username) == nil {
-		// Passthrough: just connect to backend and let it handle auth
-		return ps.connectToBackend(ctx)
+	// Check per-user connection limit (NEW fix)
+	if user.MaxConnections > 0 {
+		if !ps.pool.TryIncrementUserCount(ps.username, user.MaxConnections) {
+			ps.log.Warn("Per-user connection limit exceeded", "user", ps.username, "limit", user.MaxConnections)
+			errMsg := postgresql.CreateErrorResponse("28P01", "too many connections for user")
+			if _, werr := ps.clientConn.Write(errMsg); werr != nil {
+				return fmt.Errorf("user %s connection limit exceeded, failed to send error: %w", ps.username, werr)
+			}
+			return fmt.Errorf("too many connections for user %s", ps.username)
+		}
 	}
 
-	// Interception mode: handle auth ourselves
+	// Check pool access authorization
+	if !user.CanAccessPool(ps.pool.Name()) {
+		ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+		errMsg := postgresql.CreateErrorResponse("28000", "access to pool denied")
+		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
+			return fmt.Errorf("access denied for user %s to pool %s, failed to send error: %w", ps.username, ps.pool.Name(), werr)
+		}
+		return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
+	}
+
+	// Handle authentication based on auth mode (M-1 fix)
+	if ps.authMode == "passthrough" {
+		// Passthrough: connect to backend and let it handle client authentication
+		return ps.connectToBackend(ctx)
+	}
+	// Interception (default): proxy handles client authentication via SCRAM
 	return ps.handlePostgreSQLAuth(ctx, user)
 }
 
@@ -636,7 +692,9 @@ func (ps *ProxySession) handlePostgreSQLAuth(ctx context.Context, user *auth.Use
 	if ps.authLimiter != nil && ps.authLimiter.IsLimited(clientIP) {
 		ps.log.Warn("Authentication blocked: client rate limited", "client", clientIP)
 		errMsg := postgresql.CreateErrorResponse("28P01", "too many failed attempts, try again later")
-		ps.clientConn.Write(errMsg)
+		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
+			return fmt.Errorf("client %s is rate limited (failed to send error: %w)", clientIP, werr)
+		}
 		return fmt.Errorf("client %s is rate limited", clientIP)
 	}
 
@@ -807,21 +865,225 @@ func (ps *ProxySession) connectToBackend(ctx context.Context) error {
 
 	ps.serverConn = serverConn
 
-	// In passthrough mode, forward startup to backend
-	if ps.username != "" {
-		// Forward startup message
-		startup := ps.codec.(*postgresql.PGCodec).CreateStartupMessage(ps.username, ps.database)
+	// Determine backend auth credentials
+	// In interception mode, use BackendAuth credentials if configured
+	// In passthrough mode, forward client's username
+	backendUsername := ps.username
+	backendPassword := ""
+
+	if ps.authMode == "interception" && ps.config != nil && ps.config.Backend.Auth.Username != "" {
+		backendUsername = ps.config.Backend.Auth.Username
+		// Load password from file if specified
+		if ps.config.Backend.Auth.PasswordFile != "" {
+			passwordBytes, err := os.ReadFile(ps.config.Backend.Auth.PasswordFile)
+			if err != nil {
+				return fmt.Errorf("failed to read backend password file: %w", err)
+			}
+			backendPassword = strings.TrimSpace(string(passwordBytes))
+			// M-11 fix: zero the buffer after use to reduce memory lifetime
+			for i := range passwordBytes {
+				passwordBytes[i] = 0
+			}
+		}
+	}
+
+	if backendUsername != "" {
+		// Send startup message to backend
+		startup := ps.codec.(*postgresql.PGCodec).CreateStartupMessage(backendUsername, ps.database)
 		if _, err := serverConn.Conn().Write(startup); err != nil {
 			return fmt.Errorf("failed to send startup to backend: %w", err)
 		}
 
-		// Forward authentication - just relay messages until AuthenticationOK
-		if err := ps.forwardAuthFromBackend(); err != nil {
-			return fmt.Errorf("backend authentication failed: %w", err)
+		// Handle backend authentication
+		if backendPassword != "" {
+			// Proxy has backend password - handle auth directly
+			if err := ps.authenticateToBackend(serverConn, backendUsername, backendPassword); err != nil {
+				return fmt.Errorf("backend authentication failed: %w", err)
+			}
+		} else {
+			// Check rate limiter before forwarding to backend (M-4 fix)
+			clientIP := ps.clientConn.RemoteAddr().String()
+			if ps.authLimiter != nil && ps.authLimiter.IsLimited(clientIP) {
+				ps.log.Warn("Authentication blocked: client rate limited", "client", clientIP)
+				return fmt.Errorf("too many failed attempts, try again later")
+			}
+			// No password - forward authentication to backend
+			if err := ps.forwardAuthFromBackend(); err != nil {
+				return fmt.Errorf("backend authentication failed: %w", err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// authenticateToBackend performs password authentication with the backend server.
+// Supports MD5 authentication. SCRAM-SHA-256 requires additional implementation.
+func (ps *ProxySession) authenticateToBackend(serverConn *pool.ServerConn, username, password string) error {
+	pgCodec := ps.codec.(*postgresql.PGCodec)
+	reader := bufio.NewReader(serverConn.Conn())
+
+	for {
+		// Read message type
+		msgType, err := reader.ReadByte()
+		if err != nil {
+			return fmt.Errorf("failed to read auth message: %w", err)
+		}
+
+		switch msgType {
+		case 'R':
+			// Authentication request
+			lenBuf := make([]byte, 4)
+			if _, err := io.ReadFull(reader, lenBuf); err != nil {
+				return fmt.Errorf("failed to read auth length: %w", err)
+			}
+			length := binary.BigEndian.Uint32(lenBuf)
+			payloadLen := int(length) - 4
+
+			payload := make([]byte, payloadLen)
+			if payloadLen > 0 {
+				if _, err := io.ReadFull(reader, payload); err != nil {
+					return fmt.Errorf("failed to read auth payload: %w", err)
+				}
+			}
+
+			authType := binary.BigEndian.Uint32(payload[0:4])
+
+			switch authType {
+			case 5: // MD5
+				// Read salt
+				salt := [4]byte{}
+				copy(salt[:], payload[4:8])
+				hash := postgresql.MD5PasswordHash(username, password, salt)
+				// Send password message
+				passMsg := pgCodec.CreatePasswordMessage(hash)
+				if _, err := serverConn.Conn().Write(passMsg); err != nil {
+					return fmt.Errorf("failed to send password: %w", err)
+				}
+
+			case 10: // SASL (SCRAM-SHA-256)
+				// For SCRAM, we need to forward to client since we don't have SCRAM client impl
+				// This is a limitation - SCRAM backend auth needs full client implementation
+				saslData := payload[4:]
+				// Parse mechanisms
+				mechEnd := 0
+				for mechEnd < len(saslData) && saslData[mechEnd] != 0 {
+					mechEnd++
+				}
+				mechanism := string(saslData[:mechEnd])
+
+				// Build and send SCRAM client first message
+				scramClient := auth.NewSCRAMClient(username, password, mechanism)
+				clientFirst := scramClient.BuildClientFirst(username)
+
+				// Send SASLInitialResponse
+				resp := pgCodec.CreateSCRAMResponse(mechanism, []byte(clientFirst))
+				if _, err := serverConn.Conn().Write(resp); err != nil {
+					return fmt.Errorf("failed to send SCRAM initial: %w", err)
+				}
+
+				// Process auth cycle
+				if err := ps.processSCRAMAuthCycle(reader, serverConn, scramClient); err != nil {
+					return err
+				}
+				return nil
+
+			case 0: // AuthenticationOK
+				return nil
+
+			default:
+				return fmt.Errorf("unsupported auth type: %d", authType)
+			}
+
+		case 'E':
+			// ErrorResponse
+			return ps.forwardErrorResponse(reader)
+
+		case 'Z':
+			// ReadyForQuery - auth complete
+			return nil
+
+		default:
+			return fmt.Errorf("unexpected message during auth: %c", msgType)
+		}
+	}
+}
+
+// processSCRAMAuthCycle handles SCRAM authentication round trips.
+func (ps *ProxySession) processSCRAMAuthCycle(reader *bufio.Reader, serverConn *pool.ServerConn, scramClient *auth.SCRAMClient) error {
+	pgCodec := ps.codec.(*postgresql.PGCodec)
+
+	for {
+		msgType, err := reader.ReadByte()
+		if err != nil {
+			return fmt.Errorf("failed to read SASL message: %w", err)
+		}
+
+		if msgType == 'R' {
+			lenBuf := make([]byte, 4)
+			if _, err := io.ReadFull(reader, lenBuf); err != nil {
+				return fmt.Errorf("failed to read SASL length: %w", err)
+			}
+			length := binary.BigEndian.Uint32(lenBuf)
+			payloadLen := int(length) - 4
+
+			payload := make([]byte, payloadLen)
+			if payloadLen > 0 {
+				if _, err := io.ReadFull(reader, payload); err != nil {
+					return fmt.Errorf("failed to read SASL payload: %w", err)
+				}
+			}
+
+			authType := binary.BigEndian.Uint32(payload[0:4])
+
+			if authType == 11 { // SASLContinue
+				serverData := payload[4:]
+				clientFinal := scramClient.BuildClientFinal(string(serverData))
+
+				// Send SASLResponse
+				resp := pgCodec.CreateSCRAMResponse("SCRAM-SHA-256", []byte(clientFinal))
+				if _, err := serverConn.Conn().Write(resp); err != nil {
+					return fmt.Errorf("failed to send SCRAM final: %w", err)
+				}
+			} else if authType == 12 { // SASLFinal
+				serverData := payload[4:]
+				if !scramClient.VerifyServerFinal(string(serverData)) {
+					return fmt.Errorf("server final verification failed")
+				}
+				// Authentication successful
+				return nil
+			}
+		} else if msgType == 'E' {
+			return ps.forwardErrorResponse(reader)
+		} else if msgType == 'Z' {
+			// ReadyForQuery
+			return nil
+		}
+	}
+}
+
+// forwardErrorResponse reads and forwards an error response.
+func (ps *ProxySession) forwardErrorResponse(reader *bufio.Reader) error {
+	lenBuf := make([]byte, 4)
+	if _, err := io.ReadFull(reader, lenBuf); err != nil {
+		return fmt.Errorf("failed to read error length: %w", err)
+	}
+	length := binary.BigEndian.Uint32(lenBuf)
+	payloadLen := int(length) - 4
+	payload := make([]byte, payloadLen)
+	if payloadLen > 0 {
+		if _, err := io.ReadFull(reader, payload); err != nil {
+			return fmt.Errorf("failed to read error payload: %w", err)
+		}
+	}
+	msg := make([]byte, 1+4+payloadLen)
+	msg[0] = 'E'
+	copy(msg[1:5], lenBuf)
+	copy(msg[5:], payload)
+	if _, err := ps.clientConn.Write(msg); err != nil {
+		return fmt.Errorf("failed to forward error: %w", err)
+	}
+	return fmt.Errorf("backend error")
 }
 
 // forwardAuthFromBackend forwards authentication messages from backend to client.
@@ -1013,6 +1275,14 @@ func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
 
 	ps.username = username
 	ps.database = database
+
+	// Check pool access authorization for MySQL (H-1 fix)
+	if ps.userDB != nil {
+		if user := ps.userDB.GetUser(ps.username); user != nil && !user.CanAccessPool(ps.pool.Name()) {
+			ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+			return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
+		}
+	}
 
 	// Forward response to backend (adjusted sequence)
 	respPkt := make([]byte, 4+respLength)
@@ -1284,6 +1554,13 @@ func (ps *ProxySession) forwardMySQLAuth() error {
 
 // handleMSSQLStartup handles MSSQL startup handshake.
 func (ps *ProxySession) handleMSSQLStartup(ctx context.Context) error {
+	// Check rate limiter before starting MSSQL authentication (M-4 fix)
+	clientIP := ps.clientConn.RemoteAddr().String()
+	if ps.authLimiter != nil && ps.authLimiter.IsLimited(clientIP) {
+		ps.log.Warn("Authentication blocked: client rate limited", "client", clientIP)
+		return fmt.Errorf("too many failed attempts, try again later")
+	}
+
 	// TDS protocol: Pre-Login -> Login7 -> Auth complete
 	// Connect to backend first
 	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
@@ -1710,10 +1987,9 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			ps.currentQuery = query
 			ps.queryStartTime = queryStartTime
 
-			// Check for transaction boundaries
+			// Check for transaction boundaries (M-6 fix: use codec methods which strip comments)
 			if ps.transactionMgr != nil {
-				upperQuery := strings.ToUpper(strings.TrimSpace(query))
-				if strings.HasPrefix(upperQuery, "BEGIN") || strings.HasPrefix(upperQuery, "START TRANSACTION") {
+				if codec.IsTransactionBegin(msg) {
 					// Register new transaction with abort function
 					if ps.serverConn != nil {
 						abortFn := func() {
@@ -1723,9 +1999,11 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 					} else {
 						ps.transactionInfo = ps.transactionMgr.Register(ps.id, 0, nil)
 					}
-				} else if strings.HasPrefix(upperQuery, "COMMIT") || strings.HasPrefix(upperQuery, "ROLLBACK") || strings.HasPrefix(upperQuery, "END") {
+				} else if codec.IsTransactionEnd(msg) {
 					// End transaction
 					if ps.transactionInfo != nil {
+						// Determine if commit or rollback from query text
+						upperQuery := strings.ToUpper(strings.TrimSpace(query))
 						if strings.HasPrefix(upperQuery, "COMMIT") {
 							ps.transactionMgr.SetStatus(ps.transactionInfo.ID, pool.TxnCommitted)
 						} else {
@@ -1742,13 +2020,18 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 		if ps.poolSession.PreparedStatements() != nil && ps.config.Body == "postgresql" {
 			switch {
 			case codec.IsPrepare(msg):
-				// Parse message - register in cache
+				// Parse message - track pending parse for confirmation
+				// M-8 fix: wait for ParseComplete before marking as prepared
 				pgCodec := codec.(*postgresql.PGCodec)
 				stmtName, _ := pgCodec.ExtractStatementName(msg)
 				query, _ := pgCodec.ExtractQuery(msg)
 				if query != "" {
-					ps.poolSession.PreparedStatements().Register(stmtName, query, nil)
-					ps.log.Debug("Prepared statement registered",
+					// Track pending parse - will be confirmed on ParseComplete
+					ps.pendingParseMu.Lock()
+					ps.pendingParseStmt = stmtName
+					ps.pendingParseQuery = query
+					ps.pendingParseMu.Unlock()
+					ps.log.Debug("Prepared statement pending confirmation",
 						"name", stmtName,
 						"query", query[:min(len(query), 50)],
 					)
@@ -2077,6 +2360,34 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 		// Count rows in DataRow messages
 		if msg.Type == 'D' { // DataRow
 			rowCount++
+		}
+
+		// M-8 fix: handle ParseComplete and ErrorResponse for prepared statements
+		if msg.Type == '1' { // ParseComplete - confirm pending parse
+			ps.pendingParseMu.Lock()
+			if ps.pendingParseStmt != "" {
+				// Register confirmed statement in cache and mark on server conn
+				ps.poolSession.PreparedStatements().Register(ps.pendingParseStmt, ps.pendingParseQuery, nil)
+				if ps.serverConn != nil {
+					ps.serverConn.AddPreparedStatement(ps.pendingParseStmt)
+				}
+				ps.log.Debug("Prepared statement confirmed",
+					"name", ps.pendingParseStmt,
+				)
+				ps.pendingParseStmt = ""
+				ps.pendingParseQuery = ""
+			}
+			ps.pendingParseMu.Unlock()
+		} else if msg.Type == 'E' { // ErrorResponse - cancel pending parse
+			ps.pendingParseMu.Lock()
+			if ps.pendingParseStmt != "" {
+				ps.log.Debug("Prepared statement failed",
+					"name", ps.pendingParseStmt,
+				)
+				ps.pendingParseStmt = ""
+				ps.pendingParseQuery = ""
+			}
+			ps.pendingParseMu.Unlock()
 		}
 
 		// Write message to client

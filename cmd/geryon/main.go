@@ -142,13 +142,15 @@ func main() {
 
 	// Create and start proxy listeners
 	listeners := make([]*proxy.Listener, 0, len(cfg.Pools))
-	for _, poolCfg := range cfg.Pools {
+	for i := range cfg.Pools {
+		cfg.Pools[i].AuthMode = cfg.Auth.Mode
+		poolCfg := &cfg.Pools[i]
 		p := poolMgr.GetPool(poolCfg.Name)
 		if p == nil {
 			continue
 		}
 
-		listener, err := proxy.NewListener(p, &poolCfg, p.Codec(), userDB, log)
+		listener, err := proxy.NewListener(p, poolCfg, p.Codec(), userDB, log)
 		if err != nil {
 			log.Error("Failed to create listener", "pool", poolCfg.Name, "error", err)
 			os.Exit(1)
@@ -330,14 +332,20 @@ func generatePasswordHash() error {
 	if err != nil {
 		return fmt.Errorf("failed to read password: %w", err)
 	}
-	password := string(passwordBytes)
 	fmt.Println()
 
-	if password == "" {
+	if len(passwordBytes) == 0 {
 		return fmt.Errorf("password cannot be empty")
 	}
 
-	hash, err := auth.GenerateSCRAMSHA256(password)
+	// M-11 fix: zero the buffer after use to reduce memory lifetime
+	defer func() {
+		for i := range passwordBytes {
+			passwordBytes[i] = 0
+		}
+	}()
+
+	hash, err := auth.GenerateSCRAMSHA256(string(passwordBytes))
 	if err != nil {
 		return fmt.Errorf("failed to generate hash: %w", err)
 	}
@@ -356,7 +364,7 @@ func generateSelfSignedCert() error {
 
 	fmt.Printf("Generating self-signed certificate...\n")
 	fmt.Printf("Certificate: %s\n", certFile)
-	fmt.Printf("Private key: %s\n", keyFile)
+	fmt.Fprintf(os.Stderr, "Private key: %s\n", keyFile) // L-3 fix: private key path to stderr, not stdout
 
 	certPEM, keyPEM, err := tlsutil.GenerateSelfSignedCert("localhost", 365*24*time.Hour)
 	if err != nil {

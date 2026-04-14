@@ -32,6 +32,12 @@ Thumbs.db
 geryon.yaml
 *.local.yaml
 
+# Environment files (L-2 fix)
+.env
+*.env
+.env.*
+.env.local
+
 # Logs
 *.log
 

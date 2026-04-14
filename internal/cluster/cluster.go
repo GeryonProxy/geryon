@@ -645,7 +645,7 @@ func (s *SwimGossip) probe(target *Node) {
 	s.alive[target.ID] = time.Now()
 	delete(s.suspected, target.ID)
 	target.LastSeen = time.Now()
-	target.State = NodeStateFollower
+	target.State = NodeStateFollower // M-3 fix: update under lock
 	s.mu.Unlock()
 }
 

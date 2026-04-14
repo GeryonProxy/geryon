@@ -73,8 +73,8 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
 	mux.HandleFunc("/api/v1/tls/status", s.handleTLSStatus)
 
-	// Prometheus metrics endpoint
-	mux.HandleFunc("/metrics", s.handleMetrics)
+	// Prometheus metrics endpoint (always requires auth)
+	mux.Handle("/metrics", s.requireAuth(http.HandlerFunc(s.handleMetrics)))
 
 	// Dashboard routes
 	if err := s.setupDashboard(mux); err != nil {
@@ -229,6 +229,31 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.config.Auth.Token)) != 1 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireAuth always requires authentication (ignores Auth.Enabled flag).
+// Used for sensitive endpoints like /metrics.
+func (s *Server) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
