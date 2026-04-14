@@ -30,7 +30,7 @@ type BackendHost struct {
 type BackendAuth struct {
 	Method       string `yaml:"method"`
 	Username     string `yaml:"username"`
-	PasswordFile string `yaml:"password_file"`
+	PasswordFile string `yaml:"password_file"` // M-12: planned - read password from file for backend auth in interception mode
 }
 
 // BackendConfig contains backend connection settings.
@@ -107,6 +107,7 @@ type PoolConfig struct {
 	Cache   CacheConfig   `yaml:"cache"`
 	Routing RoutingConfig `yaml:"routing"`
 	Transaction TransactionConfig `yaml:"transaction"`
+	AuthMode   string           `yaml:"auth_mode"` // "passthrough" or "interception"
 }
 
 // ListenConfig contains listener settings.

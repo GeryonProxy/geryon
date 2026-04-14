@@ -156,7 +156,7 @@ func (hc *HealthChecker) checkLoop() {
 	}
 }
 
-// runChecks runs health checks on all backends.
+// runChecks runs health checks on all backends with bounded concurrency.
 func (hc *HealthChecker) runChecks() {
 	hc.mu.RLock()
 	backends := make([]*BackendHealth, 0, len(hc.backends))
@@ -165,9 +165,25 @@ func (hc *HealthChecker) runChecks() {
 	}
 	hc.mu.RUnlock()
 
-	for _, bh := range backends {
-		go hc.checkBackend(bh)
+	if len(backends) == 0 {
+		return
 	}
+
+	// Limit concurrent checks to avoid unbounded goroutine growth
+	const maxConcurrentChecks = 10
+	sem := make(chan struct{}, maxConcurrentChecks)
+	var wg sync.WaitGroup
+
+	for _, bh := range backends {
+		sem <- struct{}{} // acquire
+		wg.Add(1)
+		go func(bh *BackendHealth) {
+			defer func() { <-sem }() // release
+			defer wg.Done()
+			hc.checkBackend(bh)
+		}(bh)
+	}
+	wg.Wait()
 }
 
 // checkBackend performs a health check on a single backend.

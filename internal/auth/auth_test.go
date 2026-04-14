@@ -210,8 +210,8 @@ func TestGenerateSCRAMHash(t *testing.T) {
 	}
 
 	// Parse iterations
-	if parts[0] != "10000" {
-		t.Errorf("expected iterations 10000, got %s", parts[0])
+	if parts[0] != "120000" {
+		t.Errorf("expected iterations 120000, got %s", parts[0])
 	}
 
 	// Verify all parts are non-empty

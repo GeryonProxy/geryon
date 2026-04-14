@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/tokenizer"
@@ -15,7 +16,7 @@ type Router struct {
 	mu           sync.RWMutex
 	primary      *Backend
 	replicas     []*Backend
-	replicaIndex int // Round-robin counter
+	replicaIndex int64 // Round-robin counter (atomic for RLock-safe access)
 	rules        []RoutingRule
 	defaultRead  bool
 }
@@ -157,9 +158,9 @@ func (r *Router) selectReplica() *Backend {
 		return healthy[0]
 	}
 
-	// Simple round-robin for now
-	r.replicaIndex = (r.replicaIndex + 1) % len(healthy)
-	return healthy[r.replicaIndex]
+	// Simple round-robin for now (atomic for RLock-safe access)
+	idx := atomic.AddInt64(&r.replicaIndex, 1) - 1
+	return healthy[int(idx)%len(healthy)]
 }
 
 // Primary returns the primary backend.

@@ -119,7 +119,7 @@ func (c *PGCodec) IsTransactionBegin(msg *common.Message) bool {
 	if msg.Type != 'Q' {
 		return false
 	}
-	query := strings.ToUpper(strings.TrimSpace(c.extractSimpleQuery(msg)))
+	query := stripSQLComments(strings.ToUpper(strings.TrimSpace(c.extractSimpleQuery(msg))))
 	return strings.HasPrefix(query, "BEGIN") ||
 		strings.HasPrefix(query, "START TRANSACTION")
 }
@@ -127,7 +127,7 @@ func (c *PGCodec) IsTransactionBegin(msg *common.Message) bool {
 // IsTransactionEnd returns true if message ends a transaction.
 func (c *PGCodec) IsTransactionEnd(msg *common.Message) bool {
 	if msg.Type == 'Q' {
-		query := strings.ToUpper(strings.TrimSpace(c.extractSimpleQuery(msg)))
+		query := stripSQLComments(strings.ToUpper(strings.TrimSpace(c.extractSimpleQuery(msg))))
 		return strings.HasPrefix(query, "COMMIT") ||
 			strings.HasPrefix(query, "ROLLBACK") ||
 			strings.HasPrefix(query, "END")
@@ -137,6 +137,45 @@ func (c *PGCodec) IsTransactionEnd(msg *common.Message) bool {
 		return len(msg.Payload) > 0 && msg.Payload[0] == 'I' // Idle = not in transaction
 	}
 	return false
+}
+
+// stripSQLComments removes SQL comments from a query string to prevent
+// bypass of transaction boundary detection via comment tricks (M-6 fix).
+func stripSQLComments(query string) string {
+	// Remove line comments (-- ...)
+	result := ""
+	for i := 0; i < len(query); i++ {
+		if i+2 < len(query) && query[i] == '-' && query[i+1] == '-' {
+			// Skip to end of line
+			for i < len(query) && query[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		result += string(query[i])
+	}
+	query = result
+
+	// Remove block comments (/* ... */)
+	result = ""
+	i := 0
+	for i < len(query) {
+		if i+1 < len(query) && query[i] == '/' && query[i+1] == '*' {
+			// Skip block comment
+			i += 2
+			for i < len(query) {
+				if i+1 < len(query) && query[i] == '*' && query[i+1] == '/' {
+					i += 2
+					break
+				}
+				i++
+			}
+			continue
+		}
+		result += string(query[i])
+		i++
+	}
+	return result
 }
 
 // IsPrepare returns true if this is a prepare statement message.

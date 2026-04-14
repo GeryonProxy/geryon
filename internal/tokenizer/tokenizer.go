@@ -49,6 +49,15 @@ func (t QueryType) String() string {
 
 // ClassifyQuery determines the type of SQL query.
 func ClassifyQuery(query string) (QueryType, error) {
+	// M-7 fix: strip comments and handle multi-statement queries
+	query = stripSQLComments(query)
+	query = strings.TrimSpace(query)
+
+	// Get only the first statement (before semicolon)
+	if idx := strings.Index(query, ";"); idx != -1 {
+		query = strings.TrimSpace(query[:idx])
+	}
+
 	queryUpper := strings.ToUpper(query)
 
 	if strings.HasPrefix(queryUpper, "SELECT") {
@@ -86,6 +95,44 @@ func ClassifyQuery(query string) (QueryType, error) {
 	}
 
 	return QueryUnknown, nil
+}
+
+// stripSQLComments removes SQL comments from a query string.
+func stripSQLComments(query string) string {
+	// Remove line comments (-- ...)
+	result := ""
+	for i := 0; i < len(query); i++ {
+		if i+2 <= len(query) && query[i] == '-' && query[i+1] == '-' {
+			// Skip to end of line
+			for i < len(query) && query[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		result += string(query[i])
+	}
+	query = result
+
+	// Remove block comments (/* ... */)
+	result = ""
+	i := 0
+	for i < len(query) {
+		if i+1 < len(query) && query[i] == '/' && query[i+1] == '*' {
+			// Skip block comment
+			i += 2
+			for i < len(query) {
+				if i+1 < len(query) && query[i] == '*' && query[i+1] == '/' {
+					i += 2
+					break
+				}
+				i++
+			}
+			continue
+		}
+		result += string(query[i])
+		i++
+	}
+	return result
 }
 
 // IsWriteQuery returns true if the query is a write operation.

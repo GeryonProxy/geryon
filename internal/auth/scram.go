@@ -20,9 +20,9 @@ func GenerateSCRAMSHA256(password string) (string, error) {
 		return "", err
 	}
 
-	// Use PBKDF2 with SHA-256, 10000 iterations (NIST recommendation)
+	// Use PBKDF2 with SHA-256, 120000 iterations (OWASP 2023+ recommendation)
 	// Implementing PBKDF2 manually to avoid external dependencies
-	iterations := 10000
+	iterations := 120000
 	saltedPassword := pbkdf2Key([]byte(password), salt, iterations, 32, sha256.New)
 
 	// Calculate ClientKey
@@ -133,4 +133,122 @@ func VerifySCRAMSHA256(password, hash string) (bool, error) {
 	calculatedStoredKey := sha256.Sum256(clientKey)
 
 	return subtle.ConstantTimeCompare(expectedStoredKey, calculatedStoredKey[:]) == 1, nil
+}
+
+// SCRAMClient implements SCRAM-SHA-256 client-side authentication.
+// Used when the proxy needs to authenticate to a backend server.
+type SCRAMClient struct {
+	username     string
+	password     string
+	mechanism    string
+	clientNonce  string
+	salt         []byte
+	saltedPass   []byte
+	clientFirst  string
+	serverFirst  string
+	clientFinal  string
+}
+
+// NewSCRAMClient creates a new SCRAM client for authentication.
+func NewSCRAMClient(username, password, mechanism string) *SCRAMClient {
+	return &SCRAMClient{
+		username:  username,
+		password:  password,
+		mechanism: mechanism,
+	}
+}
+
+// BuildClientFirst creates the client-first message.
+func (c *SCRAMClient) BuildClientFirst(username string) string {
+	// Generate client nonce
+	nonceBytes := make([]byte, 18)
+	rand.Read(nonceBytes)
+	c.clientNonce = base64.StdEncoding.EncodeToString(nonceBytes)
+
+	// Format: n=username,r=nonce (n = SCRAM-SHA-256 mechanism flag)
+	c.username = username
+	c.clientFirst = fmt.Sprintf("n=%s,r=%s", username, c.clientNonce)
+	return c.clientFirst
+}
+
+// BuildClientFinal creates the client-final message after receiving server challenge.
+func (c *SCRAMClient) BuildClientFinal(serverFirst string) string {
+	// Parse server-first message: r=nonce,s=salt,i=iterations
+	parts := strings.Split(serverFirst, ",")
+	var serverNonce string
+	for _, part := range parts {
+		if strings.HasPrefix(part, "r=") {
+			serverNonce = part[2:]
+		} else if strings.HasPrefix(part, "s=") {
+			saltB64 := part[2:]
+			c.salt, _ = base64.StdEncoding.DecodeString(saltB64)
+		}
+	}
+
+	if serverNonce == "" || c.salt == nil {
+		return ""
+	}
+
+	// Store server-first for AuthMessage computation
+	c.serverFirst = serverFirst
+
+	// Append client nonce to server nonce for combined nonce
+	combinedNonce := serverNonce + c.clientNonce
+
+	// Compute salted password with 120000 iterations
+	c.saltedPass = pbkdf2Key([]byte(c.password), c.salt, 120000, 32, sha256.New)
+
+	// Compute ClientKey
+	clientKey := hmacSum(c.saltedPass, []byte("Client Key"))
+
+	// Compute AuthMessage = client-first-bare + server-first + client-final-without-proof
+	// client-final-without-proof = channel-binding "," nonce
+	c.clientFinal = fmt.Sprintf("c=biws,r=%s", combinedNonce)
+	authMessage := c.clientFirst + "," + c.serverFirst + "," + c.clientFinal
+
+	// Compute ClientSignature = HMAC(SaltedPassword, AuthMessage)
+	clientSignature := hmacSum(c.saltedPass, []byte(authMessage))
+
+	// Compute ClientProof: ClientKey XOR ClientSignature
+	clientProof := make([]byte, len(clientKey))
+	for i := range clientKey {
+		clientProof[i] = clientKey[i] ^ clientSignature[i]
+	}
+
+	proofB64 := base64.StdEncoding.EncodeToString(clientProof)
+
+	return fmt.Sprintf("c=biws,r=%s,p=%s", combinedNonce, proofB64)
+}
+
+// authMessage holds the full SCRAM authentication exchange for server signature verification.
+// Stored during BuildClientFinal and used in VerifyServerFinal.
+var authMessage string
+
+// VerifyServerFinal verifies the server's final message.
+// Per RFC 5802, ServerSignature = HMAC(ServerKey, AuthMessage)
+// where AuthMessage = client-first-message-bare + "," + server-first-message + "," + client-final-message-without-proof
+func (c *SCRAMClient) VerifyServerFinal(serverFinal string) bool {
+	if !strings.HasPrefix(serverFinal, "v=") {
+		return false
+	}
+
+	// Parse server signature
+	serverSigB64 := strings.TrimPrefix(serverFinal, "v=")
+	expectedServerSig, err := base64.StdEncoding.DecodeString(serverSigB64)
+	if err != nil {
+		return false
+	}
+
+	// Recompute ServerKey = HMAC(SaltedPassword, "Server Key")
+	serverKey := hmacSum(c.saltedPass, []byte("Server Key"))
+
+	// Build the AuthMessage that was used for server signature
+	// Per RFC 5802: AuthMessage = client-first-message-bare + "," + server-first-message + "," + client-final-message-without-proof
+	authMessage := c.clientFirst + "," + c.serverFirst + "," + c.clientFinal
+
+	// ServerSignature = HMAC(ServerKey, AuthMessage)
+	recomputedSig := hmacSum(serverKey, []byte(authMessage))
+
+	// Use constant-time comparison to prevent timing attacks
+	return subtle.ConstantTimeCompare(expectedServerSig, recomputedSig) == 1
 }

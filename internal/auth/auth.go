@@ -121,7 +121,7 @@ type SCRAMServer struct {
 // NewSCRAMServer creates a new SCRAM server.
 func NewSCRAMServer(users *UserDatabase) *SCRAMServer {
 	return &SCRAMServer{
-		iterations: 10000,
+		iterations: 120000, // OWASP 2023+ recommendation
 		users:      users,
 	}
 }
@@ -283,10 +283,10 @@ func GenerateSCRAMHash(password string) (string, error) {
 		return "", fmt.Errorf("failed to generate salt: %w", err)
 	}
 
-	iterations := 10000
+	iterations := 120000 // OWASP 2023+ recommendation
 
 	// SaltedPassword = PBKDF2(HMAC-SHA-256, password, salt, iterations, 32)
-	saltedPassword := pbkdf2([]byte(password), salt, iterations, 32)
+	saltedPassword := pbkdf2Key([]byte(password), salt, iterations, 32, sha256.New)
 
 	// ClientKey = HMAC(SaltedPassword, "Client Key")
 	clientKey := hmacSHA256(saltedPassword, []byte("Client Key"))
@@ -415,40 +415,6 @@ func xor(a, b []byte) []byte {
 	return result
 }
 
-func pbkdf2(password, salt []byte, iterations, keyLen int) []byte {
-	// Simple PBKDF2 implementation using HMAC-SHA-256
-	prf := func(data []byte) []byte {
-		return hmacSHA256(password, data)
-	}
-
-	blockSize := 32 // SHA-256 block size
-	numBlocks := (keyLen + blockSize - 1) / blockSize
-
-	buf := make([]byte, numBlocks*blockSize)
-	u := make([]byte, blockSize)
-	for block := 1; block <= numBlocks; block++ {
-		// U_1 = PRF(salt || INT_32_BE(block))
-		saltBlock := append(salt, []byte{
-			byte(block >> 24),
-			byte(block >> 16),
-			byte(block >> 8),
-			byte(block),
-		}...)
-		u = prf(saltBlock)
-		copy(buf[(block-1)*blockSize:], u)
-
-		// U_i = PRF(U_{i-1})
-		for i := 2; i <= iterations; i++ {
-			u = prf(u)
-			for j := range u {
-				buf[(block-1)*blockSize+j] ^= u[j]
-			}
-		}
-	}
-
-	return buf[:keyLen]
-}
-
 // AuthMode represents authentication modes.
 type AuthMode int
 
@@ -480,10 +446,11 @@ type AuthLimiter struct {
 }
 
 type ipAuthAttempts struct {
-	count     int
-	firstFail time.Time
-	locked    bool
-	lockUntil time.Time
+	mu         sync.Mutex
+	count      int
+	firstFail  time.Time
+	locked     bool
+	lockUntil  time.Time
 }
 
 // NewAuthLimiter creates a rate limiter with defaults:
@@ -511,8 +478,6 @@ func NewAuthLimiterConfig(maxAttempts int, window, lockoutPeriod time.Duration) 
 // Returns true if the IP is now locked out.
 func (al *AuthLimiter) RecordFailure(ip string) bool {
 	al.mu.Lock()
-	defer al.mu.Unlock()
-
 	entry, exists := al.attempts[ip]
 	if !exists {
 		entry = &ipAuthAttempts{
@@ -520,12 +485,19 @@ func (al *AuthLimiter) RecordFailure(ip string) bool {
 		}
 		al.attempts[ip] = entry
 	}
+	al.mu.Unlock()
+
+	// Use per-entry lock for atomic access to entry fields
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	now := time.Now()
 
 	// Check if lockout has expired
-	if entry.locked && time.Now().After(entry.lockUntil) {
+	if entry.locked && now.After(entry.lockUntil) {
 		// Reset after lockout expires
 		entry.count = 1
-		entry.firstFail = time.Now()
+		entry.firstFail = now
 		entry.locked = false
 		return false
 	}
@@ -536,16 +508,16 @@ func (al *AuthLimiter) RecordFailure(ip string) bool {
 	}
 
 	// Clean up old entries outside the window
-	if time.Since(entry.firstFail) > al.window {
+	if now.Sub(entry.firstFail) > al.window {
 		entry.count = 1
-		entry.firstFail = time.Now()
+		entry.firstFail = now
 		return false
 	}
 
 	entry.count++
 	if entry.count >= al.maxAttempts {
 		entry.locked = true
-		entry.lockUntil = time.Now().Add(al.lockoutPeriod)
+		entry.lockUntil = now.Add(al.lockoutPeriod)
 		return true
 	}
 
@@ -562,22 +534,32 @@ func (al *AuthLimiter) RecordSuccess(ip string) {
 // IsLimited returns true if the IP is currently locked out.
 func (al *AuthLimiter) IsLimited(ip string) bool {
 	al.mu.Lock()
-	defer al.mu.Unlock()
-
 	entry, exists := al.attempts[ip]
 	if !exists {
+		al.mu.Unlock()
 		return false
 	}
+	al.mu.Unlock()
+
+	// Use per-entry lock for consistent read
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	now := time.Now()
 
 	// Clean up expired entries
-	if time.Since(entry.firstFail) > al.window {
+	if now.Sub(entry.firstFail) > al.window {
+		al.mu.Lock()
 		delete(al.attempts, ip)
+		al.mu.Unlock()
 		return false
 	}
 
-	if entry.locked && time.Now().After(entry.lockUntil) {
+	if entry.locked && now.After(entry.lockUntil) {
 		// Lockout expired, clean up
+		al.mu.Lock()
 		delete(al.attempts, ip)
+		al.mu.Unlock()
 		return false
 	}
 

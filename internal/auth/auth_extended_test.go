@@ -1040,13 +1040,13 @@ func TestGenerateSCRAMSHA256(t *testing.T) {
 		if len(parts) != 3 {
 			t.Fatalf("expected 3 major parts, got %d", len(parts))
 		}
-		// Check iterations is 10000
+		// Check iterations is 120000 (OWASP recommendation)
 		iterParts := strings.Split(parts[1], ":")
 		if len(iterParts) != 2 {
 			t.Fatal("iterations:salt should have 2 parts")
 		}
-		if iterParts[0] != "10000" {
-			t.Errorf("iterations = %s, want 10000", iterParts[0])
+		if iterParts[0] != "120000" {
+			t.Errorf("iterations = %s, want 120000", iterParts[0])
 		}
 		// Salt should be 32 bytes (base64 encoded)
 		salt, err := base64.StdEncoding.DecodeString(iterParts[1])
