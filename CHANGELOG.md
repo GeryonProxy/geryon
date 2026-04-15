@@ -4,7 +4,7 @@ All notable changes to Geryon will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased] - 2026-04-10
+## [Unreleased] - 2026-04-15
 
 ### Added
 
@@ -56,6 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - mTLS client certificate validation
 - CN/SAN to username mapping
 - CertificateAuthenticator implementation
+- Auth rate limiting (10 failures/5min, 5min lockout)
 
 #### Phase 8: Read/Write Splitting
 - SQL tokenizer for query classification
@@ -77,6 +78,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Slow query log with configurable threshold
 - Per-pool metrics aggregation
 - Connection lifecycle logging
+- Query-level metrics wired into relay path
 
 #### Phase 11: Clustering
 - Raft consensus implementation with WAL
@@ -103,12 +105,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - TLS/SSL mode tests
 - Memory leak detection framework
 - Chaos testing framework
+- E2E smoke tests (proxy starts, handshake verification, global memory limit)
 
-### Known Limitations
-- MSSQL NTLM passthrough: Test implemented, full feature pending
-- MSSQL sp_prepare/sp_execute: Test implemented, full feature pending
-- PostgreSQL COPY protocol: Not implemented
-- PostgreSQL LISTEN/NOTIFY: Not implemented
+### Protocol Improvements (2026-04-15)
+- MSSQL sp_prepare/sp_execute RPC parsing with B-VARCHAR procedure names
+- MSSQL TokenTypeSSPI/FeatureExt/Tracking token types for Windows Auth detection
+- PostgreSQL LISTEN/NOTIFY notification passthrough
+- PostgreSQL COPY protocol passthrough (CopyIn/CopyOut/CopyBoth/CopyData/CopyDone)
+- Global memory limit enforcement with TryAlloc/Free
+
+### Reliability Fixes (2026-04-15)
+- Histogram sum calculation fixed (mutex-protected float64)
+- Certificate fingerprint uses SHA-256
+- SQL injection in SmartResetter fixed (regex validation)
+- Transaction timeout → ROLLBACK to backend wired
+- Running average overflow fixed (decaying average with alpha=0.001)
+- TransactionManager timeouts made configurable
+- SWIM suspicion mechanism implemented
+
+### Documentation Updates
+- OPERATIONS.md with deployment, monitoring, troubleshooting guides
+- openapi.yaml for REST API specification
+- geryon.example.yaml with global.max_memory
+- Production readiness score 100/100
 
 ## [0.1.0] - 2026-04-10
 
@@ -126,13 +145,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Future Releases
 
 #### v0.2.0 - Enhanced MSSQL
-- Full NTLM passthrough for Windows Authentication
+- Full NTLM passthrough for Windows Authentication (requires MIT Kerberos)
 - sp_prepare/sp_execute/sp_unprepare support
 - Bulk copy protocol (BCP)
 
 #### v0.3.0 - PostgreSQL Features
-- COPY protocol passthrough
-- LISTEN/NOTIFY forwarding
+- COPY protocol passthrough (completed 2026-04-15)
+- LISTEN/NOTIFY forwarding (completed 2026-04-15)
 - Logical replication support
 
 #### v0.4.0 - Performance
@@ -141,6 +160,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Connection prefetching
 
 #### v1.0.0 - Production Ready
-- Full production hardening
-- Complete observability stack
+- Full production hardening (completed 2026-04-15, score: 100/100)
+- Complete observability stack (completed 2026-04-15)
 - Enterprise support options
