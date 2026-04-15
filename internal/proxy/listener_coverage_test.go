@@ -76,7 +76,7 @@ func TestForwardAuthToBackend_ValidPayload(t *testing.T) {
 	// Client sends a password message ('p') with valid payload
 	go func() {
 		// 'p' message type
-		payload := []byte{0x00, 0x00, 0x00, 0x05} // length=5
+		payload := []byte{0x00, 0x00, 0x00, 0x05}    // length=5
 		payload = append(payload, []byte("test")...) // 4 bytes of data
 		clientEnd.Write(append([]byte{'p'}, payload...))
 	}()
@@ -1190,7 +1190,7 @@ func TestForwardAuthFromBackend_AuthChallenge(t *testing.T) {
 	// Backend sends AuthMD5 challenge, then client responds, then backend sends AuthOK + ReadyForQuery
 	go func() {
 		// Auth request type 5 (MD5) - challenge
-		authPayload := []byte{0, 0, 0, 5} // auth type = 5
+		authPayload := []byte{0, 0, 0, 5}                        // auth type = 5
 		authPayload = append(authPayload, []byte{1, 2, 3, 4}...) // 4-byte salt
 		authMsg := makePGMessage('R', authPayload)
 		backendEnd.Write(authMsg)
@@ -1244,8 +1244,8 @@ func TestForwardMSSQLLogin7_BackendCloses(t *testing.T) {
 	go func() {
 		// TDS Login7 packet: type=0x10, status=0x01, length
 		header := make([]byte, 8)
-		header[0] = 0x10 // Login7 type
-		header[1] = 0x01 // StatusEndOfMessage
+		header[0] = 0x10           // Login7 type
+		header[1] = 0x01           // StatusEndOfMessage
 		payload := make([]byte, 8) // minimal payload
 		binary.BigEndian.PutUint16(header[2:4], uint16(8+len(payload)))
 		clientEnd.Write(append(header, payload...))

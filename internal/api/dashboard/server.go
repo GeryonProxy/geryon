@@ -1,8 +1,8 @@
 package dashboard
 
 import (
-	"embed"
 	"crypto/subtle"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -24,13 +24,13 @@ var staticFS embed.FS
 
 // Server serves the web dashboard.
 type Server struct {
-	poolMgr *pool.Manager
-	log     *logger.Logger
-	server  *http.Server
-	config  *Config
-	authToken  string
+	poolMgr     *pool.Manager
+	log         *logger.Logger
+	server      *http.Server
+	config      *Config
+	authToken   string
 	authEnabled bool
-	reloadFn   func() error
+	reloadFn    func() error
 }
 
 // Config holds dashboard configuration.
@@ -269,13 +269,13 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	for _, p := range pools {
 		stats := p.Stats()
 		result = append(result, map[string]any{
-			"name":               stats.Name,
-			"body":               stats.Mode, // Use mode as body indicator
-			"mode":               stats.Mode,
-			"client_connections": stats.ClientConnections,
-			"server_connections": stats.ServerConnections,
-			"backend_count":      stats.BackendCount,
-			"query_cache_entries": stats.QueryCacheEntries,
+			"name":                 stats.Name,
+			"body":                 stats.Mode, // Use mode as body indicator
+			"mode":                 stats.Mode,
+			"client_connections":   stats.ClientConnections,
+			"server_connections":   stats.ServerConnections,
+			"backend_count":        stats.BackendCount,
+			"query_cache_entries":  stats.QueryCacheEntries,
 			"query_cache_hit_rate": stats.QueryCacheHitRate,
 		})
 	}

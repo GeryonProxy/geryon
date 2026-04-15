@@ -1156,8 +1156,8 @@ func TestCommandMessage(t *testing.T) {
 // Test HealthBroadcast struct
 func TestHealthBroadcast(t *testing.T) {
 	broadcast := HealthBroadcast{
-		Source:      "node-1",
-		FailedNode:  "node-2",
+		Source:     "node-1",
+		FailedNode: "node-2",
 		BackendHealth: map[string]BackendHealth{
 			"pool-1": {Pool: "pool-1", Backend: "backend-1", Healthy: true},
 		},

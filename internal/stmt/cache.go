@@ -9,10 +9,10 @@ import (
 
 // Statement represents a prepared statement.
 type Statement struct {
-	Name      string
-	SQL       string
+	Name       string
+	SQL        string
 	ParamTypes []int32
-	NumParams int
+	NumParams  int
 }
 
 // Cache stores prepared statement metadata.
@@ -257,7 +257,7 @@ func (m *Manager) GetMissingStatements(connID uint64, stmtNames []string) []stri
 
 // Remapper handles client statement ID to server statement ID mapping.
 type Remapper struct {
-	mu          sync.RWMutex
+	mu             sync.RWMutex
 	clientToServer map[string]uint32 // client name -> server ID
 	serverToClient map[uint32]string // server ID -> client name
 }

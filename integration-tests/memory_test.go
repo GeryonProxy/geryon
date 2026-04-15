@@ -9,15 +9,15 @@ import (
 
 // MemorySnapshot captures memory statistics
 type MemorySnapshot struct {
-	Timestamp    time.Time
-	Alloc        uint64
-	TotalAlloc   uint64
-	Sys          uint64
-	NumGC        uint32
-	HeapAlloc    uint64
-	HeapSys      uint64
-	HeapObjects  uint64
-	StackInUse   uint64
+	Timestamp   time.Time
+	Alloc       uint64
+	TotalAlloc  uint64
+	Sys         uint64
+	NumGC       uint32
+	HeapAlloc   uint64
+	HeapSys     uint64
+	HeapObjects uint64
+	StackInUse  uint64
 }
 
 // CaptureMemorySnapshot captures current memory statistics
@@ -176,8 +176,8 @@ func TestMemoryLongRunningStability(t *testing.T) {
 	middle := snapshots[len(snapshots)/2]
 
 	growthRate := float64(last.HeapAlloc-first.HeapAlloc) / float64(len(snapshots))
-	middleGrowth := float64(middle.HeapAlloc-first.HeapAlloc)
-	lastGrowth := float64(last.HeapAlloc-middle.HeapAlloc)
+	middleGrowth := float64(middle.HeapAlloc - first.HeapAlloc)
+	lastGrowth := float64(last.HeapAlloc - middle.HeapAlloc)
 
 	t.Logf("Growth rate: %.2f bytes/sample", growthRate)
 	t.Logf("First half growth: %.2f MB", middleGrowth/(1024*1024))

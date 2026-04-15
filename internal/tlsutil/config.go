@@ -53,9 +53,9 @@ func (c *Config) LoadFromConfig(cfg *config.TLSConfig) error {
 
 	// Create server config
 	serverConfig := &tls.Config{
-		Certificates:   []tls.Certificate{cert},
-		MinVersion:     tls.VersionTLS12,
-		CipherSuites:   CipherSuites12(),
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: CipherSuites12(),
 	}
 
 	// Set client auth mode
@@ -87,9 +87,9 @@ func (c *Config) LoadFromConfig(cfg *config.TLSConfig) error {
 
 	// Create client config
 	clientConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		MinVersion:         tls.VersionTLS12,
-		CipherSuites:       CipherSuites12(),
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: CipherSuites12(),
 		// InsecureSkipVerify defaults to false; only set for explicitly insecure modes
 	}
 
@@ -202,13 +202,13 @@ func GenerateSelfSignedCert(host string, validFor time.Duration) ([]byte, []byte
 
 // CertInfo holds certificate information.
 type CertInfo struct {
-	Subject    string
-	Issuer     string
-	NotBefore  time.Time
-	NotAfter   time.Time
-	DNSNames   []string
+	Subject     string
+	Issuer      string
+	NotBefore   time.Time
+	NotAfter    time.Time
+	DNSNames    []string
 	IPAddresses []string
-	IsValid    bool
+	IsValid     bool
 }
 
 // ParseCertificateInfo parses certificate information.
@@ -224,12 +224,12 @@ func ParseCertificateInfo(certPEM []byte) (*CertInfo, error) {
 	}
 
 	info := &CertInfo{
-		Subject:     cert.Subject.String(),
-		Issuer:      cert.Issuer.String(),
-		NotBefore:   cert.NotBefore,
-		NotAfter:    cert.NotAfter,
-		DNSNames:    cert.DNSNames,
-		IsValid:     time.Now().After(cert.NotBefore) && time.Now().Before(cert.NotAfter),
+		Subject:   cert.Subject.String(),
+		Issuer:    cert.Issuer.String(),
+		NotBefore: cert.NotBefore,
+		NotAfter:  cert.NotAfter,
+		DNSNames:  cert.DNSNames,
+		IsValid:   time.Now().After(cert.NotBefore) && time.Now().Before(cert.NotAfter),
 	}
 
 	for _, ip := range cert.IPAddresses {

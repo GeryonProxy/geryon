@@ -106,7 +106,11 @@ func TestServer_HealthCheck(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Post("http://"+cfg.Listen+"/grpc.health.v1.Health/Check", "application/json", nil)
 	if err != nil {
@@ -132,7 +136,11 @@ func TestServer_GetPools(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -160,7 +168,11 @@ func TestServer_GetBackends(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Stats/GetBackends", "application/json", nil)
 	if err != nil {
@@ -186,7 +198,11 @@ func TestServer_GetConnections(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Stats/GetConnections", "application/json", nil)
 	if err != nil {
@@ -216,7 +232,11 @@ func TestServer_ReloadConfig(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Admin/ReloadConfig", "application/json", nil)
 	if err != nil {
@@ -245,7 +265,11 @@ func TestServer_Auth_RejectsWithoutToken(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Without auth
 	resp, err := http.Post("http://"+cfg.Listen+"/grpc.health.v1.Health/Check", "application/json", nil)
@@ -285,7 +309,11 @@ func TestServer_SecurityHeaders(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -316,7 +344,11 @@ func TestServer_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// GET to health endpoint (requires POST)
 	resp, err := http.Get("http://" + cfg.Listen + "/grpc.health.v1.Health/Check")
@@ -418,7 +450,11 @@ func TestServer_Stream_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// GET to stream endpoint (requires POST)
 	resp, err := http.Get("http://" + cfg.Listen + "/geryon.v1.Stats/Stream")
@@ -445,7 +481,11 @@ func TestServer_EventsSubscribe_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Get("http://" + cfg.Listen + "/geryon.v1.Events/Subscribe")
 	if err != nil {
@@ -471,7 +511,11 @@ func TestServer_DrainBackend_NotFound(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	body := `{"address":"127.0.0.1:5432"}`
 	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Admin/DrainBackend", "application/json", strings.NewReader(body))
@@ -506,7 +550,11 @@ func TestServer_DrainBackend_InvalidJSON(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -537,7 +585,11 @@ func TestServer_ReloadConfig_Failure(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -566,7 +618,11 @@ func TestServer_ReloadConfig_NoFn(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -643,7 +699,11 @@ func TestServer_Auth_InvalidBearer(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Invalid bearer format
 	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/grpc.health.v1.Health/Check", nil)
@@ -672,7 +732,11 @@ func TestServer_Auth_WrongToken(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -704,7 +768,11 @@ func TestServer_Auth_EmptyHeader(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -771,7 +839,11 @@ func TestServer_GetBackends_WithPoolFilter(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	body := `{"pool_name":"nonexistent"}`
 	resp, err := http.Post("http://"+cfg.Listen+"/geryon.v1.Stats/GetBackends", "application/json", strings.NewReader(body))
@@ -798,7 +870,11 @@ func TestServer_StatsStream_InvalidInterval(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Invalid JSON body
 	body := `{"interval":-1}`
@@ -826,7 +902,11 @@ func TestServer_StatsStream_InvalidBody(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1008,7 +1088,11 @@ func TestServer_DrainBackend_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -1037,7 +1121,11 @@ func TestServer_ReloadConfig_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -1066,7 +1154,11 @@ func TestServer_GetConnections_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Get("http://" + cfg.Listen + "/geryon.v1.Stats/GetConnections")
 	if err != nil {
@@ -1092,7 +1184,11 @@ func TestServer_GetPools_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1120,7 +1216,11 @@ func TestServer_EventsSubscribe_Streaming(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1168,7 +1268,11 @@ func TestServer_EventsSubscribe_StreamLimitReached(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1199,7 +1303,11 @@ func TestServer_StatsStream_StreamingWithCancel(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1252,7 +1360,11 @@ func TestServer_StatsStream_StreamLimitReached(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1304,7 +1416,11 @@ func TestServer_DrainBackend_Success(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1361,7 +1477,11 @@ func TestServer_DrainBackend_AlreadyDraining(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1421,7 +1541,11 @@ func TestServer_GetPools_WithData(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1482,7 +1606,11 @@ func TestServer_GetBackends_WithData(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1543,7 +1671,11 @@ func TestServer_GetConnections_WithData(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1582,7 +1714,11 @@ func TestWithRateLimit_ExceedLimit(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1691,7 +1827,11 @@ func TestServer_WithLogging_Middleware(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1846,7 +1986,11 @@ func TestServer_GetBackends_WithMatchingPoolFilter(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1907,7 +2051,11 @@ func TestServer_ReloadConfig_Success_WithFn(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1946,7 +2094,11 @@ func TestServer_GetBackends_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)

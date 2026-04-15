@@ -11,9 +11,9 @@ func FuzzCodec(f *testing.F) {
 	f.Add([]byte{0x04, 0x01, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x00}) // Valid TDS header
 	f.Add([]byte{0x04, 0x01, 0x00, 0x08, 0x00, 0x00, 0x01, 0x00}) // Minimal packet
 	f.Add([]byte{0x01, 0x00, 0x00, 0x08, 0x00, 0x00, 0x01, 0x00}) // Query packet
-	f.Add([]byte{0x04})                                             // Incomplete header
-	f.Add([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})        // Invalid
-	f.Add([]byte{})                                                  // Empty
+	f.Add([]byte{0x04})                                           // Incomplete header
+	f.Add([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})       // Invalid
+	f.Add([]byte{})                                               // Empty
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		c := NewCodec()

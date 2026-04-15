@@ -208,8 +208,8 @@ func TestStoreStats(t *testing.T) {
 
 	// Generate hits and misses
 	s.Set("key", []byte("value"), nil, time.Minute)
-	s.Get("key") // hit
-	s.Get("key") // hit
+	s.Get("key")         // hit
+	s.Get("key")         // hit
 	s.Get("nonexistent") // miss
 
 	stats := s.Stats()

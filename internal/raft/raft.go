@@ -45,30 +45,30 @@ type Entry struct {
 
 // Node represents a Raft node.
 type Node struct {
-	id                string
-	state             atomic.Value // NodeState
-	currentTerm       atomic.Uint64
-	votedFor          atomic.Value // string
-	leaderID          atomic.Value // string - tracks the current leader
-	logEntries        []Entry
-	logMu             sync.RWMutex
+	id          string
+	state       atomic.Value // NodeState
+	currentTerm atomic.Uint64
+	votedFor    atomic.Value // string
+	leaderID    atomic.Value // string - tracks the current leader
+	logEntries  []Entry
+	logMu       sync.RWMutex
 
 	// Volatile state
-	commitIndex       atomic.Uint64
-	lastApplied       atomic.Uint64
-	nextIndex         map[string]uint64
-	matchIndex        map[string]uint64
-	volatileMu        sync.RWMutex
+	commitIndex atomic.Uint64
+	lastApplied atomic.Uint64
+	nextIndex   map[string]uint64
+	matchIndex  map[string]uint64
+	volatileMu  sync.RWMutex
 
 	// Election state (reset each term)
-	votesReceived     map[string]bool // peer ID -> voted for us
-	votesMu           sync.Mutex
+	votesReceived map[string]bool // peer ID -> voted for us
+	votesMu       sync.Mutex
 
 	// Configuration
-	peers             []string
-	listenAddr        string
-	listener          net.Listener
-	dataDir           string
+	peers      []string
+	listenAddr string
+	listener   net.Listener
+	dataDir    string
 
 	// Timing
 	electionTimeout   time.Duration
@@ -77,9 +77,9 @@ type Node struct {
 	heartbeatTicker   *time.Ticker
 
 	// Channels
-	stopCh            chan struct{}
-	msgCh             chan Message
-	applyCh           chan Entry // Channel for committed entries to apply
+	stopCh  chan struct{}
+	msgCh   chan Message
+	applyCh chan Entry // Channel for committed entries to apply
 
 	// Components
 	wal               *WAL
@@ -89,16 +89,16 @@ type Node struct {
 	lastSnapshotTerm  atomic.Uint64
 
 	// Logger
-	logger            *logger.Logger
+	logger *logger.Logger
 }
 
 // Message represents a Raft message.
 type Message struct {
-	Type      MessageType `json:"type"`
-	From      string      `json:"from"`
-	To        string      `json:"to"`
-	Term      uint64      `json:"term"`
-	Data      []byte      `json:"data"`
+	Type MessageType `json:"type"`
+	From string      `json:"from"`
+	To   string      `json:"to"`
+	Term uint64      `json:"term"`
+	Data []byte      `json:"data"`
 }
 
 // MessageType represents the type of Raft message.

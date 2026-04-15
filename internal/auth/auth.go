@@ -17,12 +17,12 @@ import (
 
 // User represents an authenticated user.
 type User struct {
-	Username         string
-	PasswordHash     string // SCRAM-SHA-256 format (PostgreSQL)
+	Username          string
+	PasswordHash      string // SCRAM-SHA-256 format (PostgreSQL)
 	MysqlPasswordHash string // SHA256(SHA256(password)) for MySQL caching_sha2_password
-	MaxConnections   int
-	DefaultPool      string
-	AllowedPools     []string
+	MaxConnections    int
+	DefaultPool       string
+	AllowedPools      []string
 }
 
 // CanAccessPool checks if the user can access the given pool.
@@ -58,12 +58,12 @@ func (db *UserDatabase) LoadFromConfig(cfg *config.AuthConfig) error {
 
 	for _, u := range cfg.Users {
 		user := &User{
-			Username:           u.Username,
-			PasswordHash:       u.PasswordHash,
-			MysqlPasswordHash:  u.MysqlPasswordHash,
-			MaxConnections:     u.MaxConnections,
-			DefaultPool:        u.DefaultPool,
-			AllowedPools:       u.AllowedPools,
+			Username:          u.Username,
+			PasswordHash:      u.PasswordHash,
+			MysqlPasswordHash: u.MysqlPasswordHash,
+			MaxConnections:    u.MaxConnections,
+			DefaultPool:       u.DefaultPool,
+			AllowedPools:      u.AllowedPools,
 		}
 		db.users[u.Username] = user
 	}
@@ -132,15 +132,15 @@ func NewSCRAMServer(users *UserDatabase) *SCRAMServer {
 
 // SCRAMState holds the authentication state.
 type SCRAMState struct {
-	Username       string
-	Nonce          string
-	ClientFirst    string
-	ServerFirst    string
-	AuthMessage    string
-	StoredKey      []byte
-	ServerKey      []byte
-	Iterations     int
-	Salt           []byte
+	Username    string
+	Nonce       string
+	ClientFirst string
+	ServerFirst string
+	AuthMessage string
+	StoredKey   []byte
+	ServerKey   []byte
+	Iterations  int
+	Salt        []byte
 }
 
 // ParseClientFirst parses the client-first-message.
@@ -450,11 +450,11 @@ type AuthLimiter struct {
 }
 
 type ipAuthAttempts struct {
-	mu         sync.Mutex
-	count      int
-	firstFail  time.Time
-	locked     bool
-	lockUntil  time.Time
+	mu        sync.Mutex
+	count     int
+	firstFail time.Time
+	locked    bool
+	lockUntil time.Time
 }
 
 // NewAuthLimiter creates a rate limiter with defaults:

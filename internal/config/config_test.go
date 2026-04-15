@@ -419,7 +419,7 @@ func TestReloadManager_Reload(t *testing.T) {
 
 func TestBackupConfig(t *testing.T) {
 	cfg := &Config{
-		Global: GlobalConfig{LogLevel: "info", LogFormat: "json" },
+		Global: GlobalConfig{LogLevel: "info", LogFormat: "json"},
 		Pools:  []PoolConfig{{Name: "test", Body: "postgresql", Mode: "session"}},
 	}
 
@@ -606,15 +606,15 @@ func TestUnescapeValue(t *testing.T) {
 		{`hello\"world`, "hello\"world"},
 		{`hello\'world`, "hello'world"},
 		{`hello\0world`, "hello\x00world"},
-		{`\x41`, "A"},            // hex escape
-		{`\xGG`, `\xxGG`},         // invalid hex - outputs \x prefix chars
-		{`\x4`, `\xx4`},           // truncated hex
-		{`\u0041`, "A"},          // unicode escape
-		{`\uGGGG`, `\uuGGGG`},     // invalid unicode
-		{`\u004`, `\uu004`},       // truncated unicode
-		{`\z`, `\z`},             // unknown escape
-		{`\`, `\`},               // trailing backslash
-		{"", ""},                  // empty
+		{`\x41`, "A"},         // hex escape
+		{`\xGG`, `\xxGG`},     // invalid hex - outputs \x prefix chars
+		{`\x4`, `\xx4`},       // truncated hex
+		{`\u0041`, "A"},       // unicode escape
+		{`\uGGGG`, `\uuGGGG`}, // invalid unicode
+		{`\u004`, `\uu004`},   // truncated unicode
+		{`\z`, `\z`},          // unknown escape
+		{`\`, `\`},            // trailing backslash
+		{"", ""},              // empty
 	}
 
 	for _, tt := range tests {

@@ -8,12 +8,12 @@ import (
 // FuzzCodec tests the MySQL codec with random inputs.
 func FuzzCodec(f *testing.F) {
 	// Seed with valid and invalid packets
-	f.Add([]byte{0x01, 0x00, 0x00, 0x00, 0x03}) // COM_QUERY empty
+	f.Add([]byte{0x01, 0x00, 0x00, 0x00, 0x03})                                                 // COM_QUERY empty
 	f.Add([]byte{0x01, 0x00, 0x00, 0x01, 0x03, 0x53, 0x45, 0x4c, 0x45, 0x43, 0x54, 0x20, 0x31}) // SELECT 1
-	f.Add([]byte{0x01, 0x00, 0x00, 0x00, 0x00}) // OK packet
-	f.Add([]byte{0x00})                           // Incomplete header
-	f.Add([]byte{0xff})                            // Error packet start
-	f.Add([]byte{})                                // Empty
+	f.Add([]byte{0x01, 0x00, 0x00, 0x00, 0x00})                                                 // OK packet
+	f.Add([]byte{0x00})                                                                         // Incomplete header
+	f.Add([]byte{0xff})                                                                         // Error packet start
+	f.Add([]byte{})                                                                             // Empty
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		c := NewCodec()
@@ -41,8 +41,8 @@ func FuzzCodec(f *testing.F) {
 // FuzzHandshakeResponse tests handshake response parsing.
 func FuzzHandshakeResponse(f *testing.F) {
 	f.Add([]byte{0x85, 0xa2, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x41, 0x00, 0x00}) // Partial handshake
-	f.Add([]byte{0x00, 0x00, 0x00, 0x00})                                      // Minimal
-	f.Add([]byte{})                                                               // Empty
+	f.Add([]byte{0x00, 0x00, 0x00, 0x00})                                     // Minimal
+	f.Add([]byte{})                                                           // Empty
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		c := NewCodec()

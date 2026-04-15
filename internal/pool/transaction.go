@@ -12,28 +12,28 @@ import (
 
 // TransactionManager manages active transactions and handles timeouts.
 type TransactionManager struct {
-	mu               sync.RWMutex
-	transactions     map[uint64]*TransactionInfo
-	timeout          time.Duration
-	idleTimeout      time.Duration
-	checkInterval    time.Duration
-	stopCh           chan struct{}
-	log              *logger.Logger
-	onAbort          func(sessionID uint64)                  // Callback to abort backend transaction
-	onAbortWithConn  func(sessionID uint64, serverConn net.Conn) // Callback with backend connection
+	mu              sync.RWMutex
+	transactions    map[uint64]*TransactionInfo
+	timeout         time.Duration
+	idleTimeout     time.Duration
+	checkInterval   time.Duration
+	stopCh          chan struct{}
+	log             *logger.Logger
+	onAbort         func(sessionID uint64)                      // Callback to abort backend transaction
+	onAbortWithConn func(sessionID uint64, serverConn net.Conn) // Callback with backend connection
 }
 
 // TransactionInfo represents information about an active transaction.
 type TransactionInfo struct {
-	ID              uint64
-	SessionID       uint64
-	StartTime       time.Time
-	LastActivity    time.Time
-	ServerConnID    uint64
-	QueryCount      atomic.Int32
-	Status          TransactionStatus
-	AbortFunc       func() // Called by checkTimeouts to abort backend transaction
-	mu              sync.RWMutex
+	ID           uint64
+	SessionID    uint64
+	StartTime    time.Time
+	LastActivity time.Time
+	ServerConnID uint64
+	QueryCount   atomic.Int32
+	Status       TransactionStatus
+	AbortFunc    func() // Called by checkTimeouts to abort backend transaction
+	mu           sync.RWMutex
 }
 
 // TransactionStatus represents the status of a transaction.

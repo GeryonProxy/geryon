@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package integration
@@ -112,7 +113,7 @@ pools:
 		buf := new(bytes.Buffer)
 		binary.Write(buf, binary.BigEndian, int32(0)) // length placeholder
 		binary.Write(buf, binary.BigEndian, int16(3)) // protocol major
-		binary.Write(buf, binary.BigEndian, int16(0))  // protocol minor
+		binary.Write(buf, binary.BigEndian, int16(0)) // protocol minor
 		user := "user\x00postgres\x00"
 		buf.WriteString(user)
 		buf.WriteByte(0) // null terminator

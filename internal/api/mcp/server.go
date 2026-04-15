@@ -21,17 +21,17 @@ import (
 
 // Server implements the Model Context Protocol (MCP) server.
 type Server struct {
-	mu       sync.RWMutex
-	config   *config.AdminMCPConfig
-	poolMgr  *pool.Manager
-	log      *logger.Logger
-	server   *http.Server
-	started  bool
-	authToken  string
+	mu          sync.RWMutex
+	config      *config.AdminMCPConfig
+	poolMgr     *pool.Manager
+	log         *logger.Logger
+	server      *http.Server
+	started     bool
+	authToken   string
 	authEnabled bool
-	sseCount   atomic.Int64
-	sseLimit   int
-	reloadFn   func() error
+	sseCount    atomic.Int64
+	sseLimit    int
+	reloadFn    func() error
 }
 
 // NewServer creates a new MCP server.
@@ -154,18 +154,18 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 
 // mcpRateLimiter implements per-IP rate limiting.
 type mcpRateLimiter struct {
-	mu        sync.Mutex
-	limiters  map[string]*rate.Limiter
-	lastSeen  map[string]time.Time
-	maxSize   int
+	mu         sync.Mutex
+	limiters   map[string]*rate.Limiter
+	lastSeen   map[string]time.Time
+	maxSize    int
 	cleanupTTL time.Duration
 }
 
 func newMCPRateLimiter() *mcpRateLimiter {
 	rl := &mcpRateLimiter{
-		limiters:  make(map[string]*rate.Limiter),
-		lastSeen:  make(map[string]time.Time),
-		maxSize:   10000,
+		limiters:   make(map[string]*rate.Limiter),
+		lastSeen:   make(map[string]time.Time),
+		maxSize:    10000,
 		cleanupTTL: 5 * time.Minute,
 	}
 	go rl.periodicCleanup()

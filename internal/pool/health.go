@@ -53,19 +53,19 @@ type HealthChecker struct {
 
 // BackendHealth tracks health state for a backend.
 type BackendHealth struct {
-	Backend        *Backend
-	Status         HealthStatus
-	LastCheck      time.Time
-	LastSuccess    time.Time
-	LastFailure    time.Time
+	Backend             *Backend
+	Status              HealthStatus
+	LastCheck           time.Time
+	LastSuccess         time.Time
+	LastFailure         time.Time
 	ConsecutiveFailures int
-	Latency        time.Duration
-	mu             sync.RWMutex
+	Latency             time.Duration
+	mu                  sync.RWMutex
 
 	// Circuit breaker state
-	circuitState   CircuitState // closed, open, halfOpen
-	circuitOpened  time.Time    // when circuit was opened
-	lastProbeTime  time.Time    // last probe attempt in half-open
+	circuitState  CircuitState // closed, open, halfOpen
+	circuitOpened time.Time    // when circuit was opened
+	lastProbeTime time.Time    // last probe attempt in half-open
 }
 
 // CircuitState represents the circuit breaker state.

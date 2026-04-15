@@ -503,9 +503,9 @@ func TestPool_IsDraining_NotFound(t *testing.T) {
 
 func TestPool_Stats(t *testing.T) {
 	cfg := &config.PoolConfig{
-		Name:     "test-pool",
-		Mode:     "transaction",
-		Body:     "postgresql",
+		Name: "test-pool",
+		Mode: "transaction",
+		Body: "postgresql",
 		Backend: config.BackendConfig{
 			Database: "testdb",
 			Hosts: []config.BackendHost{
@@ -1819,14 +1819,14 @@ func TestWaitQueue_Signal_WithWaiter(t *testing.T) {
 
 	// Check result
 	select {
-		case got := <-resultCh:
-			if got.id != 1 {
-				t.Errorf("got id = %d, want 1", got.id)
-			}
-		case err := <-errCh:
-			t.Fatalf("Wait error: %v", err)
-		case <-time.After(100 * time.Millisecond):
-			t.Error("timeout waiting for result")
+	case got := <-resultCh:
+		if got.id != 1 {
+			t.Errorf("got id = %d, want 1", got.id)
+		}
+	case err := <-errCh:
+		t.Fatalf("Wait error: %v", err)
+	case <-time.After(100 * time.Millisecond):
+		t.Error("timeout waiting for result")
 	}
 }
 
@@ -2561,7 +2561,6 @@ func TestTransactionManager_GetStats(t *testing.T) {
 		t.Errorf("CommittedCount = %d, want 1", stats.CommittedCount)
 	}
 }
-
 
 func TestTransactionStatus_Values(t *testing.T) {
 	// Ensure values are as expected
@@ -5656,7 +5655,7 @@ func TestSession_HandleMessage_Prepare(t *testing.T) {
 
 type MockCodecPrepare struct{ MockCodec }
 
-func (m *MockCodecPrepare) IsPrepare(msg *common.Message) bool  { return true }
+func (m *MockCodecPrepare) IsPrepare(msg *common.Message) bool { return true }
 func (m *MockCodecPrepare) ExtractQuery(msg *common.Message) (string, error) {
 	return string(msg.Raw), nil
 }
@@ -6041,7 +6040,7 @@ func TestPool_Acquire_CreateConnError(t *testing.T) {
 		},
 		Limits: config.LimitConfig{
 			MaxServerConnections: 10,
-			ConnectionTimeout:   "100ms",
+			ConnectionTimeout:    "100ms",
 		},
 	}
 	log, _ := logger.New("error", "json")
@@ -6816,16 +6815,16 @@ func (c *postgresCodecForReset) WriteMessage(w io.Writer, msg *common.Message) e
 	_, err := w.Write(msg.Raw)
 	return err
 }
-func (c *postgresCodecForReset) IsQuery(msg *common.Message) bool          { return false }
-func (c *postgresCodecForReset) IsPrepare(msg *common.Message) bool        { return false }
-func (c *postgresCodecForReset) IsExecute(msg *common.Message) bool        { return false }
-func (c *postgresCodecForReset) IsClose(msg *common.Message) bool          { return false }
-func (c *postgresCodecForReset) IsBind(msg *common.Message) bool           { return false }
-func (c *postgresCodecForReset) IsSync(msg *common.Message) bool           { return false }
-func (c *postgresCodecForReset) IsStartup(msg *common.Message) bool        { return false }
-func (c *postgresCodecForReset) IsTerminate(msg *common.Message) bool      { return false }
-func (c *postgresCodecForReset) IsTransactionBegin(msg *common.Message) bool { return false }
-func (c *postgresCodecForReset) IsTransactionEnd(msg *common.Message) bool { return false }
+func (c *postgresCodecForReset) IsQuery(msg *common.Message) bool                 { return false }
+func (c *postgresCodecForReset) IsPrepare(msg *common.Message) bool               { return false }
+func (c *postgresCodecForReset) IsExecute(msg *common.Message) bool               { return false }
+func (c *postgresCodecForReset) IsClose(msg *common.Message) bool                 { return false }
+func (c *postgresCodecForReset) IsBind(msg *common.Message) bool                  { return false }
+func (c *postgresCodecForReset) IsSync(msg *common.Message) bool                  { return false }
+func (c *postgresCodecForReset) IsStartup(msg *common.Message) bool               { return false }
+func (c *postgresCodecForReset) IsTerminate(msg *common.Message) bool             { return false }
+func (c *postgresCodecForReset) IsTransactionBegin(msg *common.Message) bool      { return false }
+func (c *postgresCodecForReset) IsTransactionEnd(msg *common.Message) bool        { return false }
 func (c *postgresCodecForReset) ExtractQuery(msg *common.Message) (string, error) { return "", nil }
 func (c *postgresCodecForReset) GenerateResetSequence() []*common.Message {
 	pg := &postgresqlCodecForResetGen{}
@@ -6867,16 +6866,16 @@ func (c *mysqlCodecForReset) WriteMessage(w io.Writer, msg *common.Message) erro
 	_, err := w.Write(msg.Raw)
 	return err
 }
-func (c *mysqlCodecForReset) IsQuery(msg *common.Message) bool            { return false }
-func (c *mysqlCodecForReset) IsPrepare(msg *common.Message) bool          { return false }
-func (c *mysqlCodecForReset) IsExecute(msg *common.Message) bool          { return false }
-func (c *mysqlCodecForReset) IsClose(msg *common.Message) bool            { return false }
-func (c *mysqlCodecForReset) IsBind(msg *common.Message) bool             { return false }
-func (c *mysqlCodecForReset) IsSync(msg *common.Message) bool             { return false }
-func (c *mysqlCodecForReset) IsStartup(msg *common.Message) bool          { return false }
-func (c *mysqlCodecForReset) IsTerminate(msg *common.Message) bool        { return false }
-func (c *mysqlCodecForReset) IsTransactionBegin(msg *common.Message) bool { return false }
-func (c *mysqlCodecForReset) IsTransactionEnd(msg *common.Message) bool   { return false }
+func (c *mysqlCodecForReset) IsQuery(msg *common.Message) bool                 { return false }
+func (c *mysqlCodecForReset) IsPrepare(msg *common.Message) bool               { return false }
+func (c *mysqlCodecForReset) IsExecute(msg *common.Message) bool               { return false }
+func (c *mysqlCodecForReset) IsClose(msg *common.Message) bool                 { return false }
+func (c *mysqlCodecForReset) IsBind(msg *common.Message) bool                  { return false }
+func (c *mysqlCodecForReset) IsSync(msg *common.Message) bool                  { return false }
+func (c *mysqlCodecForReset) IsStartup(msg *common.Message) bool               { return false }
+func (c *mysqlCodecForReset) IsTerminate(msg *common.Message) bool             { return false }
+func (c *mysqlCodecForReset) IsTransactionBegin(msg *common.Message) bool      { return false }
+func (c *mysqlCodecForReset) IsTransactionEnd(msg *common.Message) bool        { return false }
 func (c *mysqlCodecForReset) ExtractQuery(msg *common.Message) (string, error) { return "", nil }
 func (c *mysqlCodecForReset) GenerateResetSequence() []*common.Message {
 	// COM_RESET_CONNECTION (0x1F)
@@ -6912,16 +6911,16 @@ func (c *mssqlCodecForReset) WriteMessage(w io.Writer, msg *common.Message) erro
 	_, err := w.Write(msg.Raw)
 	return err
 }
-func (c *mssqlCodecForReset) IsQuery(msg *common.Message) bool            { return false }
-func (c *mssqlCodecForReset) IsPrepare(msg *common.Message) bool          { return false }
-func (c *mssqlCodecForReset) IsExecute(msg *common.Message) bool          { return false }
-func (c *mssqlCodecForReset) IsClose(msg *common.Message) bool            { return false }
-func (c *mssqlCodecForReset) IsBind(msg *common.Message) bool             { return false }
-func (c *mssqlCodecForReset) IsSync(msg *common.Message) bool             { return false }
-func (c *mssqlCodecForReset) IsStartup(msg *common.Message) bool          { return false }
-func (c *mssqlCodecForReset) IsTerminate(msg *common.Message) bool        { return false }
-func (c *mssqlCodecForReset) IsTransactionBegin(msg *common.Message) bool { return false }
-func (c *mssqlCodecForReset) IsTransactionEnd(msg *common.Message) bool   { return false }
+func (c *mssqlCodecForReset) IsQuery(msg *common.Message) bool                 { return false }
+func (c *mssqlCodecForReset) IsPrepare(msg *common.Message) bool               { return false }
+func (c *mssqlCodecForReset) IsExecute(msg *common.Message) bool               { return false }
+func (c *mssqlCodecForReset) IsClose(msg *common.Message) bool                 { return false }
+func (c *mssqlCodecForReset) IsBind(msg *common.Message) bool                  { return false }
+func (c *mssqlCodecForReset) IsSync(msg *common.Message) bool                  { return false }
+func (c *mssqlCodecForReset) IsStartup(msg *common.Message) bool               { return false }
+func (c *mssqlCodecForReset) IsTerminate(msg *common.Message) bool             { return false }
+func (c *mssqlCodecForReset) IsTransactionBegin(msg *common.Message) bool      { return false }
+func (c *mssqlCodecForReset) IsTransactionEnd(msg *common.Message) bool        { return false }
 func (c *mssqlCodecForReset) ExtractQuery(msg *common.Message) (string, error) { return "", nil }
 func (c *mssqlCodecForReset) GenerateResetSequence() []*common.Message {
 	// TDS7 RPC request for sp_reset_connection (simplified)
@@ -6956,4 +6955,3 @@ func TestPool_BackendCount(t *testing.T) {
 		t.Errorf("backends count = %d, want 3", len(pool.backends))
 	}
 }
-

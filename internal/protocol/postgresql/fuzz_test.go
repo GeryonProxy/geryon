@@ -9,13 +9,13 @@ import (
 func FuzzCodec(f *testing.F) {
 	// Seed with valid and invalid test cases
 	f.Add([]byte{0x51, 0x00, 0x00, 0x00, 0x10, 0x53, 0x45, 0x4c, 0x45, 0x43, 0x54, 0x20, 0x31}) // Valid SELECT 1
-	f.Add([]byte{0x51, 0x00, 0x00, 0x00, 0x08, 0x51, 0x00})                                 // Valid SELECT
-	f.Add([]byte{0x54, 0x00, 0x00, 0x00, 0x1a, 0x42, 0x45, 0x47, 0x49, 0x4e})             // BEGIN
-	f.Add([]byte{0x58, 0x00, 0x00, 0x00, 0x04})                                             // Valid Sync
-	f.Add([]byte{0x51})                                                                       // Incomplete header
-	f.Add([]byte{0x00, 0x00, 0x00, 0x00})                                                   // Empty message
-	f.Add([]byte{0xff, 0x00, 0x00, 0x00, 0x01})                                             // Invalid type
-	f.Add([]byte{0x51, 0xff, 0xff, 0xff, 0xff})                                             // Invalid length
+	f.Add([]byte{0x51, 0x00, 0x00, 0x00, 0x08, 0x51, 0x00})                                     // Valid SELECT
+	f.Add([]byte{0x54, 0x00, 0x00, 0x00, 0x1a, 0x42, 0x45, 0x47, 0x49, 0x4e})                   // BEGIN
+	f.Add([]byte{0x58, 0x00, 0x00, 0x00, 0x04})                                                 // Valid Sync
+	f.Add([]byte{0x51})                                                                         // Incomplete header
+	f.Add([]byte{0x00, 0x00, 0x00, 0x00})                                                       // Empty message
+	f.Add([]byte{0xff, 0x00, 0x00, 0x00, 0x01})                                                 // Invalid type
+	f.Add([]byte{0x51, 0xff, 0xff, 0xff, 0xff})                                                 // Invalid length
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		c := NewCodec()
@@ -51,9 +51,9 @@ func FuzzCodec(f *testing.F) {
 func FuzzStartupMessage(f *testing.F) {
 	f.Add([]byte{0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x03}) // Valid startup
 	f.Add([]byte{0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00}) // Minimal startup
-	f.Add([]byte{0x00, 0x00, 0x00, 0x00})                           // Too short
-	f.Add([]byte{0xff, 0xff, 0xff, 0xff})                           // Invalid length
-	f.Add([]byte{})                                                   // Empty
+	f.Add([]byte{0x00, 0x00, 0x00, 0x00})                         // Too short
+	f.Add([]byte{0xff, 0xff, 0xff, 0xff})                         // Invalid length
+	f.Add([]byte{})                                               // Empty
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Test that codec doesn't crash on any input

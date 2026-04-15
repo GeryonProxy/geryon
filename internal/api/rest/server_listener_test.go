@@ -665,4 +665,3 @@ func TestHandleStatsStream_WithListeners_LongRun(t *testing.T) {
 		t.Error("Expected active_transactions in SSE data")
 	}
 }
-

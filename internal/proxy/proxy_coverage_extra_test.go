@@ -201,9 +201,9 @@ func TestParseTxnDuration_Minutes(t *testing.T) {
 func TestListener_handleConnection_MaxConns(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.PoolConfig{
-		Name: "maxconns-test-x",
+		Name:   "maxconns-test-x",
 		Listen: config.ListenConfig{Host: "127.0.0.1", Port: 0},
-		Mode: "transaction", Body: "postgresql",
+		Mode:   "transaction", Body: "postgresql",
 		Limits: config.LimitConfig{MaxClientConnections: 0},
 		Backend: config.BackendConfig{
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},

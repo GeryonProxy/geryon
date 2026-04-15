@@ -221,13 +221,13 @@ func (psc *PreparedStatementCache) Stats() PreparedStatementCacheStats {
 	}
 
 	return PreparedStatementCacheStats{
-		Size:       size,
-		MaxSize:    psc.maxSize,
-		Hits:       hits,
-		Misses:     misses,
-		HitRate:    hitRate,
-		Added:      psc.addCount.Load(),
-		Evicted:    psc.evictCount.Load(),
+		Size:    size,
+		MaxSize: psc.maxSize,
+		Hits:    hits,
+		Misses:  misses,
+		HitRate: hitRate,
+		Added:   psc.addCount.Load(),
+		Evicted: psc.evictCount.Load(),
 	}
 }
 

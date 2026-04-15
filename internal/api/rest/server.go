@@ -286,19 +286,19 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 // rateLimiter implements a simple token bucket rate limiter per IP.
 // Uses sync.Map for concurrent access without mutex contention.
 type rateLimiter struct {
-	limiters  sync.Map // map[string]*rate.Limiter
-	lastSeen  sync.Map // map[string]time.Time
-	rate      rate.Limit
-	burst     int
-	maxSize   atomic.Int64
+	limiters   sync.Map // map[string]*rate.Limiter
+	lastSeen   sync.Map // map[string]time.Time
+	rate       rate.Limit
+	burst      int
+	maxSize    atomic.Int64
 	cleanupTTL time.Duration
-	size      atomic.Int64
+	size       atomic.Int64
 }
 
 func newRateLimiter(r rate.Limit, burst int) *rateLimiter {
 	rl := &rateLimiter{
-		rate:      r,
-		burst:     burst,
+		rate:       r,
+		burst:      burst,
 		cleanupTTL: 5 * time.Minute,
 	}
 	rl.maxSize.Store(10000)
@@ -556,16 +556,16 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		stats := p.Stats()
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":                  stats.Name,
-			"mode":                  stats.Mode,
-			"client_connections":    stats.ClientConnections,
-			"server_connections":    stats.ServerConnections,
-			"idle_connections":      stats.IdleConnections,
-			"active_connections":    stats.ActiveConnections,
-			"waiting_clients":       stats.WaitingClients,
-			"total_queries":         stats.TotalQueries,
-			"total_transactions":    stats.TotalTransactions,
-			"backend_count":         stats.BackendCount,
+			"name":               stats.Name,
+			"mode":               stats.Mode,
+			"client_connections": stats.ClientConnections,
+			"server_connections": stats.ServerConnections,
+			"idle_connections":   stats.IdleConnections,
+			"active_connections": stats.ActiveConnections,
+			"waiting_clients":    stats.WaitingClients,
+			"total_queries":      stats.TotalQueries,
+			"total_transactions": stats.TotalTransactions,
+			"backend_count":      stats.BackendCount,
 			"prepared_stmt_cache": map[string]interface{}{
 				"size":     stats.PreparedStmtCacheSize,
 				"hit_rate": stats.PreparedStmtHitRate,
@@ -764,9 +764,9 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	if len(unhealthyPools) > 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"ready":   false,
-			"reason":  "unhealthy pools",
-			"pools":   unhealthyPools,
+			"ready":     false,
+			"reason":    "unhealthy pools",
+			"pools":     unhealthyPools,
 			"timestamp": time.Now().UTC(),
 		})
 		return
@@ -957,12 +957,12 @@ func (s *Server) handleBackendDrain(w http.ResponseWriter, r *http.Request, back
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":              "success",
-		"backend":             backendAddr,
-		"action":              "drain",
-		"active_connections":  activeConns,
-		"message":             "Draining initiated for " + backendAddr,
-		"timestamp":           time.Now().UTC(),
+		"status":             "success",
+		"backend":            backendAddr,
+		"action":             "drain",
+		"active_connections": activeConns,
+		"message":            "Draining initiated for " + backendAddr,
+		"timestamp":          time.Now().UTC(),
 	})
 }
 
@@ -1321,11 +1321,11 @@ func (s *Server) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
 	for _, l := range s.listeners {
 		cfg := l.Config()
 		tlsStatus = append(tlsStatus, map[string]interface{}{
-			"pool":       cfg.Name,
-			"tls_mode":   cfg.TLS.Mode,
-			"enabled":    cfg.TLS.Mode != "disable" && cfg.TLS.Mode != "",
-			"cert_file":  cfg.TLS.CertFile,
-			"ca_file":    cfg.TLS.CAFile,
+			"pool":      cfg.Name,
+			"tls_mode":  cfg.TLS.Mode,
+			"enabled":   cfg.TLS.Mode != "disable" && cfg.TLS.Mode != "",
+			"cert_file": cfg.TLS.CertFile,
+			"ca_file":   cfg.TLS.CAFile,
 		})
 	}
 

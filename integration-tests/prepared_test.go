@@ -20,32 +20,32 @@ const (
 // PostgreSQL message types
 const (
 	// Frontend messages
-	pgMsgBind             = 'B'
-	pgMsgClose            = 'C'
-	pgMsgDescribe         = 'D'
-	pgMsgExecute          = 'E'
-	pgMsgParse            = 'P'
-	pgMsgPasswordMessage  = 'p'
-	pgMsgQuery            = 'Q'
-	pgMsgSync             = 'S'
-	pgMsgTerminate        = 'X'
+	pgMsgBind            = 'B'
+	pgMsgClose           = 'C'
+	pgMsgDescribe        = 'D'
+	pgMsgExecute         = 'E'
+	pgMsgParse           = 'P'
+	pgMsgPasswordMessage = 'p'
+	pgMsgQuery           = 'Q'
+	pgMsgSync            = 'S'
+	pgMsgTerminate       = 'X'
 
 	// Backend messages
-	pgMsgAuthentication   = 'R'
-	pgMsgBindComplete     = '2'
-	pgMsgCloseComplete    = '3'
-	pgMsgCommandComplete  = 'C'
-	pgMsgDataRow          = 'D'
-	pgMsgErrorResponse    = 'E'
-	pgMsgNoData           = 'n'
-	pgMsgNoticeResponse   = 'N'
+	pgMsgAuthentication       = 'R'
+	pgMsgBindComplete         = '2'
+	pgMsgCloseComplete        = '3'
+	pgMsgCommandComplete      = 'C'
+	pgMsgDataRow              = 'D'
+	pgMsgErrorResponse        = 'E'
+	pgMsgNoData               = 'n'
+	pgMsgNoticeResponse       = 'N'
 	pgMsgNotificationResponse = 'A'
 	pgMsgParameterDescription = 't'
-	pgMsgParameterStatus  = 'S'
-	pgMsgParseComplete    = '1'
-	pgMsgPortalSuspended  = 's'
-	pgMsgReadyForQuery    = 'Z'
-	pgMsgRowDescription   = 'T'
+	pgMsgParameterStatus      = 'S'
+	pgMsgParseComplete        = '1'
+	pgMsgPortalSuspended      = 's'
+	pgMsgReadyForQuery        = 'Z'
+	pgMsgRowDescription       = 'T'
 )
 
 // PostgreSQL authentication types
@@ -65,7 +65,7 @@ const (
 
 // pgConn represents a PostgreSQL connection
 type pgConn struct {
-	conn     net.Conn
+	conn      net.Conn
 	connected bool
 }
 

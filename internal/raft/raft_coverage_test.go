@@ -173,8 +173,8 @@ func TestLoadSnapshotFile_TruncatedData(t *testing.T) {
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 	writeLengthPrefixed(gzWriter, metadataJSON)
-	writeUint32(gzWriter, 1000)       // claims 1000 bytes
-	gzWriter.Write([]byte("short"))   // but only 5 bytes follow
+	writeUint32(gzWriter, 1000)     // claims 1000 bytes
+	gzWriter.Write([]byte("short")) // but only 5 bytes follow
 	gzWriter.Close()
 	file.Close()
 

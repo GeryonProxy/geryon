@@ -206,13 +206,13 @@ func TestParseMemoryString_EdgeCases(t *testing.T) {
 		input string
 		want  int64
 	}{
-		{"  64MB  ", 64 * 1024 * 1024},     // Extra whitespace
-		{"64mb", 64 * 1024 * 1024},          // Lowercase
-		{"64MB", 64 * 1024 * 1024},          // Uppercase
-		{"1024KB", 1024 * 1024},             // KB
-		{"2gb", 2 * 1024 * 1024 * 1024},     // GB lowercase
-		{"invalid", 64 * 1024 * 1024},       // Invalid - default
-		{"-1MB", -1 * 1024 * 1024},          // Negative (parsed as -1)
+		{"  64MB  ", 64 * 1024 * 1024},  // Extra whitespace
+		{"64mb", 64 * 1024 * 1024},      // Lowercase
+		{"64MB", 64 * 1024 * 1024},      // Uppercase
+		{"1024KB", 1024 * 1024},         // KB
+		{"2gb", 2 * 1024 * 1024 * 1024}, // GB lowercase
+		{"invalid", 64 * 1024 * 1024},   // Invalid - default
+		{"-1MB", -1 * 1024 * 1024},      // Negative (parsed as -1)
 	}
 
 	for _, tc := range cases {
@@ -228,15 +228,15 @@ func TestIsSelectQuery_EdgeCases(t *testing.T) {
 		query string
 		want  bool
 	}{
-		{"  SELECT * FROM t", true},       // Leading spaces
-		{"\tSELECT * FROM t", true},       // Tab
-		{"SELECT\n* FROM t", true},         // Newline
-		{"with cte AS (SELECT 1)", true},  // lowercase WITH
-		{"WITH cte AS (SELECT 1)", true},  // uppercase WITH
-		{"insert into t", false},          // lowercase INSERT
-		{"INSERT into t", false},          // mixed case INSERT
-		{"", false},                       // Empty
-		{"   ", false},                    // Only spaces
+		{"  SELECT * FROM t", true},      // Leading spaces
+		{"\tSELECT * FROM t", true},      // Tab
+		{"SELECT\n* FROM t", true},       // Newline
+		{"with cte AS (SELECT 1)", true}, // lowercase WITH
+		{"WITH cte AS (SELECT 1)", true}, // uppercase WITH
+		{"insert into t", false},         // lowercase INSERT
+		{"INSERT into t", false},         // mixed case INSERT
+		{"", false},                      // Empty
+		{"   ", false},                   // Only spaces
 	}
 
 	for _, tc := range cases {
@@ -252,17 +252,17 @@ func TestIsModificationQuery_EdgeCases(t *testing.T) {
 		query string
 		want  bool
 	}{
-		{"  insert into t", true},          // Leading spaces
-		{"\tupdate t", true},                // Tab
-		{"DELETE FROM t", true},             // Uppercase DELETE
-		{"delete from t", true},             // lowercase DELETE
-		{"Truncate table t", true},          // Mixed case TRUNCATE
-		{"CREATE table t", true},            // CREATE
-		{"ALTER table t", true},             // ALTER
-		{"DROP table t", true},              // DROP
-		{"REPLACE into t", true},            // REPLACE
-		{"select * from t", false},          // lowercase SELECT
-		{"", false},                         // Empty
+		{"  insert into t", true},  // Leading spaces
+		{"\tupdate t", true},       // Tab
+		{"DELETE FROM t", true},    // Uppercase DELETE
+		{"delete from t", true},    // lowercase DELETE
+		{"Truncate table t", true}, // Mixed case TRUNCATE
+		{"CREATE table t", true},   // CREATE
+		{"ALTER table t", true},    // ALTER
+		{"DROP table t", true},     // DROP
+		{"REPLACE into t", true},   // REPLACE
+		{"select * from t", false}, // lowercase SELECT
+		{"", false},                // Empty
 	}
 
 	for _, tc := range cases {
@@ -279,11 +279,11 @@ func TestExtractTablesFromQuery_EdgeCases(t *testing.T) {
 		want  int
 	}{
 		{"SELECT * FROM users", 1},
-		{"SELECT * FROM users;", 1},           // With semicolon
-		{"SELECT * FROM users,orders", 1},     // With comma
-		{"SELECT 1", 0},                       // No FROM
-		{"", 0},                               // Empty
-		{"FROM users", 1},                     // Just FROM (function finds 'users')
+		{"SELECT * FROM users;", 1},       // With semicolon
+		{"SELECT * FROM users,orders", 1}, // With comma
+		{"SELECT 1", 0},                   // No FROM
+		{"", 0},                           // Empty
+		{"FROM users", 1},                 // Just FROM (function finds 'users')
 	}
 
 	for _, tc := range cases {
@@ -652,8 +652,8 @@ func TestIsSelectQuery_Complex(t *testing.T) {
 		{"SELECT DISTINCT * FROM t", true},
 		{"SELECT TOP 10 * FROM t", true},
 		{"WITH RECURSIVE cte AS (SELECT 1) SELECT * FROM cte", true},
-		{"  \n\t  SELECT 1", true}, // Whitespace before
-		{"-- comment\nSELECT 1", false}, // Comment doesn't count
+		{"  \n\t  SELECT 1", true},        // Whitespace before
+		{"-- comment\nSELECT 1", false},   // Comment doesn't count
 		{"/* comment */ SELECT 1", false}, // Block comment doesn't count
 	}
 
@@ -1178,10 +1178,10 @@ func TestIsModificationQuery_LongQuery(t *testing.T) {
 func TestExtractTablesFromQuery_NoFromClause(t *testing.T) {
 	// Queries without FROM clause (or with FROM in different context)
 	queries := []string{
-		"SELECT 1",                    // No FROM
-		"SELECT NOW()",                // No FROM
-		"INSERT INTO t VALUES (1)",    // Has INTO, not FROM
-		"",                            // Empty
+		"SELECT 1",                 // No FROM
+		"SELECT NOW()",             // No FROM
+		"INSERT INTO t VALUES (1)", // Has INTO, not FROM
+		"",                         // Empty
 	}
 
 	for _, query := range queries {
@@ -1315,11 +1315,11 @@ func TestParseMemoryString_InvalidSuffix(t *testing.T) {
 		input string
 		want  int64
 	}{
-		{"100TB", 100},       // Treated as 100 bytes (TB not recognized)
-		{"100PB", 100},       // Treated as 100 bytes
-		{"100XB", 100},       // Treated as 100 bytes
-		{"100", 100},         // Treated as 100 bytes
-		{"100B", 100},        // Treated as 100 bytes
+		{"100TB", 100}, // Treated as 100 bytes (TB not recognized)
+		{"100PB", 100}, // Treated as 100 bytes
+		{"100XB", 100}, // Treated as 100 bytes
+		{"100", 100},   // Treated as 100 bytes
+		{"100B", 100},  // Treated as 100 bytes
 	}
 
 	for _, tc := range tests {
@@ -1925,9 +1925,9 @@ func TestParseMemoryString_Boundaries(t *testing.T) {
 		{"1KB", 1024},
 		{"1MB", 1024 * 1024},
 		{"1GB", 1024 * 1024 * 1024},
-		{"0KB", 64 * 1024 * 1024},     // 0 returns default
-		{"0MB", 64 * 1024 * 1024},     // 0 returns default
-		{"0GB", 64 * 1024 * 1024},     // 0 returns default
+		{"0KB", 64 * 1024 * 1024},                     // 0 returns default
+		{"0MB", 64 * 1024 * 1024},                     // 0 returns default
+		{"0GB", 64 * 1024 * 1024},                     // 0 returns default
 		{"9223372036854775807B", 9223372036854775807}, // Max int64
 	}
 
@@ -2103,9 +2103,9 @@ func TestNewListener_Variants(t *testing.T) {
 		{
 			name: "basic_config",
 			cfg: &config.PoolConfig{
-				Name: "test1",
+				Name:   "test1",
 				Listen: config.ListenConfig{Host: "127.0.0.1", Port: 0},
-				Body: "postgresql",
+				Body:   "postgresql",
 				Limits: config.LimitConfig{MaxClientConnections: 100},
 				Cache:  config.CacheConfig{Enabled: false},
 				TLS:    config.TLSConfig{Mode: "disable"},
@@ -2115,9 +2115,9 @@ func TestNewListener_Variants(t *testing.T) {
 		{
 			name: "mysql_body",
 			cfg: &config.PoolConfig{
-				Name: "test2",
+				Name:   "test2",
 				Listen: config.ListenConfig{Host: "127.0.0.1", Port: 0},
-				Body: "mysql",
+				Body:   "mysql",
 				Limits: config.LimitConfig{MaxClientConnections: 100},
 				Cache:  config.CacheConfig{Enabled: false},
 				TLS:    config.TLSConfig{Mode: "disable"},
@@ -2127,9 +2127,9 @@ func TestNewListener_Variants(t *testing.T) {
 		{
 			name: "mssql_body",
 			cfg: &config.PoolConfig{
-				Name: "test3",
+				Name:   "test3",
 				Listen: config.ListenConfig{Host: "127.0.0.1", Port: 0},
-				Body: "mssql",
+				Body:   "mssql",
 				Limits: config.LimitConfig{MaxClientConnections: 100},
 				Cache:  config.CacheConfig{Enabled: false},
 				TLS:    config.TLSConfig{Mode: "disable"},
@@ -2577,9 +2577,9 @@ func TestParseMemoryString_SpacesInMiddle(t *testing.T) {
 		input string
 		want  int64
 	}{
-		{"64 MB", 64 * 1024 * 1024},     // Space between number and suffix - still parsed as MB
-		{"64  MB", 64 * 1024 * 1024},    // Multiple spaces
-		{" 64 MB ", 64 * 1024 * 1024},   // Leading/trailing with middle space
+		{"64 MB", 64 * 1024 * 1024},   // Space between number and suffix - still parsed as MB
+		{"64  MB", 64 * 1024 * 1024},  // Multiple spaces
+		{" 64 MB ", 64 * 1024 * 1024}, // Leading/trailing with middle space
 	}
 
 	for _, tc := range tests {
@@ -2891,7 +2891,7 @@ func TestExtractTablesFromQuery_Variations(t *testing.T) {
 		{"SELECT * FROM users", []string{"users"}},
 		{"SELECT * FROM users WHERE id=1", []string{"users"}},
 		{"SELECT * FROM users, orders", []string{"users"}}, // Only first table
-		{"SELECT * FROM users;", []string{"users"}},       // With semicolon
+		{"SELECT * FROM users;", []string{"users"}},        // With semicolon
 		{"SELECT * FROM users\nWHERE id=1", []string{"users"}},
 		{"select * from USERS", []string{"USERS"}}, // Case preserved
 		{"SELECT 1", []string{}},                   // No FROM
@@ -3092,16 +3092,16 @@ func TestProxySession_FullFields(t *testing.T) {
 	defer client.Close()
 
 	ps := &ProxySession{
-		id:              123,
-		clientConn:      client,
-		username:        "testuser",
-		database:        "testdb",
-		currentQuery:    "SELECT 1",
-		queryStartTime:  time.Now(),
-		authenticated:   atomic.Bool{},
-		closed:          atomic.Bool{},
-		queryCount:      atomic.Int64{},
-		log:             log,
+		id:             123,
+		clientConn:     client,
+		username:       "testuser",
+		database:       "testdb",
+		currentQuery:   "SELECT 1",
+		queryStartTime: time.Now(),
+		authenticated:  atomic.Bool{},
+		closed:         atomic.Bool{},
+		queryCount:     atomic.Int64{},
+		log:            log,
 	}
 
 	if ps.ID() != 123 {
@@ -3125,9 +3125,9 @@ func TestProxySession_FullFields(t *testing.T) {
 func TestListener_Getters(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.PoolConfig{
-		Name:    "test-pool",
-		Mode:    "transaction",
-		Body:    "postgresql",
+		Name: "test-pool",
+		Mode: "transaction",
+		Body: "postgresql",
 	}
 
 	l := &Listener{
@@ -3392,7 +3392,7 @@ func TestExtractMySQLScramble_Coverage(t *testing.T) {
 	buf2 = append(buf2, 0x00)
 	buf2 = append(buf2, 0xa6, 0x85, 0x21, 0x00, 0x00)
 	buf2 = append(buf2, 0x00, 0x80) // Extended capability flags
-	buf2 = append(buf2, 21) // Auth data length
+	buf2 = append(buf2, 21)         // Auth data length
 	// Missing reserved + auth part 2
 
 	scramble2, err := extractMySQLScramble(buf2)
@@ -3535,14 +3535,14 @@ type bufferConn struct {
 	r io.Reader
 }
 
-func (c *bufferConn) Read(p []byte) (int, error)            { return c.r.Read(p) }
-func (c *bufferConn) Write(p []byte) (int, error)           { return 0, nil }
-func (c *bufferConn) Close() error                          { return nil }
-func (c *bufferConn) LocalAddr() net.Addr                   { return nil }
-func (c *bufferConn) RemoteAddr() net.Addr                  { return nil }
-func (c *bufferConn) SetDeadline(t time.Time) error         { return nil }
-func (c *bufferConn) SetReadDeadline(t time.Time) error     { return nil }
-func (c *bufferConn) SetWriteDeadline(t time.Time) error    { return nil }
+func (c *bufferConn) Read(p []byte) (int, error)         { return c.r.Read(p) }
+func (c *bufferConn) Write(p []byte) (int, error)        { return 0, nil }
+func (c *bufferConn) Close() error                       { return nil }
+func (c *bufferConn) LocalAddr() net.Addr                { return nil }
+func (c *bufferConn) RemoteAddr() net.Addr               { return nil }
+func (c *bufferConn) SetDeadline(t time.Time) error      { return nil }
+func (c *bufferConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *bufferConn) SetWriteDeadline(t time.Time) error { return nil }
 
 // Test recordAuthFailure covers the auth rate limiter integration
 func TestProxySession_RecordAuthFailure(t *testing.T) {
@@ -3558,11 +3558,11 @@ func TestProxySession_RecordAuthFailure(t *testing.T) {
 	defer client.Close()
 
 	ps := &ProxySession{
-		id:            1,
-		clientConn:    client,
-		config:        cfg,
-		authLimiter:   auth.NewAuthLimiter(),
-		log:           log,
+		id:          1,
+		clientConn:  client,
+		config:      cfg,
+		authLimiter: auth.NewAuthLimiter(),
+		log:         log,
 	}
 
 	// Should not panic
@@ -3583,11 +3583,11 @@ func TestProxySession_RecordAuthSuccess(t *testing.T) {
 	defer client.Close()
 
 	ps := &ProxySession{
-		id:            1,
-		clientConn:    client,
-		config:        cfg,
-		authLimiter:   auth.NewAuthLimiter(),
-		log:           log,
+		id:          1,
+		clientConn:  client,
+		config:      cfg,
+		authLimiter: auth.NewAuthLimiter(),
+		log:         log,
 	}
 
 	// Record a failure first, then success
@@ -3609,11 +3609,11 @@ func TestProxySession_RecordAuthFailure_NilLimiter(t *testing.T) {
 	defer client.Close()
 
 	ps := &ProxySession{
-		id:            1,
-		clientConn:    client,
-		config:        cfg,
-		authLimiter:   nil,
-		log:           log,
+		id:          1,
+		clientConn:  client,
+		config:      cfg,
+		authLimiter: nil,
+		log:         log,
 	}
 
 	// Should not panic with nil limiter
@@ -3672,10 +3672,10 @@ func TestRelay_ForwardServerToClient_NoServerConn(t *testing.T) {
 	defer client.Close()
 
 	ps := &ProxySession{
-		id:            1,
-		clientConn:    client,
-		serverConn:    nil, // No server connection
-		log:           log,
+		id:         1,
+		clientConn: client,
+		serverConn: nil, // No server connection
+		log:        log,
 	}
 
 	ctx := context.Background()
@@ -3751,6 +3751,7 @@ func TestRelay_Run_ContextCancelled(t *testing.T) {
 	select {
 	case <-done:
 		// Good, exited
+		cancel()
 	case <-time.After(5 * time.Second):
 		cancel()
 		<-done
@@ -3972,7 +3973,7 @@ func TestProxySession_handlePostgreSQLStartup_ControlCharsInUsername(t *testing.
 
 	// Build a startup message manually with a control char in the username
 	var buf bytes.Buffer
-	binary.Write(&buf, binary.BigEndian, uint32(0)) // placeholder length
+	binary.Write(&buf, binary.BigEndian, uint32(0))      // placeholder length
 	binary.Write(&buf, binary.BigEndian, uint32(196608)) // protocol 3.0
 	buf.Write([]byte("user"))
 	buf.WriteByte(0)
@@ -4180,8 +4181,8 @@ func TestProxySession_handlePostgreSQLStartup_SSLRequest(t *testing.T) {
 
 	// Build SSL request: length=8, protocol=80877103 (SSL request code)
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, uint32(8))           // length
-	binary.Write(buf, binary.BigEndian, uint32(80877103))     // SSL request code
+	binary.Write(buf, binary.BigEndian, uint32(8))        // length
+	binary.Write(buf, binary.BigEndian, uint32(80877103)) // SSL request code
 
 	conn := &bufferConn{r: buf}
 	ps := &ProxySession{
@@ -4201,10 +4202,10 @@ func TestProxySession_handlePostgreSQLStartup_CancelRequest(t *testing.T) {
 	log, _ := logger.New("error", "json")
 
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, uint32(16))          // length
-	binary.Write(buf, binary.BigEndian, uint32(80877102))    // CancelRequest code
-	binary.Write(buf, binary.BigEndian, uint32(1234))        // PID
-	binary.Write(buf, binary.BigEndian, uint32(5678))        // Secret
+	binary.Write(buf, binary.BigEndian, uint32(16))       // length
+	binary.Write(buf, binary.BigEndian, uint32(80877102)) // CancelRequest code
+	binary.Write(buf, binary.BigEndian, uint32(1234))     // PID
+	binary.Write(buf, binary.BigEndian, uint32(5678))     // Secret
 
 	conn := &bufferConn{r: buf}
 	ps := &ProxySession{

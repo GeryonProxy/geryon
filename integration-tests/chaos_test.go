@@ -25,20 +25,20 @@ type ChaosOperation interface {
 
 // ChaosRunner runs chaos tests
 type ChaosRunner struct {
-	mu         sync.RWMutex
-	results    []ChaosResult
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
+	mu      sync.RWMutex
+	results []ChaosResult
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
 }
 
 // ChaosResult represents the result of a chaos test
 type ChaosResult struct {
-	Operation   string
-	StartTime   time.Time
-	EndTime     time.Time
-	Duration    time.Duration
-	Error       error
-	Success     bool
+	Operation string
+	StartTime time.Time
+	EndTime   time.Time
+	Duration  time.Duration
+	Error     error
+	Success   bool
 }
 
 // NewChaosRunner creates a new chaos runner

@@ -11,6 +11,13 @@ test:
 
 lint:
 	go vet ./...
+	@if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then \
+		echo "gofmt errors in the following files:"; \
+		gofmt -s -l .; \
+		exit 1; \
+	fi
+	@which gosec > /dev/null || go install github.com/securego/gosec/v2/cmd/gosec@latest
+	gosec ./...
 
 bench:
 	go test -bench=. -benchmem -run=^$$ ./benchmarks/...

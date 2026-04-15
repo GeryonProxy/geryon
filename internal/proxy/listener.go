@@ -57,27 +57,27 @@ func putBuffer(buf []byte) {
 
 // Listener manages incoming client connections for a pool.
 type Listener struct {
-	mu               sync.RWMutex
-	pool             *pool.Pool
-	config           *config.PoolConfig
-	codec            common.Codec
-	listener         net.Listener
-	address          string
-	active           atomic.Bool
-	sessions         map[uint64]*ProxySession
-	connWG           sync.WaitGroup // Tracks in-flight handleConnection goroutines
-	tlsConfig        *tls.Config
-	userDB           *auth.UserDatabase
-	cacheStore       *cache.Store
-	cacheRules       *cache.RulesEngine
-	queryLogger      *logger.QueryLogger
-	transactionMgr   *pool.TransactionManager
-	authLimiter      *auth.AuthLimiter
-	router           *pool.Router
-	authMode         string // "passthrough" or "interception"
-	ctx              context.Context
-	cancel           context.CancelFunc
-	log              *logger.Logger
+	mu             sync.RWMutex
+	pool           *pool.Pool
+	config         *config.PoolConfig
+	codec          common.Codec
+	listener       net.Listener
+	address        string
+	active         atomic.Bool
+	sessions       map[uint64]*ProxySession
+	connWG         sync.WaitGroup // Tracks in-flight handleConnection goroutines
+	tlsConfig      *tls.Config
+	userDB         *auth.UserDatabase
+	cacheStore     *cache.Store
+	cacheRules     *cache.RulesEngine
+	queryLogger    *logger.QueryLogger
+	transactionMgr *pool.TransactionManager
+	authLimiter    *auth.AuthLimiter
+	router         *pool.Router
+	authMode       string // "passthrough" or "interception"
+	ctx            context.Context
+	cancel         context.CancelFunc
+	log            *logger.Logger
 }
 
 // NewListener creates a new proxy listener.
@@ -443,17 +443,17 @@ type ProxySession struct {
 	authenticated   atomic.Bool
 	username        string
 	database        string
-	authMode       string // "passthrough" or "interception"
+	authMode        string // "passthrough" or "interception"
 	scramState      *auth.SCRAMState
 	cacheStore      *cache.Store
 	cacheRules      *cache.RulesEngine
 	tlsConfig       *tls.Config
 	// Query timing for logging
-	currentQuery    string
-	queryStartTime  time.Time
-	lastBoundStmt   string // last bound statement name for re-preparation
+	currentQuery   string
+	queryStartTime time.Time
+	lastBoundStmt  string // last bound statement name for re-preparation
 	// M-8 fix: pending parse tracking for confirmed prepared statements
-	pendingParseMu   sync.Mutex
+	pendingParseMu    sync.Mutex
 	pendingParseStmt  string // statement name waiting for ParseComplete confirmation
 	pendingParseQuery string // query for the pending parse
 }

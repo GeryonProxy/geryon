@@ -23,33 +23,33 @@ import (
 // Uses HTTP/2 with JSON serialization for zero-dependency operation.
 // Note: This is NOT actual protobuf-based gRPC, but provides similar streaming semantics.
 type Server struct {
-	mu       sync.RWMutex
-	poolMgr  *pool.Manager
-	log      *logger.Logger
-	server   *http.Server
-	config   *Config
-	streams  map[string]*Stream
+	mu          sync.RWMutex
+	poolMgr     *pool.Manager
+	log         *logger.Logger
+	server      *http.Server
+	config      *Config
+	streams     map[string]*Stream
 	streamLimit int
 	streamCount atomic.Int64
-	authToken  string
+	authToken   string
 	authEnabled bool
-	reloadFn   func() error
+	reloadFn    func() error
 }
 
 // Config holds gRPC server configuration.
 type Config struct {
-	Listen string
-	Auth   config.RESTAuthConfig
+	Listen     string
+	Auth       config.RESTAuthConfig
 	MaxStreams int // Max concurrent streaming connections (0 = unlimited)
 }
 
 // Stream represents an active streaming connection.
 type Stream struct {
-	ID       string
-	Client   string
-	Type     string // "stats", "events", "logs"
-	Started  time.Time
-	Cancel   context.CancelFunc
+	ID      string
+	Client  string
+	Type    string // "stats", "events", "logs"
+	Started time.Time
+	Cancel  context.CancelFunc
 }
 
 // NewServer creates a new HTTP/2 API server for streaming stats.
@@ -192,22 +192,22 @@ func (s *Server) releaseStream() {
 
 // rateLimiter implements a simple token bucket rate limiter per IP.
 type grpcRateLimiter struct {
-	mu        sync.Mutex
-	limiters  map[string]*rate.Limiter
-	lastSeen  map[string]time.Time
-	rate      rate.Limit
-	burst     int
-	maxSize   int
+	mu         sync.Mutex
+	limiters   map[string]*rate.Limiter
+	lastSeen   map[string]time.Time
+	rate       rate.Limit
+	burst      int
+	maxSize    int
 	cleanupTTL time.Duration
 }
 
 func newGRPCRateLimiter(r rate.Limit, burst int) *grpcRateLimiter {
 	rl := &grpcRateLimiter{
-		limiters:  make(map[string]*rate.Limiter),
-		lastSeen:  make(map[string]time.Time),
-		rate:      r,
-		burst:     burst,
-		maxSize:   10000,
+		limiters:   make(map[string]*rate.Limiter),
+		lastSeen:   make(map[string]time.Time),
+		rate:       r,
+		burst:      burst,
+		maxSize:    10000,
 		cleanupTTL: 5 * time.Minute,
 	}
 	go rl.periodicCleanup()
@@ -422,12 +422,12 @@ func (s *Server) handleGetBackends(w http.ResponseWriter, r *http.Request) {
 
 		for _, b := range p.GetBackends() {
 			result = append(result, map[string]interface{}{
-				"address":     b.Address(),
-				"pool":        p.Name(),
-				"role":        b.Role,
-				"healthy":     b.Healthy.Load(),
-				"draining":    b.Draining.Load(),
-				"last_check":  b.LastCheck.Format(time.RFC3339),
+				"address":    b.Address(),
+				"pool":       p.Name(),
+				"role":       b.Role,
+				"healthy":    b.Healthy.Load(),
+				"draining":   b.Draining.Load(),
+				"last_check": b.LastCheck.Format(time.RFC3339),
 			})
 		}
 	}
@@ -550,9 +550,9 @@ func (s *Server) handleDrainBackend(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				s.writeProtoResponse(w, map[string]interface{}{
-					"success":             true,
-					"active_connections":  activeConns,
-					"address":             req.Address,
+					"success":            true,
+					"active_connections": activeConns,
+					"address":            req.Address,
 				})
 				return
 			}
@@ -611,13 +611,13 @@ func (s *Server) collectStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"timestamp":         time.Now().Format(time.RFC3339),
-		"total_pools":       len(pools),
-		"total_clients":     totalClients,
-		"total_servers":     totalServers,
-		"total_queries":     totalQueries,
+		"timestamp":          time.Now().Format(time.RFC3339),
+		"total_pools":        len(pools),
+		"total_clients":      totalClients,
+		"total_servers":      totalServers,
+		"total_queries":      totalQueries,
 		"total_transactions": totalTx,
-		"pools":             poolStats,
+		"pools":              poolStats,
 	}
 }
 

@@ -23,7 +23,7 @@ const (
 
 // Command represents a command to be applied to the FSM.
 type Command struct {
-	Type CommandType   `json:"type"`
+	Type CommandType     `json:"type"`
 	Data json.RawMessage `json:"data"`
 }
 

@@ -91,9 +91,9 @@ func classifyQuery(query string) string {
 // TestReadWriteSplitting_TransactionRouting tests that transactions route to primary
 func TestReadWriteSplitting_TransactionRouting(t *testing.T) {
 	tests := []struct {
-		name           string
-		queries        []string
-		expectedRoute  string // "primary" or "replica"
+		name          string
+		queries       []string
+		expectedRoute string // "primary" or "replica"
 	}{
 		{
 			name:          "Single SELECT outside transaction",
@@ -332,10 +332,10 @@ func selectWeightedBackend(backends []struct {
 func TestReadWriteSplitting_CacheInvalidation(t *testing.T) {
 	// Track which tables are affected by writes
 	writes := map[string][]string{
-		"INSERT INTO users": []string{"users"},
-		"UPDATE users":      []string{"users"},
-		"DELETE FROM users": []string{"users"},
-		"INSERT INTO orders JOIN users": []string{"orders", "users"},
+		"INSERT INTO users":             {"users"},
+		"UPDATE users":                  {"users"},
+		"DELETE FROM users":             {"users"},
+		"INSERT INTO orders JOIN users": {"orders", "users"},
 	}
 
 	for query, expectedTables := range writes {

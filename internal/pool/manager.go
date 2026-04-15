@@ -20,11 +20,11 @@ const connMemoryEstimate = 32 * 1024 // 32KB per connection
 
 // Manager manages all connection pools.
 type Manager struct {
-	mu                 sync.RWMutex
-	pools              map[string]*Pool
-	logger             *logger.Logger
-	globalMemoryLimit  atomic.Int64
-	globalMemoryUsed   atomic.Int64
+	mu                sync.RWMutex
+	pools             map[string]*Pool
+	logger            *logger.Logger
+	globalMemoryLimit atomic.Int64
+	globalMemoryUsed  atomic.Int64
 }
 
 // NewManager creates a new pool manager.

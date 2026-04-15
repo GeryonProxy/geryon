@@ -303,9 +303,9 @@ func TestProtocol_handleAck(t *testing.T) {
 
 	// Add a member
 	p.members["node-2"] = &Member{
-		ID:        "node-2",
-		State:     StateSuspect,
-		LastSeen:  time.Now().Add(-time.Hour),
+		ID:       "node-2",
+		State:    StateSuspect,
+		LastSeen: time.Now().Add(-time.Hour),
 	}
 
 	msg := Message{
@@ -516,8 +516,8 @@ func TestProtocol_broadcast(t *testing.T) {
 
 func TestIsValidAddress(t *testing.T) {
 	tests := []struct {
-		addr    string
-		valid   bool
+		addr  string
+		valid bool
 	}{
 		{"127.0.0.1:7946", true},
 		{"192.168.1.1:8080", true},

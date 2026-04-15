@@ -243,16 +243,16 @@ func normalizeParameters(query string) string {
 
 // RewriteResult holds the result of query rewriting.
 type RewriteResult struct {
-	Query       string
-	Target      string // "primary" or "replica"
+	Query        string
+	Target       string // "primary" or "replica"
 	WasRewritten bool
 }
 
 // RewriteEngine manages query rewriting rules.
 type RewriteEngine struct {
-	forcePrimary      map[string]bool // Patterns that must go to primary
-	forceReplica      map[string]bool // Patterns that can go to replica
-	preferReplica     bool            // Whether to prefer replicas for reads
+	forcePrimary  map[string]bool // Patterns that must go to primary
+	forceReplica  map[string]bool // Patterns that can go to replica
+	preferReplica bool            // Whether to prefer replicas for reads
 }
 
 // NewRewriteEngine creates a new query rewrite engine.

@@ -1003,11 +1003,11 @@ func TestGeryonFSM_applyBackendDetach(t *testing.T) {
 
 	// Add a backend first
 	fsm.state.Backends["backend1"] = FSMBackend{
-		Name:    "backend1",
-		Host:    "127.0.0.1",
-		Port:    5432,
-		Role:    "primary",
-		Status:  "healthy",
+		Name:     "backend1",
+		Host:     "127.0.0.1",
+		Port:     5432,
+		Role:     "primary",
+		Status:   "healthy",
 		Detached: false,
 	}
 
@@ -3680,8 +3680,8 @@ func TestWAL_Recover_CorruptedEntry(t *testing.T) {
 	// Manually write corrupted data
 	writer := bufio.NewWriter(wal.file)
 	binary.Write(writer, binary.BigEndian, uint32(0xDEADBEEF)) // bad checksum
-	binary.Write(writer, binary.BigEndian, uint32(5))           // length
-	writer.Write([]byte("hello"))                                // data
+	binary.Write(writer, binary.BigEndian, uint32(5))          // length
+	writer.Write([]byte("hello"))                              // data
 	writer.Flush()
 
 	wal.Close()
@@ -3917,7 +3917,7 @@ func TestReadUint32_InsufficientData(t *testing.T) {
 // Test readLengthPrefixed with truncated data
 func TestReadLengthPrefixed_TruncatedData(t *testing.T) {
 	var buf bytes.Buffer
-	writeUint32(&buf, 100) // Claim 100 bytes
+	writeUint32(&buf, 100)     // Claim 100 bytes
 	buf.Write([]byte("short")) // Only 5 bytes
 
 	_, err := readLengthPrefixed(&buf)

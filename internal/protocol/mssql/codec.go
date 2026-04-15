@@ -621,17 +621,17 @@ func (t Token) IsEnvChange() bool {
 // Constants
 const (
 	// Packet types
-	PacketTypeSQLBatch         byte = 0x01
-	PacketTypePreLogin         byte = 0x12
-	PacketTypeLogin7           byte = 0x10
-	PacketTypeRPC              byte = 0x03
-	PacketTypeAttention        byte = 0x06
-	PacketTypeBulkLoad         byte = 0x07
-	PacketTypeFedAuthToken     byte = 0x08
-	PacketTypeBatch            byte = 0x09
-	PacketTypeSSPI             byte = 0x11
-	PacketTypeLogout           byte = 0x13
-	PacketTypeTabularResult    byte = 0x04
+	PacketTypeSQLBatch      byte = 0x01
+	PacketTypePreLogin      byte = 0x12
+	PacketTypeLogin7        byte = 0x10
+	PacketTypeRPC           byte = 0x03
+	PacketTypeAttention     byte = 0x06
+	PacketTypeBulkLoad      byte = 0x07
+	PacketTypeFedAuthToken  byte = 0x08
+	PacketTypeBatch         byte = 0x09
+	PacketTypeSSPI          byte = 0x11
+	PacketTypeLogout        byte = 0x13
+	PacketTypeTabularResult byte = 0x04
 
 	// Status flags
 	StatusEndOfMessage byte = 0x01
@@ -646,40 +646,40 @@ const (
 	EncryptRequired byte = 0x03
 
 	// Pre-login token types
-	PreLoginVersion           byte = 0x00
-	PreLoginEncryption        byte = 0x01
-	PreLoginInstOpt           byte = 0x02
-	PreLoginThreadID          byte = 0x03
-	PreLoginMars              byte = 0x04
-	PreLoginTraceID           byte = 0x05
-	PreLoginFedAuthRequired   byte = 0x06
-	PreLoginNonceOpt          byte = 0x07
+	PreLoginVersion         byte = 0x00
+	PreLoginEncryption      byte = 0x01
+	PreLoginInstOpt         byte = 0x02
+	PreLoginThreadID        byte = 0x03
+	PreLoginMars            byte = 0x04
+	PreLoginTraceID         byte = 0x05
+	PreLoginFedAuthRequired byte = 0x06
+	PreLoginNonceOpt        byte = 0x07
 
 	// Login option flags 1
-	LoginOption1OrderX86     uint32 = 0x00000001
-	LoginOption1Order68000   uint32 = 0x00000002
-	LoginOption1CharSetEBCDIC uint32 = 0x00000004
+	LoginOption1OrderX86         uint32 = 0x00000001
+	LoginOption1Order68000       uint32 = 0x00000002
+	LoginOption1CharSetEBCDIC    uint32 = 0x00000004
 	LoginOption1CharSetISO8859_1 uint32 = 0x00000008
 	LoginOption1CharSetISO8859_2 uint32 = 0x00000010
-	LoginOption1UseDb        uint32 = 0x00000020
-	LoginOption1InitDbFatal  uint32 = 0x00000040
-	LoginOption1SetLangOn    uint32 = 0x00000080
+	LoginOption1UseDb            uint32 = 0x00000020
+	LoginOption1InitDbFatal      uint32 = 0x00000040
+	LoginOption1SetLangOn        uint32 = 0x00000080
 
 	// Token types
-	TokenTypeSQLText      byte = 0x00
-	TokenTypeColMetadata  byte = 0x81
-	TokenTypeRow          byte = 0xD1
-	TokenTypeDone         byte = 0xFD
-	TokenTypeDoneProc     byte = 0xFE
-	TokenTypeDoneInProc   byte = 0xFF
-	TokenTypeError        byte = 0xAA
-	TokenTypeInfo         byte = 0xAB
-	TokenTypeLoginAck     byte = 0xAD
-	TokenTypeEnvChange    byte = 0xE3
-	TokenTypeSSPI         byte = 0xED // NTLM/Kerberos authentication token
-	TokenTypeFeatureExt   byte = 0xEE // Feature extension ACK
-	TokenTypeTracking     byte = 0xA9 // SQL batch tracking
-	TokenTypeNTLMAuth     byte = 0xED // Alias for SSPI (NTLM challenge/response)
+	TokenTypeSQLText     byte = 0x00
+	TokenTypeColMetadata byte = 0x81
+	TokenTypeRow         byte = 0xD1
+	TokenTypeDone        byte = 0xFD
+	TokenTypeDoneProc    byte = 0xFE
+	TokenTypeDoneInProc  byte = 0xFF
+	TokenTypeError       byte = 0xAA
+	TokenTypeInfo        byte = 0xAB
+	TokenTypeLoginAck    byte = 0xAD
+	TokenTypeEnvChange   byte = 0xE3
+	TokenTypeSSPI        byte = 0xED // NTLM/Kerberos authentication token
+	TokenTypeFeatureExt  byte = 0xEE // Feature extension ACK
+	TokenTypeTracking    byte = 0xA9 // SQL batch tracking
+	TokenTypeNTLMAuth    byte = 0xED // Alias for SSPI (NTLM challenge/response)
 )
 
 // EncryptMode type for encryption settings

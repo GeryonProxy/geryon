@@ -630,10 +630,10 @@ func TestValidatePoolName_EdgeCases(t *testing.T) {
 	}{
 		{"valid_pool_123", true},
 		{"Pool-Name-With-Dashes", true},
-		{"a", true},           // minimum length
-		{"ab", true},          // 2 chars
+		{"a", true},  // minimum length
+		{"ab", true}, // 2 chars
 		{"_underscore_start", true},
-		{"", false},           // empty
+		{"", false}, // empty
 		{"pool with spaces", false},
 		{"pool/invalid", false},
 		{"pool;drop", false},

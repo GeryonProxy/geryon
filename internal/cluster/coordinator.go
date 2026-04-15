@@ -25,30 +25,30 @@ type Coordinator struct {
 	swimEvents <-chan swim.Event
 
 	// Configuration
-	config     *config.ClusterConfig
-	dataDir    string
-	nodeID     string
+	config  *config.ClusterConfig
+	dataDir string
+	nodeID  string
 
 	// Channels
-	stopCh     chan struct{}
-	eventCh    chan ClusterEvent
-	commandCh  chan ClusterCommand
+	stopCh    chan struct{}
+	eventCh   chan ClusterEvent
+	commandCh chan ClusterCommand
 
 	// State
-	members    map[string]*MemberInfo
-	isLeader   bool
-	logger     *logger.Logger
+	members  map[string]*MemberInfo
+	isLeader bool
+	logger   *logger.Logger
 }
 
 // MemberInfo represents information about a cluster member.
 type MemberInfo struct {
-	NodeID           string            `json:"node_id"`
-	Address          string            `json:"address"`
-	RaftAddress      string            `json:"raft_address"`
-	SWIMAddress      string            `json:"swim_address"`
-	State            MemberState       `json:"state"`
-	LastSeen         time.Time         `json:"last_seen"`
-	Metadata         MemberMetadata    `json:"metadata"`
+	NodeID      string         `json:"node_id"`
+	Address     string         `json:"address"`
+	RaftAddress string         `json:"raft_address"`
+	SWIMAddress string         `json:"swim_address"`
+	State       MemberState    `json:"state"`
+	LastSeen    time.Time      `json:"last_seen"`
+	Metadata    MemberMetadata `json:"metadata"`
 }
 
 // MemberState represents the state of a cluster member.
@@ -78,20 +78,20 @@ func (s MemberState) String() string {
 
 // MemberMetadata contains runtime information about a member.
 type MemberMetadata struct {
-	Version          string    `json:"version"`
-	Uptime           string    `json:"uptime"`
-	LoadAvg          float64   `json:"load_avg"`
-	ConnectionCount  int       `json:"connection_count"`
-	QueryRate        float64   `json:"query_rate"`
-	PoolStatuses     map[string]PoolStatus `json:"pool_statuses"`
+	Version         string                `json:"version"`
+	Uptime          string                `json:"uptime"`
+	LoadAvg         float64               `json:"load_avg"`
+	ConnectionCount int                   `json:"connection_count"`
+	QueryRate       float64               `json:"query_rate"`
+	PoolStatuses    map[string]PoolStatus `json:"pool_statuses"`
 }
 
 // PoolStatus represents the status of a pool on a member.
 type PoolStatus struct {
-	ActiveConnections   int     `json:"active_connections"`
-	TotalConnections    int     `json:"total_connections"`
-	QueriesPerSecond    float64 `json:"queries_per_second"`
-	Healthy             bool    `json:"healthy"`
+	ActiveConnections int     `json:"active_connections"`
+	TotalConnections  int     `json:"total_connections"`
+	QueriesPerSecond  float64 `json:"queries_per_second"`
+	Healthy           bool    `json:"healthy"`
 }
 
 // ClusterEvent represents an event in the cluster.
@@ -116,9 +116,9 @@ const (
 
 // ClusterCommand represents a command to be executed on the cluster.
 type ClusterCommand struct {
-	Type    CommandType
-	Data    interface{}
-	RespCh  chan<- CommandResponse
+	Type   CommandType
+	Data   interface{}
+	RespCh chan<- CommandResponse
 }
 
 // CommandType represents the type of cluster command.
@@ -584,10 +584,10 @@ func (c *Coordinator) shareBackendHealth(failedNode string) {
 
 	// Broadcast health info via SWIM
 	healthMsg := HealthBroadcast{
-		Source:      c.nodeID,
-		FailedNode:  failedNode,
+		Source:        c.nodeID,
+		FailedNode:    failedNode,
 		BackendHealth: localHealth,
-		Timestamp:   time.Now(),
+		Timestamp:     time.Now(),
 	}
 
 	data, err := json.Marshal(healthMsg)
@@ -604,10 +604,10 @@ func (c *Coordinator) shareBackendHealth(failedNode string) {
 
 // HealthBroadcast represents a backend health broadcast message.
 type HealthBroadcast struct {
-	Source        string                  `json:"source"`
-	FailedNode    string                  `json:"failed_node"`
+	Source        string                   `json:"source"`
+	FailedNode    string                   `json:"failed_node"`
 	BackendHealth map[string]BackendHealth `json:"backend_health"`
-	Timestamp     time.Time               `json:"timestamp"`
+	Timestamp     time.Time                `json:"timestamp"`
 }
 
 // BackendHealth represents the health status of a backend.
@@ -757,8 +757,8 @@ func (c *Coordinator) UpdatePoolConfig(ctx context.Context, name string, cfg int
 
 // ConfigManager handles configuration management.
 type ConfigManager struct {
-	mu       sync.RWMutex
-	config   *config.Config
+	mu          sync.RWMutex
+	config      *config.Config
 	coordinator *Coordinator
 }
 

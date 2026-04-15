@@ -483,8 +483,8 @@ func TestProxySession_StmtRepreparer(t *testing.T) {
 
 	if session.stmtRepreparer == nil {
 		t.Error("stmtRepreparer should be initialized for all sessions")
-		}
 	}
+}
 
 // Test Listener with configurable transaction timeouts
 func TestListener_TransactionTimeoutsConfig(t *testing.T) {

@@ -205,9 +205,9 @@ func TestCluster_serveRPC_AcceptError(t *testing.T) {
 func TestCluster_raftLoop_ElectionTimeout(t *testing.T) {
 	log, _ := logger.New("error", "text")
 	c := New(Config{
-		NodeID:     "node-1",
-		ListenAddr: "127.0.0.1:0",
-		Logger:     log,
+		NodeID:          "node-1",
+		ListenAddr:      "127.0.0.1:0",
+		Logger:          log,
 		ElectionTimeout: 50 * time.Millisecond,
 	})
 
@@ -242,9 +242,9 @@ func TestCluster_raftLoop_ElectionTimeout(t *testing.T) {
 func TestCluster_raftLoop_HeartbeatAsLeader(t *testing.T) {
 	log, _ := logger.New("error", "text")
 	c := New(Config{
-		NodeID:     "node-1",
-		ListenAddr: "127.0.0.1:0",
-		Logger:     log,
+		NodeID:            "node-1",
+		ListenAddr:        "127.0.0.1:0",
+		Logger:            log,
 		HeartbeatInterval: 50 * time.Millisecond,
 	})
 

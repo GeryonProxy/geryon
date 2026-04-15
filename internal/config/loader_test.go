@@ -140,16 +140,16 @@ func TestUnquote(t *testing.T) {
 		{`"quoted"`, "quoted"},
 		{`'single'`, "single"},
 		{`unquoted`, "unquoted"},
-		{`"`, `"`},             // Single quote - not valid
-		{``, ``},               // Empty
-		{`""`, ``},             // Empty quotes
+		{`"`, `"`},                 // Single quote - not valid
+		{``, ``},                   // Empty
+		{`""`, ``},                 // Empty quotes
 		{`  "spaced"  `, "spaced"}, // With surrounding spaces
 		// Escape sequences in double-quoted strings
 		{`"hello\nworld"`, "hello\nworld"},
 		{`"tab\there"`, "tab\there"},
 		{`"back\\slash"`, "back\\slash"},
 		{`"say \"hi\""`, `say "hi"`},
-		{`"it's"`, "it's"},           // Single quote in double-quoted
+		{`"it's"`, "it's"}, // Single quote in double-quoted
 		{`"line1\nline2"`, "line1\nline2"},
 		// Single-quoted: backslash is literal, '' becomes '
 		{`'it''s'`, "it's"},
@@ -254,7 +254,7 @@ func TestParseInt(t *testing.T) {
 		{"", 0},
 		{"abc", 0},
 		{"  42  ", 42}, // With spaces
-		{"3.14", 0},   // Not an integer
+		{"3.14", 0},    // Not an integer
 	}
 
 	for _, tt := range tests {
@@ -276,7 +276,7 @@ func TestParseStringArray(t *testing.T) {
 		{`[]`, []string{}},
 		{`single`, []string{"single"}},
 		{`["with spaces", "normal"]`, []string{"with spaces", "normal"}},
-		{`["a", "b",]`, []string{"a", "b"}}, // Trailing comma
+		{`["a", "b",]`, []string{"a", "b"}},   // Trailing comma
 		{`[ "a" , "b" ]`, []string{"a", "b"}}, // Extra spaces
 	}
 
@@ -767,13 +767,13 @@ func BenchmarkExpandEnvVars(b *testing.B) {
 // TestParseSimpleListItem tests the parseSimpleListItem function
 func TestParseSimpleListItem(t *testing.T) {
 	tests := []struct {
-		name           string
-		section        []string
-		value          string
-		indent         int
-		expectPeers    int
-		expectJoins    int
-		expectErr      bool
+		name        string
+		section     []string
+		value       string
+		indent      int
+		expectPeers int
+		expectJoins int
+		expectErr   bool
 	}{
 		{
 			name:        "cluster_raft_peers",
@@ -825,8 +825,8 @@ func TestParseSimpleListItem(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &parserState{
-				cfg:             &Config{},
-				currentSection:  tt.section,
+				cfg:            &Config{},
+				currentSection: tt.section,
 			}
 			// Initialize Cluster config
 			state.cfg.Cluster.Raft.Peers = []string{}

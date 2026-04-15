@@ -71,9 +71,9 @@ func TestForwardMSSQLPreLogin_InvalidPacketType(t *testing.T) {
 	// Send wrong packet type (not 0x12)
 	go func() {
 		header := make([]byte, 8)
-		header[0] = 0x01 // Wrong type
+		header[0] = 0x01                           // Wrong type
 		binary.BigEndian.PutUint16(header[2:4], 8) // length=8 (header only)
-		header[1] = 0x01 // StatusEndOfMessage
+		header[1] = 0x01                           // StatusEndOfMessage
 		clientEnd.Write(header)
 	}()
 
@@ -90,7 +90,7 @@ func TestForwardMSSQLPreLogin_InvalidLength(t *testing.T) {
 	// Send valid packet type but invalid length (< 8)
 	go func() {
 		header := make([]byte, 8)
-		header[0] = 0x12 // PreLogin type
+		header[0] = 0x12                           // PreLogin type
 		binary.BigEndian.PutUint16(header[2:4], 4) // length < 8, invalid
 		header[1] = 0x01
 		clientEnd.Write(header)
@@ -110,8 +110,8 @@ func TestForwardMSSQLPreLogin_ValidPreLogin(t *testing.T) {
 	go func() {
 		// TDS Pre-Login packet: type=0x12, status=0x01 (EOM), length=16, payload=8 bytes
 		header := make([]byte, 8)
-		header[0] = 0x12 // PreLogin
-		header[1] = 0x01 // StatusEndOfMessage
+		header[0] = 0x12                            // PreLogin
+		header[1] = 0x01                            // StatusEndOfMessage
 		binary.BigEndian.PutUint16(header[2:4], 16) // total length
 		payload := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}
 		clientEnd.Write(append(header, payload...))
@@ -130,8 +130,8 @@ func TestForwardMSSQLPreLogin_ValidPreLogin(t *testing.T) {
 
 		// Send Pre-Login response with EOM flag
 		respHeader := make([]byte, 8)
-		respHeader[0] = 0x04 // Response type
-		respHeader[1] = 0x01 // StatusEndOfMessage
+		respHeader[0] = 0x04                            // Response type
+		respHeader[1] = 0x01                            // StatusEndOfMessage
 		binary.BigEndian.PutUint16(respHeader[2:4], 12) // length
 		respPayload := []byte{0x00, 0x01, 0x02, 0x03}
 		backendEnd.Write(append(respHeader, respPayload...))
@@ -198,9 +198,9 @@ func TestForwardMSSQLAuthResponse_LoginAck(t *testing.T) {
 	go func() {
 		// Backend sends LoginAck with EOM flag
 		header := make([]byte, 8)
-		header[0] = 0x04 // TabularResult
-		header[1] = 0x01 // StatusEndOfMessage
-		binary.BigEndian.PutUint16(header[2:4], 13) // length = 8 + 5
+		header[0] = 0x04                                // TabularResult
+		header[1] = 0x01                                // StatusEndOfMessage
+		binary.BigEndian.PutUint16(header[2:4], 13)     // length = 8 + 5
 		payload := []byte{0xAD, 0x00, 0x01, 0x00, 0x00} // LoginAck token
 		backendEnd.Write(append(header, payload...))
 

@@ -30,22 +30,22 @@ func TestResetConnection_UnknownProtocol(t *testing.T) {
 
 type unknownProtocolCodec struct{}
 
-func (c *unknownProtocolCodec) Protocol() common.Protocol                               { return common.Protocol(99) }
-func (c *unknownProtocolCodec) ReadMessage(r io.Reader) (*common.Message, error)        { return nil, nil }
-func (c *unknownProtocolCodec) WriteMessage(w io.Writer, msg *common.Message) error     { return nil }
-func (c *unknownProtocolCodec) EncodeQuery(query string) (*common.Message, error)       { return nil, nil }
-func (c *unknownProtocolCodec) IsQuery(msg *common.Message) bool                        { return false }
-func (c *unknownProtocolCodec) IsExecute(msg *common.Message) bool                      { return false }
-func (c *unknownProtocolCodec) IsPrepare(msg *common.Message) bool                      { return false }
-func (c *unknownProtocolCodec) IsClose(msg *common.Message) bool                        { return false }
-func (c *unknownProtocolCodec) IsSync(msg *common.Message) bool                         { return false }
-func (c *unknownProtocolCodec) IsStartup(msg *common.Message) bool                      { return false }
-func (c *unknownProtocolCodec) IsTerminate(msg *common.Message) bool                    { return false }
-func (c *unknownProtocolCodec) IsTransactionBegin(msg *common.Message) bool             { return false }
-func (c *unknownProtocolCodec) IsTransactionEnd(msg *common.Message) bool               { return false }
-func (c *unknownProtocolCodec) ExtractQuery(msg *common.Message) (string, error)        { return "", nil }
-func (c *unknownProtocolCodec) GenerateResetSequence() []*common.Message                { return nil }
-func (c *unknownProtocolCodec) IsBind(msg *common.Message) bool                         { return false }
+func (c *unknownProtocolCodec) Protocol() common.Protocol                           { return common.Protocol(99) }
+func (c *unknownProtocolCodec) ReadMessage(r io.Reader) (*common.Message, error)    { return nil, nil }
+func (c *unknownProtocolCodec) WriteMessage(w io.Writer, msg *common.Message) error { return nil }
+func (c *unknownProtocolCodec) EncodeQuery(query string) (*common.Message, error)   { return nil, nil }
+func (c *unknownProtocolCodec) IsQuery(msg *common.Message) bool                    { return false }
+func (c *unknownProtocolCodec) IsExecute(msg *common.Message) bool                  { return false }
+func (c *unknownProtocolCodec) IsPrepare(msg *common.Message) bool                  { return false }
+func (c *unknownProtocolCodec) IsClose(msg *common.Message) bool                    { return false }
+func (c *unknownProtocolCodec) IsSync(msg *common.Message) bool                     { return false }
+func (c *unknownProtocolCodec) IsStartup(msg *common.Message) bool                  { return false }
+func (c *unknownProtocolCodec) IsTerminate(msg *common.Message) bool                { return false }
+func (c *unknownProtocolCodec) IsTransactionBegin(msg *common.Message) bool         { return false }
+func (c *unknownProtocolCodec) IsTransactionEnd(msg *common.Message) bool           { return false }
+func (c *unknownProtocolCodec) ExtractQuery(msg *common.Message) (string, error)    { return "", nil }
+func (c *unknownProtocolCodec) GenerateResetSequence() []*common.Message            { return nil }
+func (c *unknownProtocolCodec) IsBind(msg *common.Message) bool                     { return false }
 
 // --- Router selectBackend fallback paths ---
 
@@ -1185,8 +1185,8 @@ func TestHealthChecker_CheckMSSQL(t *testing.T) {
 
 		// Send a minimal TDS response with EOM flag
 		respHeader := make([]byte, 8)
-		respHeader[0] = 0x04 // TabularResult
-		respHeader[1] = 0x01 // EOM
+		respHeader[0] = 0x04                            // TabularResult
+		respHeader[1] = 0x01                            // EOM
 		binary.BigEndian.PutUint16(respHeader[2:4], 12) // length
 		payload := []byte{0xFF, 0x00, 0x00, 0x00}
 		server.Write(append(respHeader, payload...))

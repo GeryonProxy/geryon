@@ -14,21 +14,21 @@ import (
 // MockCodec implements a minimal codec for testing
 type MockCodec struct{}
 
-func (m *MockCodec) Protocol() common.Protocol { return common.ProtocolPostgreSQL }
-func (m *MockCodec) ReadMessage(r io.Reader) (*common.Message, error)  { return nil, nil }
+func (m *MockCodec) Protocol() common.Protocol                           { return common.ProtocolPostgreSQL }
+func (m *MockCodec) ReadMessage(r io.Reader) (*common.Message, error)    { return nil, nil }
 func (m *MockCodec) WriteMessage(w io.Writer, msg *common.Message) error { return nil }
-func (m *MockCodec) IsQuery(msg *common.Message) bool { return false }
-func (m *MockCodec) IsPrepare(msg *common.Message) bool { return false }
-func (m *MockCodec) IsExecute(msg *common.Message) bool { return false }
-func (m *MockCodec) IsClose(msg *common.Message) bool { return false }
-func (m *MockCodec) IsBind(msg *common.Message) bool { return false }
-func (m *MockCodec) IsSync(msg *common.Message) bool { return false }
-func (m *MockCodec) IsStartup(msg *common.Message) bool { return false }
-func (m *MockCodec) IsTerminate(msg *common.Message) bool { return false }
-func (m *MockCodec) IsTransactionBegin(msg *common.Message) bool { return false }
-func (m *MockCodec) IsTransactionEnd(msg *common.Message) bool { return false }
-func (m *MockCodec) ExtractQuery(msg *common.Message) (string, error) { return "", nil }
-func (m *MockCodec) GenerateResetSequence() []*common.Message { return nil }
+func (m *MockCodec) IsQuery(msg *common.Message) bool                    { return false }
+func (m *MockCodec) IsPrepare(msg *common.Message) bool                  { return false }
+func (m *MockCodec) IsExecute(msg *common.Message) bool                  { return false }
+func (m *MockCodec) IsClose(msg *common.Message) bool                    { return false }
+func (m *MockCodec) IsBind(msg *common.Message) bool                     { return false }
+func (m *MockCodec) IsSync(msg *common.Message) bool                     { return false }
+func (m *MockCodec) IsStartup(msg *common.Message) bool                  { return false }
+func (m *MockCodec) IsTerminate(msg *common.Message) bool                { return false }
+func (m *MockCodec) IsTransactionBegin(msg *common.Message) bool         { return false }
+func (m *MockCodec) IsTransactionEnd(msg *common.Message) bool           { return false }
+func (m *MockCodec) ExtractQuery(msg *common.Message) (string, error)    { return "", nil }
+func (m *MockCodec) GenerateResetSequence() []*common.Message            { return nil }
 
 func TestParsePoolMode(t *testing.T) {
 	tests := []struct {

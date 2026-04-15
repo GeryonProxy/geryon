@@ -35,18 +35,18 @@ type Session struct {
 
 // SessionStats contains session statistics.
 type SessionStats struct {
-	ID          uint64    `json:"id"`
-	Pool        string    `json:"pool"`
-	User        string    `json:"user"`
-	Database    string    `json:"database"`
-	AuthDone    bool      `json:"auth_done"`
-	InTxn       bool      `json:"in_transaction"`
-	StartedAt   time.Time `json:"started_at"`
-	LastActive  time.Time `json:"last_active"`
-	QueryCount  int64     `json:"query_count"`
-	BytesIn     int64     `json:"bytes_in"`
-	BytesOut    int64     `json:"bytes_out"`
-	ServerConnID uint64   `json:"server_conn_id,omitempty"`
+	ID           uint64    `json:"id"`
+	Pool         string    `json:"pool"`
+	User         string    `json:"user"`
+	Database     string    `json:"database"`
+	AuthDone     bool      `json:"auth_done"`
+	InTxn        bool      `json:"in_transaction"`
+	StartedAt    time.Time `json:"started_at"`
+	LastActive   time.Time `json:"last_active"`
+	QueryCount   int64     `json:"query_count"`
+	BytesIn      int64     `json:"bytes_in"`
+	BytesOut     int64     `json:"bytes_out"`
+	ServerConnID uint64    `json:"server_conn_id,omitempty"`
 }
 
 var (

@@ -138,15 +138,15 @@ func VerifySCRAMSHA256(password, hash string) (bool, error) {
 // SCRAMClient implements SCRAM-SHA-256 client-side authentication.
 // Used when the proxy needs to authenticate to a backend server.
 type SCRAMClient struct {
-	username     string
-	password     string
-	mechanism    string
-	clientNonce  string
-	salt         []byte
-	saltedPass   []byte
-	clientFirst  string
-	serverFirst  string
-	clientFinal  string
+	username    string
+	password    string
+	mechanism   string
+	clientNonce string
+	salt        []byte
+	saltedPass  []byte
+	clientFirst string
+	serverFirst string
+	clientFinal string
 }
 
 // NewSCRAMClient creates a new SCRAM client for authentication.

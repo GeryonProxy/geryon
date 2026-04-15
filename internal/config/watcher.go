@@ -14,15 +14,15 @@ import (
 
 // Watcher monitors configuration files for changes.
 type Watcher struct {
-	path      string
-	interval  time.Duration
-	log       *logger.Logger
+	path     string
+	interval time.Duration
+	log      *logger.Logger
 
-	mu        sync.RWMutex
-	lastHash  []byte
-	onChange  func(*Config)
-	stopCh    chan struct{}
-	running   bool
+	mu       sync.RWMutex
+	lastHash []byte
+	onChange func(*Config)
+	stopCh   chan struct{}
+	running  bool
 }
 
 // NewWatcher creates a new configuration watcher.
@@ -164,10 +164,10 @@ func (w *Watcher) IsRunning() bool {
 
 // ReloadManager manages configuration reloads with graceful transitions.
 type ReloadManager struct {
-	mu        sync.RWMutex
-	current   *Config
-	applyFn   func(*Config) error
-	log       *logger.Logger
+	mu      sync.RWMutex
+	current *Config
+	applyFn func(*Config) error
+	log     *logger.Logger
 }
 
 // NewReloadManager creates a new reload manager.

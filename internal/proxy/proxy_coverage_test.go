@@ -579,7 +579,7 @@ func TestProxySession_authenticateWithCertificate_TLSNoPeerCert(t *testing.T) {
 	defer client.Close()
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
 	}
 
@@ -620,7 +620,7 @@ func TestProxySession_authenticateWithCertificate_WithUserDB(t *testing.T) {
 	defer client.Close()
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates:       []tls.Certificate{cert},
 		InsecureSkipVerify: true,
 	}
 

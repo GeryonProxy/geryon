@@ -14,15 +14,15 @@ import (
 
 // QueryLogger handles query logging for analytics and debugging.
 type QueryLogger struct {
-	mu         sync.RWMutex
-	config     QueryLogConfig
-	slowLog    *os.File
-	allLog     *os.File
-	jsonLog    *os.File
-	buffer     []QueryLogEntry
-	bufferMu   sync.Mutex
-	running    atomic.Bool
-	stopCh     chan struct{}
+	mu          sync.RWMutex
+	config      QueryLogConfig
+	slowLog     *os.File
+	allLog      *os.File
+	jsonLog     *os.File
+	buffer      []QueryLogEntry
+	bufferMu    sync.Mutex
+	running     atomic.Bool
+	stopCh      chan struct{}
 	flushTicker *time.Ticker
 
 	// In-memory query store for recent/slow queries
@@ -33,22 +33,22 @@ type QueryLogger struct {
 	maxSlowQueries   int
 
 	// Query statistics
-	stats            QueryStats
-	statsMu          sync.RWMutex
-	lastReset        time.Time
+	stats     QueryStats
+	statsMu   sync.RWMutex
+	lastReset time.Time
 }
 
 // QueryLogConfig contains query logging configuration.
 type QueryLogConfig struct {
-	Enabled         bool
-	Directory       string
-	SlowThreshold   time.Duration
-	MaxFileSize     int64 // bytes
-	MaxFiles        int
-	BufferSize      int
-	FlushInterval   time.Duration
-	LogAllQueries   bool
-	LogJSON         bool
+	Enabled       bool
+	Directory     string
+	SlowThreshold time.Duration
+	MaxFileSize   int64 // bytes
+	MaxFiles      int
+	BufferSize    int
+	FlushInterval time.Duration
+	LogAllQueries bool
+	LogJSON       bool
 }
 
 // DefaultQueryLogConfig returns default configuration.
@@ -89,17 +89,17 @@ type QueryLogEntry struct {
 
 // QueryStats aggregates query statistics.
 type QueryStats struct {
-	TotalQueries    uint64        `json:"total_queries"`
-	SlowQueries     uint64        `json:"slow_queries"`
-	CachedQueries   uint64        `json:"cached_queries"`
-	ErrorQueries    uint64        `json:"error_queries"`
-	AvgDuration     time.Duration `json:"avg_duration"`
-	MaxDuration     time.Duration `json:"max_duration"`
-	MinDuration     time.Duration `json:"min_duration"`
-	P95Duration     time.Duration `json:"p95_duration"`
-	P99Duration     time.Duration `json:"p99_duration"`
-	UniqueQueries   uint64        `json:"unique_queries"`
-	TopQueries      []QueryDigest `json:"top_queries"`
+	TotalQueries  uint64        `json:"total_queries"`
+	SlowQueries   uint64        `json:"slow_queries"`
+	CachedQueries uint64        `json:"cached_queries"`
+	ErrorQueries  uint64        `json:"error_queries"`
+	AvgDuration   time.Duration `json:"avg_duration"`
+	MaxDuration   time.Duration `json:"max_duration"`
+	MinDuration   time.Duration `json:"min_duration"`
+	P95Duration   time.Duration `json:"p95_duration"`
+	P99Duration   time.Duration `json:"p99_duration"`
+	UniqueQueries uint64        `json:"unique_queries"`
+	TopQueries    []QueryDigest `json:"top_queries"`
 }
 
 // QueryDigest represents aggregated query statistics.

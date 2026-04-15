@@ -70,7 +70,11 @@ func TestServer_Initialize(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/initialize", "application/json", strings.NewReader(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test"}}`))
 	if err != nil {
@@ -104,7 +108,11 @@ func TestServer_ToolsList(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -144,7 +152,11 @@ func TestServer_ResourcesList(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/resources/list")
 	if err != nil {
@@ -203,7 +215,11 @@ func TestServer_Auth_RejectsWithoutToken(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Without auth
 	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/list")
@@ -243,7 +259,11 @@ func TestServer_SecurityHeaders(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/list")
 	if err != nil {
@@ -272,7 +292,11 @@ func TestServer_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// GET to initialize (requires POST)
 	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/initialize")
@@ -365,7 +389,11 @@ func TestServer_ToolCall_Unknown(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	body := `{"name":"unknown_tool","arguments":{}}`
 	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/call", "application/json", strings.NewReader(body))
@@ -408,7 +436,11 @@ func TestServer_ToolCall_InvalidJSON(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -436,7 +468,11 @@ func TestServer_ResourcesRead(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -474,7 +510,11 @@ func TestServer_ResourcesRead_NotFound(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	body := `{"uri":"geryon://nonexistent"}`
 	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
@@ -501,7 +541,11 @@ func TestServer_ResourcesRead_InvalidJSON(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -532,7 +576,11 @@ func TestServer_Initialize_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/initialize")
 	if err != nil {
@@ -561,7 +609,11 @@ func TestServer_ToolsCall_MethodNotAllowed(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/call")
 	if err != nil {
@@ -586,7 +638,11 @@ func TestServer_Start_AlreadyStarted(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Second start should fail
 	if err := s.Start(); err == nil {
@@ -923,7 +979,11 @@ func TestServer_Auth_InvalidToken(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -955,11 +1015,15 @@ func TestServer_Auth_MalformedHeader(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	tests := []struct {
-		name  string
-		auth  string
+		name string
+		auth string
 	}{
 		{"no bearer prefix", "secret"},
 		{"wrong prefix", "Basic secret"},
@@ -998,7 +1062,11 @@ func TestServer_ToolsList_POST(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/list", "application/json", nil)
 	if err != nil {
@@ -1025,7 +1093,11 @@ func TestServer_ResourcesList_POST(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/list", "application/json", nil)
 	if err != nil {
@@ -1052,7 +1124,11 @@ func TestServer_ToolCall_PoolList(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	body := `{"name":"geryon_pool_list","arguments":{}}`
 	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/call", "application/json", strings.NewReader(body))
@@ -1088,7 +1164,11 @@ func TestServer_ResourcesRead_Pools(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	body := `{"uri":"geryon://pools"}`
 	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
@@ -1116,7 +1196,11 @@ func TestServer_ResourcesRead_StatsOverview(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -1146,7 +1230,11 @@ func TestServer_RateLimit(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Make many requests quickly from same IP
 	// Most should succeed but eventually rate limit
@@ -1184,7 +1272,11 @@ func TestServer_ToolsList_MethodNotAllowed_DELETE(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	// Wait for server to be ready
 	time.Sleep(10 * time.Millisecond)
@@ -1215,7 +1307,11 @@ func TestServer_ResourcesList_MethodNotAllowed_PUT(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second); defer cancel(); s.Stop(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.Stop(ctx)
+	}()
 
 	req, _ := http.NewRequest("PUT", "http://"+cfg.Listen+"/mcp/v1/resources/list", nil)
 	resp, err := http.DefaultClient.Do(req)

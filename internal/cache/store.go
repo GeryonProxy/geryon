@@ -12,13 +12,13 @@ import (
 
 // CacheEntry represents a cached query result.
 type CacheEntry struct {
-	Key        string
-	Value      []byte
-	Size       int64
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
-	Tables     []string // Tables referenced in the query (for invalidation)
-	listElem   *list.Element
+	Key       string
+	Value     []byte
+	Size      int64
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	Tables    []string // Tables referenced in the query (for invalidation)
+	listElem  *list.Element
 }
 
 // IsExpired returns true if the entry has expired.
@@ -28,24 +28,24 @@ func (e *CacheEntry) IsExpired() bool {
 
 // Store implements an LRU cache with TTL support.
 type Store struct {
-	mu          sync.RWMutex
-	entries     map[string]*CacheEntry
-	evictionList *list.List // LRU list
-	maxMemory   int64
+	mu            sync.RWMutex
+	entries       map[string]*CacheEntry
+	evictionList  *list.List // LRU list
+	maxMemory     int64
 	currentMemory int64
-	defaultTTL  time.Duration
-	hits        uint64
-	misses      uint64
-	evictions   uint64
+	defaultTTL    time.Duration
+	hits          uint64
+	misses        uint64
+	evictions     uint64
 }
 
 // NewStore creates a new cache store.
 func NewStore(maxMemory int64, defaultTTL time.Duration) *Store {
 	return &Store{
-		entries:       make(map[string]*CacheEntry),
-		evictionList:  list.New(),
-		maxMemory:     maxMemory,
-		defaultTTL:    defaultTTL,
+		entries:      make(map[string]*CacheEntry),
+		evictionList: list.New(),
+		maxMemory:    maxMemory,
+		defaultTTL:   defaultTTL,
 	}
 }
 
@@ -168,13 +168,13 @@ func (s *Store) Clear() {
 
 // Stats returns cache statistics.
 type Stats struct {
-	Entries       int
-	MemoryUsed    int64
-	MemoryMax     int64
-	Hits          uint64
-	Misses        uint64
-	Evictions     uint64
-	HitRate       float64
+	Entries    int
+	MemoryUsed int64
+	MemoryMax  int64
+	Hits       uint64
+	Misses     uint64
+	Evictions  uint64
+	HitRate    float64
 }
 
 // Stats returns cache statistics.
@@ -250,7 +250,7 @@ func (s *Store) cleanupExpired() {
 
 // Key represents a cache key.
 type Key struct {
-	Query     string
+	Query      string
 	Normalized string
 }
 
@@ -277,8 +277,8 @@ type Rule struct {
 
 // RulesEngine manages cache rules.
 type RulesEngine struct {
-	rules     []Rule
-	maxRules  int
+	rules         []Rule
+	maxRules      int
 	maxPatternLen int
 }
 

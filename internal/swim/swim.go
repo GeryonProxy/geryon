@@ -16,27 +16,27 @@ const maxGossipMessageSize = 65536
 
 // Protocol implements the SWIM gossip protocol for node discovery.
 type Protocol struct {
-	mu       sync.RWMutex
-	id       string
-	addr     string
-	members  map[string]*Member
-	seqNum   atomic.Uint64
+	mu      sync.RWMutex
+	id      string
+	addr    string
+	members map[string]*Member
+	seqNum  atomic.Uint64
 
 	// Configuration
-	probeInterval   time.Duration
-	probeTimeout    time.Duration
-	suspectTimeout  time.Duration
-	syncInterval    time.Duration
+	probeInterval  time.Duration
+	probeTimeout   time.Duration
+	suspectTimeout time.Duration
+	syncInterval   time.Duration
 
 	// Channels
-	stopCh          chan struct{}
-	eventCh         chan Event
+	stopCh  chan struct{}
+	eventCh chan Event
 
 	// Networking
-	listener        net.PacketConn
+	listener net.PacketConn
 
 	// Logger
-	logger          *logger.Logger
+	logger *logger.Logger
 }
 
 // Member represents a cluster member.
@@ -226,8 +226,8 @@ func (p *Protocol) Events() <-chan Event {
 // SendTo sends a message to a specific address.
 func (p *Protocol) SendTo(addr string, data []byte) error {
 	msg := Message{
-		Type:   MsgSync,
-		Source: p.id,
+		Type:    MsgSync,
+		Source:  p.id,
 		Payload: data,
 	}
 	return p.sendMessage(addr, msg)

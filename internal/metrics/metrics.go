@@ -124,8 +124,8 @@ type Histogram struct {
 	name    string
 	buckets []float64
 	counts  []atomic.Uint64
-	sum     float64       // Actual sum, protected by mu
-	mu      sync.Mutex    // Protects sum field
+	sum     float64    // Actual sum, protected by mu
+	mu      sync.Mutex // Protects sum field
 	count   atomic.Uint64
 }
 
@@ -207,10 +207,10 @@ func (h *Histogram) Count() uint64 {
 
 // Registry holds all metrics.
 type Registry struct {
-	mu       sync.RWMutex
-	metrics  map[string]Metric
-	counters map[string]*Counter
-	gauges   map[string]*Gauge
+	mu         sync.RWMutex
+	metrics    map[string]Metric
+	counters   map[string]*Counter
+	gauges     map[string]*Gauge
 	histograms map[string]*Histogram
 }
 
@@ -357,14 +357,14 @@ var DefaultDurationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2
 
 // PoolMetrics contains metrics for a connection pool.
 type PoolMetrics struct {
-	ClientConnectionsActive   *Gauge
-	ClientConnectionsWaiting  *Gauge
-	ServerConnectionsActive   *Gauge
-	ServerConnectionsIdle     *Gauge
-	QueriesTotal              *Counter
-	QueriesDuration           *Histogram
-	TransactionsTotal         *Counter
-	ErrorsTotal               *Counter
+	ClientConnectionsActive  *Gauge
+	ClientConnectionsWaiting *Gauge
+	ServerConnectionsActive  *Gauge
+	ServerConnectionsIdle    *Gauge
+	QueriesTotal             *Counter
+	QueriesDuration          *Histogram
+	TransactionsTotal        *Counter
+	ErrorsTotal              *Counter
 }
 
 // NewPoolMetrics creates pool metrics.
@@ -377,7 +377,7 @@ func NewPoolMetrics(registry *Registry, poolName string) *PoolMetrics {
 		ServerConnectionsActive:  registry.RegisterGauge(prefix + "server_connections_active"),
 		ServerConnectionsIdle:    registry.RegisterGauge(prefix + "server_connections_idle"),
 		QueriesTotal:             registry.RegisterCounter(prefix + "queries_total"),
-		QueriesDuration:          registry.RegisterHistogram(prefix + "query_duration_seconds", DefaultDurationBuckets),
+		QueriesDuration:          registry.RegisterHistogram(prefix+"query_duration_seconds", DefaultDurationBuckets),
 		TransactionsTotal:        registry.RegisterCounter(prefix + "transactions_total"),
 		ErrorsTotal:              registry.RegisterCounter(prefix + "errors_total"),
 	}

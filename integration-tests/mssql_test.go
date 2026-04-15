@@ -14,34 +14,34 @@ import (
 // These tests verify MSSQL protocol handling
 
 const (
-	tdsVersion74    = 0x74000004 // TDS 7.4
-	tdsPacketSize   = 4096
+	tdsVersion74  = 0x74000004 // TDS 7.4
+	tdsPacketSize = 4096
 )
 
 // TDS packet types
 const (
-	tdsTypeSQLBatch    = 1
-	tdsTypeRPC         = 3
-	tdsTypeReply       = 4
-	tdsTypeLogin7      = 16
-	tdsTypeNTLM        = 17
-	tdsTypePreLogin    = 18
+	tdsTypeSQLBatch = 1
+	tdsTypeRPC      = 3
+	tdsTypeReply    = 4
+	tdsTypeLogin7   = 16
+	tdsTypeNTLM     = 17
+	tdsTypePreLogin = 18
 )
 
 // TDS token types
 const (
-	tdsTokenReturnStatus  = 0x79
-	dsTokenColMetadata    = 0x81
-	tdsTokenOrder         = 0xa9
-	tdsTokenError         = 0xaa
-	tdsTokenRow           = 0xd1
-	tdsTokenSSPI          = 0xed
-	tdsTokenInfo          = 0xab
-	tdsTokenLoginAck      = 0xad
-	tdsTokenEnvChange     = 0xe3
-	tdsTokenDone          = 0xfd
-	tdsTokenDoneProc      = 0xfe
-	tdsTokenDoneInProc    = 0xff
+	tdsTokenReturnStatus = 0x79
+	dsTokenColMetadata   = 0x81
+	tdsTokenOrder        = 0xa9
+	tdsTokenError        = 0xaa
+	tdsTokenRow          = 0xd1
+	tdsTokenSSPI         = 0xed
+	tdsTokenInfo         = 0xab
+	tdsTokenLoginAck     = 0xad
+	tdsTokenEnvChange    = 0xe3
+	tdsTokenDone         = 0xfd
+	tdsTokenDoneProc     = 0xfe
+	tdsTokenDoneInProc   = 0xff
 )
 
 // tdsConn represents a TDS connection
@@ -139,16 +139,16 @@ func (c *tdsConn) preLogin() error {
 
 	// Option tokens
 	options := []struct {
-		token uint8
+		token  uint8
 		offset uint16
 		length uint16
 	}{
-		{0x00, 0, 6},    // VERSION
-		{0x01, 0, 0},    // ENCRYPTION
-		{0x02, 0, 0},    // INSTOPT
-		{0x03, 0, 0},    // THREADID
-		{0x04, 0, 0},    // MARS
-		{0xFF, 0, 0},    // TERMINATOR
+		{0x00, 0, 6}, // VERSION
+		{0x01, 0, 0}, // ENCRYPTION
+		{0x02, 0, 0}, // INSTOPT
+		{0x03, 0, 0}, // THREADID
+		{0x04, 0, 0}, // MARS
+		{0xFF, 0, 0}, // TERMINATOR
 	}
 
 	// Calculate offsets
@@ -182,10 +182,10 @@ func (c *tdsConn) preLogin() error {
 	}
 
 	// Write VERSION data (TDS 7.4)
-	buf.WriteByte(0x07) // Major
-	buf.WriteByte(0x04) // Minor
-	binary.Write(&buf, binary.BigEndian, uint16(0))  // Build
-	binary.Write(&buf, binary.BigEndian, uint16(0))  // Subbuild
+	buf.WriteByte(0x07)                             // Major
+	buf.WriteByte(0x04)                             // Minor
+	binary.Write(&buf, binary.BigEndian, uint16(0)) // Build
+	binary.Write(&buf, binary.BigEndian, uint16(0)) // Subbuild
 
 	// Write ENCRYPTION (0 = ENCRYPT_OFF)
 	buf.WriteByte(0)

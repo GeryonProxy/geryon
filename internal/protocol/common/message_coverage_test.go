@@ -368,9 +368,9 @@ func TestReadStartupMessage_BodyReadError(t *testing.T) {
 // --- WriteStartupMessage parameter value write error ---
 
 type partialWriter struct {
-	buf      []byte
+	buf       []byte
 	failAfter int
-	written  int
+	written   int
 }
 
 func (w *partialWriter) Write(p []byte) (n int, err error) {

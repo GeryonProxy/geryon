@@ -23,21 +23,21 @@ const (
 
 // Node represents a cluster node.
 type Node struct {
-	ID       string    `json:"id"`
-	Address  string    `json:"address"`
-	State    NodeState `json:"state"`
-	LastSeen time.Time `json:"last_seen"`
+	ID       string            `json:"id"`
+	Address  string            `json:"address"`
+	State    NodeState         `json:"state"`
+	LastSeen time.Time         `json:"last_seen"`
 	Meta     map[string]string `json:"meta"`
 }
 
 // Config represents cluster configuration.
 type Config struct {
-	NodeID          string
-	ListenAddr      string
-	Peers           []string
-	ElectionTimeout time.Duration
+	NodeID            string
+	ListenAddr        string
+	Peers             []string
+	ElectionTimeout   time.Duration
 	HeartbeatInterval time.Duration
-	Logger          *logger.Logger
+	Logger            *logger.Logger
 }
 
 // Cluster manages distributed consensus and node membership.
@@ -49,9 +49,9 @@ type Cluster struct {
 	state  NodeState
 
 	// Raft state
-	currentTerm uint64
-	votedFor    string
-	leaderID    string
+	currentTerm   uint64
+	votedFor      string
+	leaderID      string
 	votesReceived map[string]bool
 
 	// Membership
@@ -62,9 +62,9 @@ type Cluster struct {
 	gossip *SwimGossip
 
 	// Channels
-	rpcCh     chan RPC
+	rpcCh      chan RPC
 	shutdownCh chan struct{}
-	doneCh    chan struct{}
+	doneCh     chan struct{}
 
 	log *logger.Logger
 }
@@ -81,10 +81,10 @@ const maxRPCPayloadSize = 1 << 20
 
 // Raft RPC types
 const (
-	RPCVoteRequest    = "VoteRequest"
-	RPCVoteResponse   = "VoteResponse"
-	RPCAppendEntries  = "AppendEntries"
-	RPCHeartbeat      = "Heartbeat"
+	RPCVoteRequest     = "VoteRequest"
+	RPCVoteResponse    = "VoteResponse"
+	RPCAppendEntries   = "AppendEntries"
+	RPCHeartbeat       = "Heartbeat"
 	RPCInstallSnapshot = "InstallSnapshot"
 )
 
@@ -92,9 +92,9 @@ const (
 type SwimGossip struct {
 	mu sync.RWMutex
 
-	cluster    *Cluster
-	protocolPeriod time.Duration
-	probeTimeout   time.Duration
+	cluster           *Cluster
+	protocolPeriod    time.Duration
+	probeTimeout      time.Duration
 	numIndirectProbes int
 
 	// Failure suspicion
@@ -283,8 +283,8 @@ func (c *Cluster) handleRaftRPC(rpc RPC) {
 
 // VoteRequest represents a request for votes.
 type VoteRequest struct {
-	Term        uint64 `json:"term"`
-	CandidateID string `json:"candidate_id"`
+	Term         uint64 `json:"term"`
+	CandidateID  string `json:"candidate_id"`
 	LastLogIndex uint64 `json:"last_log_index"`
 	LastLogTerm  uint64 `json:"last_log_term"`
 }
@@ -297,12 +297,12 @@ type VoteResponse struct {
 
 // AppendEntries represents a log replication request.
 type AppendEntries struct {
-	Term         uint64 `json:"term"`
-	LeaderID     string `json:"leader_id"`
-	PrevLogIndex uint64 `json:"prev_log_index"`
-	PrevLogTerm  uint64 `json:"prev_log_term"`
+	Term         uint64     `json:"term"`
+	LeaderID     string     `json:"leader_id"`
+	PrevLogIndex uint64     `json:"prev_log_index"`
+	PrevLogTerm  uint64     `json:"prev_log_term"`
 	Entries      []LogEntry `json:"entries"`
-	LeaderCommit uint64 `json:"leader_commit"`
+	LeaderCommit uint64     `json:"leader_commit"`
 }
 
 // LogEntry represents a single log entry.

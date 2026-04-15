@@ -97,18 +97,18 @@ type TransactionConfig struct {
 
 // PoolConfig represents a single pool configuration.
 type PoolConfig struct {
-	Name    string        `yaml:"name"`
-	Body    string        `yaml:"body"`
-	Mode    string        `yaml:"mode"`
-	Listen  ListenConfig  `yaml:"listen"`
-	Backend BackendConfig `yaml:"backend"`
-	Limits  LimitConfig   `yaml:"limits"`
-	Health  HealthConfig  `yaml:"health"`
-	TLS     TLSConfig     `yaml:"tls"`
-	Cache   CacheConfig   `yaml:"cache"`
-	Routing RoutingConfig `yaml:"routing"`
+	Name        string            `yaml:"name"`
+	Body        string            `yaml:"body"`
+	Mode        string            `yaml:"mode"`
+	Listen      ListenConfig      `yaml:"listen"`
+	Backend     BackendConfig     `yaml:"backend"`
+	Limits      LimitConfig       `yaml:"limits"`
+	Health      HealthConfig      `yaml:"health"`
+	TLS         TLSConfig         `yaml:"tls"`
+	Cache       CacheConfig       `yaml:"cache"`
+	Routing     RoutingConfig     `yaml:"routing"`
 	Transaction TransactionConfig `yaml:"transaction"`
-	AuthMode   string           `yaml:"auth_mode"` // "passthrough" or "interception"
+	AuthMode    string            `yaml:"auth_mode"` // "passthrough" or "interception"
 }
 
 // ListenConfig contains listener settings.
@@ -119,12 +119,12 @@ type ListenConfig struct {
 
 // User represents a proxy user.
 type User struct {
-	Username         string   `yaml:"username"`
-	PasswordHash     string   `yaml:"password_hash"`     // SCRAM-SHA-256 (PostgreSQL)
+	Username          string   `yaml:"username"`
+	PasswordHash      string   `yaml:"password_hash"`       // SCRAM-SHA-256 (PostgreSQL)
 	MysqlPasswordHash string   `yaml:"mysql_password_hash"` // SHA256(SHA256(password)) for MySQL
-	MaxConnections   int      `yaml:"max_connections"`
-	DefaultPool      string   `yaml:"default_pool"`
-	AllowedPools     []string `yaml:"allowed_pools"`
+	MaxConnections    int      `yaml:"max_connections"`
+	DefaultPool       string   `yaml:"default_pool"`
+	AllowedPools      []string `yaml:"allowed_pools"`
 }
 
 // AuthConfig contains authentication settings.

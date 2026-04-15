@@ -430,7 +430,7 @@ func TestQueryLogger_BufferOverflow(t *testing.T) {
 	// Log more queries than buffer can hold
 	for i := 0; i < 100; i++ {
 		ql.LogQuery(QueryLogEntry{
-			QueryID:  string(rune('a' + (i%26))),
+			QueryID:  string(rune('a' + (i % 26))),
 			Query:    "SELECT 1",
 			Duration: 1 * time.Millisecond,
 		})
@@ -593,7 +593,7 @@ func TestQueryLogger_UpdateStats(t *testing.T) {
 
 	// Update stats with various entries
 	ql.updateStats(QueryLogEntry{
-		Duration: 10 * time.Millisecond,
+		Duration:  10 * time.Millisecond,
 		QueryHash: "hash1",
 		Query:     "SELECT 1",
 	})

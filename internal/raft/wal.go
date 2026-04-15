@@ -14,13 +14,13 @@ import (
 
 // WAL (Write Ahead Log) provides durable storage for Raft log entries.
 type WAL struct {
-	mu         sync.RWMutex
-	file       *os.File
-	writer     *bufio.Writer
-	path       string
-	sync       bool // fsync after each write
-	lastIndex  uint64
-	lastTerm   uint64
+	mu        sync.RWMutex
+	file      *os.File
+	writer    *bufio.Writer
+	path      string
+	sync      bool // fsync after each write
+	lastIndex uint64
+	lastTerm  uint64
 }
 
 // WALHeader is written at the start of the WAL file.

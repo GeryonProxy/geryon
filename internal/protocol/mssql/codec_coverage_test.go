@@ -372,9 +372,9 @@ func TestToken_DoneProcIsFinal(t *testing.T) {
 
 func TestAdditionalConstants(t *testing.T) {
 	tests := []struct {
-		name  string
-		got   byte
-		want  byte
+		name string
+		got  byte
+		want byte
 	}{
 		{"PacketTypeAttention", PacketTypeAttention, 0x06},
 		{"PacketTypeBulkLoad", PacketTypeBulkLoad, 0x07},

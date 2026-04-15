@@ -197,11 +197,11 @@ func (r *Router) UpdateBackends(backends []*Backend) {
 
 // RouteResult represents the result of a routing decision.
 type RouteResult struct {
-	Backend     *Backend
-	IsPrimary   bool
-	IsReplica   bool
-	RouteType   string // "primary", "replica", "fallback"
-	QueryType   string // "read", "write", "transaction"
+	Backend   *Backend
+	IsPrimary bool
+	IsReplica bool
+	RouteType string // "primary", "replica", "fallback"
+	QueryType string // "read", "write", "transaction"
 }
 
 // RouteQueryDetailed returns detailed routing information.

@@ -326,7 +326,7 @@ func TestParseTokenStream(t *testing.T) {
 func TestParseTokenStream_Multiple(t *testing.T) {
 	// Row: just type byte, Done: 9 bytes
 	data := []byte{
-		TokenTypeRow,                                    // 1 byte
+		TokenTypeRow,                                                  // 1 byte
 		TokenTypeDone, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 9 bytes
 	}
 	tokens, err := ParseTokenStream(data)

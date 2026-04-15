@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"syscall"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/GeryonProxy/geryon/internal/api/dashboard"

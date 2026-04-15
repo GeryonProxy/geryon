@@ -467,10 +467,10 @@ func TestCodec_BuildParsePayload(t *testing.T) {
 	c := NewCodec()
 
 	tests := []struct {
-		name       string
-		stmtName   string
-		query      string
-		paramOIDs  []int32
+		name      string
+		stmtName  string
+		query     string
+		paramOIDs []int32
 	}{
 		{
 			name:      "simple query",

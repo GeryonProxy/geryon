@@ -15,8 +15,8 @@ import (
 // These tests connect to Geryon MySQL proxy and verify protocol handling
 
 const (
-	mysqlDefaultPort    = "3306"
-	mysqlHandshakeV10   = 10
+	mysqlDefaultPort  = "3306"
+	mysqlHandshakeV10 = 10
 )
 
 // MySQL packet types
@@ -38,9 +38,9 @@ const (
 
 // MySQL client capabilities
 const (
-	mysqlClientSSL         = 0x00000800
-	mysqlClientProtocol41  = 0x00000200
-	mysqlClientSecureConn  = 0x00008000
+	mysqlClientSSL           = 0x00000800
+	mysqlClientProtocol41    = 0x00000200
+	mysqlClientSecureConn    = 0x00008000
 	mysqlClientConnectWithDB = 0x00000008
 )
 

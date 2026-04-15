@@ -16,8 +16,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/metrics"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
-	"github.com/GeryonProxy/geryon/internal/tokenizer"
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
+	"github.com/GeryonProxy/geryon/internal/tokenizer"
 )
 
 // PoolMode defines the connection pooling strategy.
@@ -59,16 +59,16 @@ func ParsePoolMode(s string) (PoolMode, error) {
 
 // Backend represents a backend database server.
 type Backend struct {
-	Host          string
-	Port          int
-	Role          string // primary or replica
-	Weight        int
-	Database      string
-	Healthy       atomic.Bool
-	LastCheck     time.Time // Exported for API access
-	Draining      atomic.Bool // true if backend is being drained
-	drainStart    time.Time
-	ConnCount     atomic.Int64 // Active connections to this backend
+	Host       string
+	Port       int
+	Role       string // primary or replica
+	Weight     int
+	Database   string
+	Healthy    atomic.Bool
+	LastCheck  time.Time   // Exported for API access
+	Draining   atomic.Bool // true if backend is being drained
+	drainStart time.Time
+	ConnCount  atomic.Int64 // Active connections to this backend
 }
 
 // Address returns the backend address.
@@ -79,10 +79,10 @@ func (b *Backend) Address() string {
 // NewBackend creates a new backend.
 func NewBackend(host string, port int, role string, weight int) *Backend {
 	return &Backend{
-		Host:   host,
-		Port:   port,
-		Role:   role,
-		Weight: weight,
+		Host:    host,
+		Port:    port,
+		Role:    role,
+		Weight:  weight,
 		Healthy: atomic.Bool{},
 	}
 }
@@ -209,11 +209,11 @@ var (
 
 // serverConnPool manages a pool of server connections.
 type serverConnPool struct {
-	mu       sync.Mutex
-	idle     []*ServerConn
-	active   map[uint64]*ServerConn
-	maxSize  int
-	minSize  int
+	mu        sync.Mutex
+	idle      []*ServerConn
+	active    map[uint64]*ServerConn
+	maxSize   int
+	minSize   int
 	byBackend map[string][]*ServerConn
 }
 
@@ -340,23 +340,23 @@ func (p *serverConnPool) closeAll() {
 
 // waiter represents a client waiting for a server connection.
 type waiter struct {
-	conn    *ServerConn // connection to deliver, or nil if not yet delivered
-	ready   chan struct{} // closed when conn is ready
+	conn     *ServerConn   // connection to deliver, or nil if not yet delivered
+	ready    chan struct{} // closed when conn is ready
 	timedOut bool
 }
 
 // WaitQueue manages clients waiting for a server connection.
 // Uses sync.Cond to avoid race conditions between signal and timeout.
 type WaitQueue struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	waiters  []*waiter
-	maxSize  int
-	metrics  waitQueueMetrics
+	mu      sync.Mutex
+	cond    *sync.Cond
+	waiters []*waiter
+	maxSize int
+	metrics waitQueueMetrics
 }
 
 type waitQueueMetrics struct {
-	totalWaits   atomic.Uint64
+	totalWaits    atomic.Uint64
 	totalTimeouts atomic.Uint64
 }
 
@@ -367,7 +367,7 @@ func NewWaitQueue(maxSize int) *WaitQueue {
 	}
 	wq := &WaitQueue{
 		waiters: make([]*waiter, 0),
-		maxSize:  maxSize,
+		maxSize: maxSize,
 	}
 	wq.cond = sync.NewCond(&wq.mu)
 	return wq
@@ -466,52 +466,52 @@ func (wq *WaitQueue) Signal(conn *ServerConn) bool {
 
 // Pool manages a set of backend connections for a single listen endpoint.
 type Pool struct {
-	mu              sync.RWMutex
-	name            string
-	config          *config.PoolConfig
-	mode            PoolMode
-	codec           common.Codec
-	backends        []*Backend
-	primary         *Backend
-	replicas        []*Backend
-	serverConns     *serverConnPool
-	waitQueue       *WaitQueue
-	clientCount     atomic.Int64
-	queryCount      atomic.Int64
-	txnCount        atomic.Int64
-	manager         *Manager
-	stmtCache       *PreparedStatementCache
-	queryCache      *cache.Store
-	log             *logger.Logger
-	tlsConfig       *tls.Config
-	ctx             context.Context
-	cancel          context.CancelFunc
-	closeCh         chan struct{}
-	healthChecker   *HealthChecker
-	txnManager      *TransactionManager
-	userConnCounts  sync.Map // map[string]*atomic.Int64 - per-user connection counts
-	poolMetrics     *metrics.PoolMetrics
+	mu             sync.RWMutex
+	name           string
+	config         *config.PoolConfig
+	mode           PoolMode
+	codec          common.Codec
+	backends       []*Backend
+	primary        *Backend
+	replicas       []*Backend
+	serverConns    *serverConnPool
+	waitQueue      *WaitQueue
+	clientCount    atomic.Int64
+	queryCount     atomic.Int64
+	txnCount       atomic.Int64
+	manager        *Manager
+	stmtCache      *PreparedStatementCache
+	queryCache     *cache.Store
+	log            *logger.Logger
+	tlsConfig      *tls.Config
+	ctx            context.Context
+	cancel         context.CancelFunc
+	closeCh        chan struct{}
+	healthChecker  *HealthChecker
+	txnManager     *TransactionManager
+	userConnCounts sync.Map // map[string]*atomic.Int64 - per-user connection counts
+	poolMetrics    *metrics.PoolMetrics
 }
 
 // PoolStats contains pool statistics.
 type PoolStats struct {
-	Name                  string        `json:"name"`
-	Mode                  string        `json:"mode"`
-	ClientConnections     int64         `json:"client_connections"`
-	ServerConnections     int           `json:"server_connections"`
-	IdleConnections       int           `json:"idle_connections"`
-	ActiveConnections     int           `json:"active_connections"`
-	WaitingClients        int           `json:"waiting_clients"`
-	ActiveTransactions    int           `json:"active_transactions"`
-	MaxServerConnections  int           `json:"max_server_connections"`
-	TotalQueries          int64         `json:"total_queries"`
-	TotalTransactions     int64         `json:"total_transactions"`
-	BackendCount          int           `json:"backend_count"`
-	PreparedStmtCacheSize int           `json:"prepared_stmt_cache_size"`
-	PreparedStmtHitRate   float64       `json:"prepared_stmt_hit_rate"`
-	QueryCacheEntries     int           `json:"query_cache_entries"`
-	QueryCacheMemoryUsed  int64         `json:"query_cache_memory_used"`
-	QueryCacheHitRate     float64       `json:"query_cache_hit_rate"`
+	Name                  string  `json:"name"`
+	Mode                  string  `json:"mode"`
+	ClientConnections     int64   `json:"client_connections"`
+	ServerConnections     int     `json:"server_connections"`
+	IdleConnections       int     `json:"idle_connections"`
+	ActiveConnections     int     `json:"active_connections"`
+	WaitingClients        int     `json:"waiting_clients"`
+	ActiveTransactions    int     `json:"active_transactions"`
+	MaxServerConnections  int     `json:"max_server_connections"`
+	TotalQueries          int64   `json:"total_queries"`
+	TotalTransactions     int64   `json:"total_transactions"`
+	BackendCount          int     `json:"backend_count"`
+	PreparedStmtCacheSize int     `json:"prepared_stmt_cache_size"`
+	PreparedStmtHitRate   float64 `json:"prepared_stmt_hit_rate"`
+	QueryCacheEntries     int     `json:"query_cache_entries"`
+	QueryCacheMemoryUsed  int64   `json:"query_cache_memory_used"`
+	QueryCacheHitRate     float64 `json:"query_cache_hit_rate"`
 }
 
 // NewPool creates a new connection pool.

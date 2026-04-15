@@ -285,26 +285,26 @@ func (s *Server) resourcePool(poolName string) string {
 	backendList := make([]map[string]interface{}, 0, len(backends))
 	for _, b := range backends {
 		backendList = append(backendList, map[string]interface{}{
-			"address":   b.Address(),
-			"role":      b.Role,
-			"healthy":   b.Healthy.Load(),
-			"draining":  b.Draining.Load(),
+			"address":    b.Address(),
+			"role":       b.Role,
+			"healthy":    b.Healthy.Load(),
+			"draining":   b.Draining.Load(),
 			"last_check": b.LastCheck,
 		})
 	}
 
 	result := map[string]interface{}{
-		"name":                  stats.Name,
-		"mode":                  stats.Mode,
-		"client_connections":    stats.ClientConnections,
-		"server_connections":    stats.ServerConnections,
-		"idle_connections":      stats.IdleConnections,
-		"active_connections":    stats.ActiveConnections,
-		"waiting_clients":       stats.WaitingClients,
-		"total_queries":         stats.TotalQueries,
-		"total_transactions":    stats.TotalTransactions,
-		"backends":              backendList,
-		"prepared_cache_size":   stats.PreparedStmtCacheSize,
+		"name":                    stats.Name,
+		"mode":                    stats.Mode,
+		"client_connections":      stats.ClientConnections,
+		"server_connections":      stats.ServerConnections,
+		"idle_connections":        stats.IdleConnections,
+		"active_connections":      stats.ActiveConnections,
+		"waiting_clients":         stats.WaitingClients,
+		"total_queries":           stats.TotalQueries,
+		"total_transactions":      stats.TotalTransactions,
+		"backends":                backendList,
+		"prepared_cache_size":     stats.PreparedStmtCacheSize,
 		"prepared_cache_hit_rate": stats.PreparedStmtHitRate,
 	}
 

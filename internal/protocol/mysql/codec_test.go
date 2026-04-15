@@ -278,14 +278,14 @@ func TestScrambleCachingSHA2Password(t *testing.T) {
 
 func TestReadLengthEncodedInt(t *testing.T) {
 	cases := []struct {
-		data    []byte
-		want    uint64
+		data     []byte
+		want     uint64
 		wantNull bool
-		wantN   int
+		wantN    int
 	}{
-		{[]byte{0xfb}, 0, true, 1},       // NULL
-		{[]byte{0x05}, 5, false, 1},      // 1-byte
-		{[]byte{0xfc, 0x80, 0x00}, 128, false, 3}, // 2-byte
+		{[]byte{0xfb}, 0, true, 1},                        // NULL
+		{[]byte{0x05}, 5, false, 1},                       // 1-byte
+		{[]byte{0xfc, 0x80, 0x00}, 128, false, 3},         // 2-byte
 		{[]byte{0xfd, 0x00, 0x00, 0x01}, 65536, false, 4}, // 3-byte
 	}
 	for _, tc := range cases {

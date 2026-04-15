@@ -349,7 +349,7 @@ func TestCertAuthenticatorValidateCertificateDNS(t *testing.T) {
 
 func TestCertAuthenticatorValidateCertificateIP(t *testing.T) {
 	config := CertAuthConfig{
-		Mode:     CertAuthCN,
+		Mode:       CertAuthCN,
 		AllowedIPs: []string{"10.0.0.0/24"},
 	}
 

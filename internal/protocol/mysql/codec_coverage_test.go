@@ -106,7 +106,7 @@ func TestParseHandshakeResponse_PluginAuthLenenc(t *testing.T) {
 	caps := uint32(ClientPluginAuthLenencClientData | ClientProtocol41)
 	putUint32(data[0:4], caps)
 	putUint32(data[4:8], 16777216) // MaxPacketSize
-	data[8] = 0x21                  // CharacterSet
+	data[8] = 0x21                 // CharacterSet
 	// Reserved 23 bytes (9-31) already zero
 	// Username at pos 32
 	copy(data[32:], "root")
