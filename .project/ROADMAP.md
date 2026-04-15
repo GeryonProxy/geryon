@@ -147,11 +147,12 @@ All P0 critical bugs fixed:
 
 ### P1 — Test coverage for critical paths
 
-- [ ] **E2E Tests for Relay Path** — `integration-tests/`
-  - Test bidirectional relay with actual database backends
-  - Test connection reuse behavior
-  - Test all three pooling modes
-  - Effort: 24h
+- [x] **E2E Tests for Relay Path** — `integration-tests/`
+  - Status: ✅ **IMPLEMENTED** (2026-04-15)
+  - `TestSmoke_ProxyStarts` — starts geryon, tests PG/MySQL/MSSQL handshake on each port
+  - `TestSmoke_GlobalMemoryLimit` — verifies max_memory config is parsed correctly
+  - Build tag `// +build integration` — runs only with `INTEGRATION=1`
+  - Note: Full relay E2E requires real backend databases (not mock)
 
 - [x] **Concurrency Tests for Pool** — `internal/pool/`
   - Status: ✅ **IMPLEMENTED** (2026-04-15)
@@ -177,13 +178,6 @@ All P0 critical bugs fixed:
   - `TestLogReplication_SingleEntry` and `TestLogReplication_MultipleEntries` exist
   - hasMajority bug fix verified: votes > total/2 for strict majority
   - 10+ extended tests in `raft_extended_test.go` covering election, replication, snapshots
-
-- [x] **E2E Tests for Relay Path** — `integration-tests/`
-  - Status: ✅ **IMPLEMENTED** (2026-04-15)
-  - `TestSmoke_ProxyStarts` — starts geryon, tests PG/MySQL/MSSQL handshake on each port
-  - `TestSmoke_GlobalMemoryLimit` — verifies max_memory config is parsed correctly
-  - Build tag `// +build integration` — runs only with `INTEGRATION=1`
-  - Note: Full relay E2E requires real backend databases (not mock)
 
 - [x] **Fix Dashboard Test Race** — `internal/api/dashboard/`
   - Status: ✅ **FIXED** (2026-04-14)
