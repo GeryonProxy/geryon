@@ -90,7 +90,7 @@ pools:
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Failed to start geryon: %v", err)
 	}
-	defer cmd.Kill()
+	defer func() { _ = cmd.Process.Kill() }()
 
 	// Wait for geryon to start
 	time.Sleep(2 * time.Second)
@@ -157,7 +157,7 @@ pools:
 		if _, err := conn.Read(header); err != nil {
 			t.Fatalf("Failed to read MySQL handshake: %v", err)
 		}
-		packetLen := binary.LittleEndian.Uint24(header[:3])
+		packetLen := uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16
 		if packetLen == 0 {
 			t.Error("Zero-length MySQL packet")
 		}

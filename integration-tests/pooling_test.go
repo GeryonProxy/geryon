@@ -21,11 +21,11 @@ func TestPostgreSQLPooling(t *testing.T) {
 		t.Skip("Skipping integration test. Set INTEGRATION=1 to run.")
 	}
 
-	pgHost := getEnv("POSTGRES_HOST", "localhost")
-	pgPort := getEnv("POSTGRES_PORT", "5432")
-	pgUser := getEnv("POSTGRES_USER", "geryon")
-	pgPass := getEnv("POSTGRES_PASSWORD", "geryon_password")
-	pgDB := getEnv("POSTGRES_DB", "testdb")
+	pgHost := env("POSTGRES_HOST", "localhost")
+	pgPort := env("POSTGRES_PORT", "5432")
+	pgUser := env("POSTGRES_USER", "geryon")
+	pgPass := env("POSTGRES_PASSWORD", "geryon_password")
+	pgDB := env("POSTGRES_DB", "testdb")
 
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		pgHost, pgPort, pgUser, pgPass, pgDB)
@@ -99,11 +99,11 @@ func TestMySQLPooling(t *testing.T) {
 		t.Skip("Skipping integration test. Set INTEGRATION=1 to run.")
 	}
 
-	mysqlHost := getEnv("MYSQL_HOST", "localhost")
-	mysqlPort := getEnv("MYSQL_PORT", "3306")
-	mysqlUser := getEnv("MYSQL_USER", "geryon")
-	mysqlPass := getEnv("MYSQL_PASSWORD", "geryon_password")
-	mysqlDB := getEnv("MYSQL_DB", "testdb")
+	mysqlHost := env("MYSQL_HOST", "localhost")
+	mysqlPort := env("MYSQL_PORT", "3306")
+	mysqlUser := env("MYSQL_USER", "geryon")
+	mysqlPass := env("MYSQL_PASSWORD", "geryon_password")
+	mysqlDB := env("MYSQL_DB", "testdb")
 
 	connStr := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s",
 		mysqlUser, mysqlPass, mysqlHost, mysqlPort, mysqlDB)
@@ -257,11 +257,4 @@ func TestFailover(t *testing.T) {
 	// 1. Kill primary backend, verify failover
 	// 2. Backend recovery detection
 	// 3. Connection retry behavior
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
 }

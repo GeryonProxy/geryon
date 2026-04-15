@@ -379,10 +379,10 @@ func (c *pgConn) ClosePrepared(name string) error {
 
 // connectPG connects to PostgreSQL through Geryon
 func connectPG(t *testing.T) (*pgConn, error) {
-	host := getEnv("PGHOST", "127.0.0.1")
-	port := getEnv("PGPORT", "5432")
-	user := getEnv("PGUSER", "testuser")
-	db := getEnv("PGDATABASE", "test")
+	host := env("PGHOST", "127.0.0.1")
+	port := env("PGPORT", "5432")
+	user := env("PGUSER", "testuser")
+	db := env("PGDATABASE", "test")
 
 	conn, err := newPGConn(host, port, user, db)
 	if err != nil {

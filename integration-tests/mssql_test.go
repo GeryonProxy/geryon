@@ -376,11 +376,11 @@ func (c *tdsConn) Connect(user, password, database string) error {
 
 // connectMSSQL connects to MSSQL through Geryon
 func connectMSSQL(t *testing.T) (*tdsConn, error) {
-	host := getEnv("MSSQL_HOST", "127.0.0.1")
-	port := getEnv("MSSQL_PORT", "1433")
-	user := getEnv("MSSQL_USER", "testuser")
-	pass := getEnv("MSSQL_PASSWORD", "testpass")
-	db := getEnv("MSSQL_DB", "test")
+	host := env("MSSQL_HOST", "127.0.0.1")
+	port := env("MSSQL_PORT", "1433")
+	user := env("MSSQL_USER", "testuser")
+	pass := env("MSSQL_PASSWORD", "testpass")
+	db := env("MSSQL_DB", "test")
 
 	conn, err := newTDSConn(host, port)
 	if err != nil {
@@ -425,8 +425,8 @@ func TestMSSQL_PreLogin(t *testing.T) {
 		t.Skip("Set MSSQL_TEST=1 to enable MSSQL tests")
 	}
 
-	host := getEnv("MSSQL_HOST", "127.0.0.1")
-	port := getEnv("MSSQL_PORT", "1433")
+	host := env("MSSQL_HOST", "127.0.0.1")
+	port := env("MSSQL_PORT", "1433")
 
 	conn, err := newTDSConn(host, port)
 	if err != nil {

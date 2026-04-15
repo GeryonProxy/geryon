@@ -455,10 +455,10 @@ func max(a, b int) int {
 
 // connectMySQL connects to MySQL through Geryon
 func connectMySQL(t *testing.T) (*mySQLConn, error) {
-	host := getEnv("MYSQL_HOST", "127.0.0.1")
-	port := getEnv("MYSQL_PORT", mysqlDefaultPort)
-	user := getEnv("MYSQL_USER", "testuser")
-	pass := getEnv("MYSQL_PASSWORD", "testpass")
+	host := env("MYSQL_HOST", "127.0.0.1")
+	port := env("MYSQL_PORT", mysqlDefaultPort)
+	user := env("MYSQL_USER", "testuser")
+	pass := env("MYSQL_PASSWORD", "testpass")
 
 	conn, err := newMySQLConn(host, port, user, pass)
 	if err != nil {
@@ -557,11 +557,4 @@ func TestMySQL_Ping(t *testing.T) {
 	}
 
 	t.Log("MySQL ping successful")
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
 }
