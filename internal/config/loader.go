@@ -699,7 +699,7 @@ func getParentSection(sections []string, depth int) string {
 // unquote removes surrounding quotes and processes escape sequences.
 // Handles double-quoted (") and single-quoted (') strings per YAML spec.
 // Double-quoted strings process: \n, \t, \r, \\, \", \', \0, \xNN, \uNNNN
-// Single-quoted strings treat backslash literally (except '').
+// Single-quoted strings treat backslash literally (except ”).
 func unquote(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) >= 2 {
