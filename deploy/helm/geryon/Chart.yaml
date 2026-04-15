@@ -1,0 +1,18 @@
+apiVersion: v2
+name: geryon
+description: A Helm chart for Geryon - multi-database connection pooler
+type: application
+version: 0.1.0
+appVersion: "dev"
+keywords:
+  - database
+  - proxy
+  - connection-pooler
+  - postgresql
+  - mysql
+  - mssql
+maintainers:
+  - name: GeryonProxy
+    url: https://github.com/GeryonProxy/geryon
+sources:
+  - https://github.com/GeryonProxy/geryon

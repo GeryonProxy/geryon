@@ -176,15 +176,20 @@ func (rl *mcpRateLimiter) periodicCleanup() {
 	ticker := time.NewTicker(rl.cleanupTTL)
 	defer ticker.Stop()
 	for range ticker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for ip, last := range rl.lastSeen {
-			if now.Sub(last) > rl.cleanupTTL {
-				delete(rl.limiters, ip)
-				delete(rl.lastSeen, ip)
-			}
+		rl.doCleanup()
+	}
+}
+
+// doCleanup removes limiters that haven't been seen within cleanupTTL.
+func (rl *mcpRateLimiter) doCleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	for ip, last := range rl.lastSeen {
+		if now.Sub(last) > rl.cleanupTTL {
+			delete(rl.limiters, ip)
+			delete(rl.lastSeen, ip)
 		}
-		rl.mu.Unlock()
 	}
 }
 

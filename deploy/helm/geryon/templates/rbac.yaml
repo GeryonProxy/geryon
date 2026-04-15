@@ -1,0 +1,35 @@
+{{- if .Values.rbac.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "geryon.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "geryon.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "geryon.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "geryon.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "geryon.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "geryon.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

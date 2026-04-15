@@ -19,8 +19,9 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
-// Server implements a gRPC-compatible API for streaming stats.
-// Uses HTTP/2 with binary framing for zero-dependency operation.
+// Server implements an HTTP/2 API for streaming stats.
+// Uses HTTP/2 with JSON serialization for zero-dependency operation.
+// Note: This is NOT actual protobuf-based gRPC, but provides similar streaming semantics.
 type Server struct {
 	mu       sync.RWMutex
 	poolMgr  *pool.Manager
@@ -51,7 +52,7 @@ type Stream struct {
 	Cancel   context.CancelFunc
 }
 
-// NewServer creates a new gRPC server.
+// NewServer creates a new HTTP/2 API server for streaming stats.
 func NewServer(cfg *Config, poolMgr *pool.Manager, log *logger.Logger, reloadFn func() error) *Server {
 	s := &Server{
 		config:      cfg,

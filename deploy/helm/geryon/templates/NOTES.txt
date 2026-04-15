@@ -1,0 +1,38 @@
+Thank you for installing Geryon!
+
+Your release is named {{ .Release.Name }}.
+
+To learn more about Geryon, visit:
+- https://github.com/GeryonProxy/geryon
+- https://geryonproxy.dev
+
+**Configuration:**
+
+The Geryon proxy is accessible via the service:
+- Proxy (PostgreSQL/MySQL/MSSQL): port 5432
+- REST API: port 8080
+- gRPC API: port 9090
+- MCP Server: port 8081
+- Dashboard: port 8082
+
+**Quick start:**
+
+1. Port-forward to access the dashboard:
+   kubectl port-forward svc/{{ include "geryon.fullname" . }} 8082:dashboard -n {{ .Release.Namespace }}
+
+2. Access the dashboard at: http://localhost:8082
+
+3. Connect your application to port 5432 (proxy)
+
+**Configuration:**
+
+To see all configuration options:
+  helm show values geryon/geryon
+
+To modify configuration, update your values file:
+  helm upgrade {{ .Release.Name }} geryon/geryon --values your-values.yaml
+
+**Documentation:**
+- docs/OPERATIONS.md - Operations guide
+- docs/openapi.yaml - REST API specification
+- docs/PRODUCTIONREADY.md - Production readiness assessment

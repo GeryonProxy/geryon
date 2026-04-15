@@ -1,0 +1,432 @@
+openapi: 3.0.3
+info:
+  title: Geryon Proxy REST API
+  description: |
+    High-performance, multi-database connection pooler REST API.
+    Supports PostgreSQL, MySQL, and MSSQL wire protocols.
+  version: 1.0.0
+  contact:
+    name: Geryon Project
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local REST API server
+
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check
+      description: Returns the health status of the proxy
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  version:
+                    type: string
+                    example: "1.0.0"
+
+  /api/v1/ready:
+    get:
+      summary: Readiness check
+      description: Returns whether the proxy is ready to accept connections
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: true
+
+  /api/v1/pools:
+    get:
+      summary: List all pools
+      description: Returns information about all configured pools
+      responses:
+        '200':
+          description: List of pools
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pool'
+
+  /api/v1/pools/{poolName}:
+    get:
+      summary: Get pool details
+      description: Returns detailed information about a specific pool
+      parameters:
+        - name: poolName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pool details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolDetail'
+        '404':
+          description: Pool not found
+
+  /api/v1/connections:
+    get:
+      summary: List active connections
+      description: Returns statistics about client connections across all pools
+      responses:
+        '200':
+          description: Connection statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  active:
+                    type: integer
+                  idle:
+                    type: integer
+                  by_pool:
+                    type: object
+
+  /api/v1/backends:
+    get:
+      summary: List backend connections
+      description: Returns information about backend connections for all pools
+      responses:
+        '200':
+          description: Backend connection information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backends:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Backend'
+
+  /api/v1/backends/{backendId}/action:
+    post:
+      summary: Backend action
+      description: Perform an action on a backend (e.g., mark unhealthy)
+      parameters:
+        - name: backendId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [mark_unhealthy, mark_healthy, remove]
+      responses:
+        '200':
+          description: Action completed
+        '404':
+          description: Backend not found
+
+  /api/v1/stats:
+    get:
+      summary: Get statistics
+      description: Returns aggregated statistics across all pools
+      responses:
+        '200':
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Stats'
+
+  /api/v1/stats/stream:
+    get:
+      summary: Stream statistics (SSE)
+      description: Server-Sent Events stream of real-time statistics
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/v1/queries:
+    get:
+      summary: Get query statistics
+      description: Returns query execution statistics
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Query statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_queries:
+                    type: integer
+                  slow_queries:
+                    type: integer
+                  avg_duration:
+                    type: string
+                  top_queries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/QueryDigest'
+
+  /api/v1/queries/slow:
+    get:
+      summary: Get slow queries
+      description: Returns recent slow queries
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Slow queries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QueryLogEntry'
+
+  /api/v1/queries/recent:
+    get:
+      summary: Get recent queries
+      description: Returns recent queries
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Recent queries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QueryLogEntry'
+
+  /api/v1/transactions:
+    get:
+      summary: Get transaction statistics
+      description: Returns transaction statistics
+      responses:
+        '200':
+          description: Transaction statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active:
+                    type: integer
+                  committed:
+                    type: integer
+                  rolled_back:
+                    type: integer
+
+  /api/v1/transactions/active:
+    get:
+      summary: Get active transactions
+      description: Returns currently active transactions
+      responses:
+        '200':
+          description: Active transactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    pool:
+                      type: string
+                    client:
+                      type: string
+                    start_time:
+                      type: string
+                    sql:
+                      type: string
+
+  /api/v1/config:
+    get:
+      summary: Get configuration
+      description: Returns current configuration (passwords redacted)
+      responses:
+        '200':
+          description: Current configuration
+          content:
+            application/json:
+              schema:
+                type: object
+    put:
+      summary: Update configuration
+      description: Update pool configuration (partial update supported)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Configuration updated
+        '400':
+          description: Invalid configuration
+
+  /api/v1/config/reload:
+    post:
+      summary: Reload configuration
+      description: Reloads configuration from disk
+      responses:
+        '200':
+          description: Configuration reloaded
+        '500':
+          description: Reload failed
+
+  /api/v1/tls/status:
+    get:
+      summary: Get TLS status
+      description: Returns TLS certificate status
+      responses:
+        '200':
+          description: TLS status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  cert_expiry:
+                    type: string
+                    format: date-time
+
+components:
+  schemas:
+    Pool:
+      type: object
+      properties:
+        name:
+          type: string
+        body:
+          type: string
+          enum: [postgresql, mysql, mssql]
+        mode:
+          type: string
+          enum: [session, transaction, statement]
+        client_connections:
+          type: integer
+        server_connections:
+          type: integer
+
+    PoolDetail:
+      allOf:
+        - $ref: '#/components/schemas/Pool'
+        - type: object
+          properties:
+            backends:
+              type: array
+              items:
+                type: string
+            limits:
+              type: object
+            health:
+              type: object
+
+    Backend:
+      type: object
+      properties:
+        address:
+          type: string
+        pool:
+          type: string
+        healthy:
+          type: boolean
+        latency:
+          type: string
+        last_check:
+          type: string
+          format: date-time
+
+    Stats:
+      type: object
+      properties:
+        total_connections:
+          type: integer
+        active_queries:
+          type: integer
+        pools:
+          type: object
+
+    QueryDigest:
+      type: object
+      properties:
+        query_hash:
+          type: string
+        query_pattern:
+          type: string
+        count:
+          type: integer
+        avg_duration:
+          type: string
+
+    QueryLogEntry:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        query_id:
+          type: string
+        pool:
+          type: string
+        username:
+          type: string
+        duration:
+          type: string
+        rows:
+          type: integer
+        cached:
+          type: boolean
+
+security:
+  - BearerAuth: []

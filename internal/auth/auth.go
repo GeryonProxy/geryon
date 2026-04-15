@@ -3,7 +3,9 @@ package auth
 import (
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -15,11 +17,12 @@ import (
 
 // User represents an authenticated user.
 type User struct {
-	Username       string
-	PasswordHash   string // SCRAM-SHA-256 format
-	MaxConnections int
-	DefaultPool    string
-	AllowedPools   []string
+	Username         string
+	PasswordHash     string // SCRAM-SHA-256 format (PostgreSQL)
+	MysqlPasswordHash string // SHA256(SHA256(password)) for MySQL caching_sha2_password
+	MaxConnections   int
+	DefaultPool      string
+	AllowedPools     []string
 }
 
 // CanAccessPool checks if the user can access the given pool.
@@ -55,11 +58,12 @@ func (db *UserDatabase) LoadFromConfig(cfg *config.AuthConfig) error {
 
 	for _, u := range cfg.Users {
 		user := &User{
-			Username:       u.Username,
-			PasswordHash:   u.PasswordHash,
-			MaxConnections: u.MaxConnections,
-			DefaultPool:    u.DefaultPool,
-			AllowedPools:   u.AllowedPools,
+			Username:           u.Username,
+			PasswordHash:       u.PasswordHash,
+			MysqlPasswordHash:  u.MysqlPasswordHash,
+			MaxConnections:     u.MaxConnections,
+			DefaultPool:        u.DefaultPool,
+			AllowedPools:       u.AllowedPools,
 		}
 		db.users[u.Username] = user
 	}
@@ -564,4 +568,127 @@ func (al *AuthLimiter) IsLimited(ip string) bool {
 	}
 
 	return entry.locked
+}
+
+// VerifyMySQLPassword verifies a MySQL password against stored hash using challenge-response.
+// Returns nil on success, error on failure.
+// Supports caching_sha2_password (SHA256-based) and mysql_native_password (SHA1-based).
+func VerifyMySQLPassword(storedHash string, scramble []byte, clientResponse []byte) error {
+	if storedHash == "" {
+		return fmt.Errorf("no MySQL password hash stored for user")
+	}
+
+	// Try to decode if in base64
+	hashBytes, err := base64.StdEncoding.DecodeString(storedHash)
+	if err != nil {
+		hashBytes = []byte(storedHash)
+	}
+
+	// Detect auth method based on stored hash length
+	// caching_sha2_password: SHA256(SHA256(password)) = 32 bytes
+	// mysql_native_password: SHA1(SHA1(password)) = 20 bytes
+	if len(hashBytes) == 32 {
+		return verifyCachingSHA2Password(hashBytes, scramble, clientResponse)
+	} else if len(hashBytes) == 20 {
+		return verifyNativePassword(hashBytes, scramble, clientResponse)
+	}
+
+	return fmt.Errorf("unknown MySQL password hash format (length: %d)", len(hashBytes))
+}
+
+// verifyCachingSHA2Password verifies caching_sha2_password authentication.
+// Stored hash: SHA256(SHA256(password)) = 32 bytes raw
+// Client response: SHA256(password) XOR SHA256(storedHash + scramble)
+//
+// Verification: SHA256(clientResponse XOR SHA256(storedHash + scramble) + scramble) == storedHash
+//
+// This works because:
+// clientResponse = SHA256(password) XOR SHA256(storedHash + scramble)
+// clientResponse XOR SHA256(storedHash + scramble) = SHA256(password)
+//
+// Then we compute SHA256(SHA256(password) + scramble) and compare with storedHash
+func verifyCachingSHA2Password(storedHash []byte, scramble, clientResponse []byte) error {
+	if len(storedHash) != 32 {
+		return fmt.Errorf("invalid caching_sha2_password hash length: %d", len(storedHash))
+	}
+
+	if len(clientResponse) != 32 {
+		return fmt.Errorf("invalid client response length: %d", len(clientResponse))
+	}
+
+	if len(scramble) < 20 {
+		return fmt.Errorf("scramble too short: %d", len(scramble))
+	}
+
+	// Compute SHA256(storedHash + scramble[:20])
+	h := sha256.New()
+	h.Write(storedHash)
+	h.Write(scramble[:20])
+	serverPart := h.Sum(nil)
+
+	// XOR: clientResponse XOR serverPart = SHA256(password)
+	passwordHash := xorBytes(clientResponse, serverPart)
+
+	// Compute SHA256(SHA256(password) + scramble[:20])
+	h.Reset()
+	h.Write(passwordHash)
+	h.Write(scramble[:20])
+	resultHash := h.Sum(nil)
+
+	// Compare result with storedHash
+	if subtle.ConstantTimeCompare(resultHash, storedHash) != 1 {
+		return fmt.Errorf("password verification failed")
+	}
+
+	return nil
+}
+
+// verifyNativePassword verifies mysql_native_password authentication.
+// Stored hash: SHA1(SHA1(password)) = 20 bytes raw
+// Client response: SHA1(password) XOR SHA1(scramble + storedHash)
+func verifyNativePassword(storedHash []byte, scramble, clientResponse []byte) error {
+	if len(storedHash) != 20 {
+		return fmt.Errorf("invalid mysql_native_password hash length: %d", len(storedHash))
+	}
+
+	if len(clientResponse) != 20 {
+		return fmt.Errorf("invalid client response length: %d", len(clientResponse))
+	}
+
+	if len(scramble) < 8 {
+		return fmt.Errorf("scramble too short: %d", len(scramble))
+	}
+
+	// SHA1(scramble + storedHash)
+	h := sha1.New()
+	h.Write(scramble[:8])
+	h.Write(storedHash)
+	serverPart := h.Sum(nil)
+
+	// XOR client response with server computed to get SHA1(password)
+	result := xorBytes(clientResponse, serverPart)
+
+	// Compute SHA1(result) = SHA1(SHA1(password)) = storedHash
+	// But we verify by computing SHA1(result) and comparing to storedHash
+	h.Reset()
+	h.Write(result)
+	expectedStored := h.Sum(nil)
+
+	if subtle.ConstantTimeCompare(expectedStored, storedHash) != 1 {
+		return fmt.Errorf("password verification failed")
+	}
+
+	return nil
+}
+
+// xorBytes performs XOR on two byte slices of equal length.
+func xorBytes(a, b []byte) []byte {
+	if len(a) != len(b) {
+		return nil
+	}
+	result := make([]byte, len(a))
+	for i := range result {
+		result[i] = a[i] ^ b[i]
+	}
+	return result
 }

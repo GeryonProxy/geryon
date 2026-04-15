@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -234,6 +235,11 @@ func (ql *QueryLogger) LogQuery(entry QueryLogEntry) {
 
 // writeSlowLog writes to slow query log.
 func (ql *QueryLogger) writeSlowLog(entry QueryLogEntry) {
+	// Check if rotation is needed before writing
+	if ql.shouldRotate(ql.slowLog) {
+		ql.rotateLogFile(&ql.slowLog, "slow")
+	}
+
 	line := fmt.Sprintf("[%s] [%s] [%s] %s - %s (%dms) rows=%d client=%s backend=%s\n",
 		entry.Timestamp.Format(time.RFC3339),
 		entry.Pool,
@@ -251,6 +257,11 @@ func (ql *QueryLogger) writeSlowLog(entry QueryLogEntry) {
 
 // writeAllLog writes to all queries log.
 func (ql *QueryLogger) writeAllLog(entry QueryLogEntry) {
+	// Check if rotation is needed before writing
+	if ql.shouldRotate(ql.allLog) {
+		ql.rotateLogFile(&ql.allLog, "all")
+	}
+
 	cached := ""
 	if entry.IsCached {
 		cached = " [CACHED]"
@@ -267,12 +278,107 @@ func (ql *QueryLogger) writeAllLog(entry QueryLogEntry) {
 
 // writeJSONLog writes JSON formatted log.
 func (ql *QueryLogger) writeJSONLog(entry QueryLogEntry) {
+	// Check if rotation is needed before writing
+	if ql.shouldRotate(ql.jsonLog) {
+		ql.rotateLogFile(&ql.jsonLog, "queries")
+	}
+
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return
 	}
 	ql.jsonLog.Write(data)
 	ql.jsonLog.WriteString("\n")
+}
+
+// rotateLogFile rotates a log file if it exceeds the max size.
+// It renames the current file with a timestamp, opens a new file, and cleans up old files.
+func (ql *QueryLogger) rotateLogFile(file **os.File, baseName string) error {
+	if file == nil || *file == nil {
+		return nil
+	}
+
+	// Check current file size
+	info, err := (*file).Stat()
+	if err != nil {
+		return err
+	}
+
+	if info.Size() < ql.config.MaxFileSize {
+		return nil
+	}
+
+	// Close current file
+	(*file).Close()
+
+	// Generate rotated filename with timestamp
+	rotatedName := fmt.Sprintf("%s.%s.log", baseName, time.Now().Format("20060102-150405"))
+
+	// Build paths
+	dir := ql.config.Directory
+	oldPath := filepath.Join(dir, baseName+".log")
+	newPath := filepath.Join(dir, rotatedName)
+
+	// Rename current file to rotated name
+	if err := os.Rename(oldPath, newPath); err != nil {
+		// Try to re-open original file
+		*file, err = os.OpenFile(oldPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		return err
+	}
+
+	// Open new log file
+	*file, err = os.OpenFile(oldPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+
+	// Clean up old files exceeding MaxFiles limit
+	if ql.config.MaxFiles > 0 {
+		ql.cleanupOldFiles(baseName)
+	}
+
+	return nil
+}
+
+// cleanupOldFiles removes the oldest rotated log files when count exceeds MaxFiles.
+func (ql *QueryLogger) cleanupOldFiles(baseName string) {
+	pattern := filepath.Join(ql.config.Directory, baseName+".*.log")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return
+	}
+
+	if len(matches) <= ql.config.MaxFiles {
+		return
+	}
+
+	// Sort by modification time (oldest first)
+	sort.Slice(matches, func(i, j int) bool {
+		infoI, _ := os.Stat(matches[i])
+		infoJ, _ := os.Stat(matches[j])
+		if infoI == nil || infoJ == nil {
+			return false
+		}
+		return infoI.ModTime().Before(infoJ.ModTime())
+	})
+
+	// Delete oldest files to meet MaxFiles limit
+	filesToDelete := len(matches) - ql.config.MaxFiles
+	for i := 0; i < filesToDelete; i++ {
+		os.Remove(matches[i])
+	}
+}
+
+// shouldRotate checks if a log file should be rotated based on size.
+func (ql *QueryLogger) shouldRotate(file *os.File) bool {
+	if file == nil || ql.config.MaxFileSize == 0 {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Size() >= ql.config.MaxFileSize
 }
 
 // Flush writes buffered entries to disk.
@@ -372,8 +478,13 @@ func (ql *QueryLogger) updateStats(entry QueryLogEntry) {
 		if duration > ql.stats.MaxDuration {
 			ql.stats.MaxDuration = duration
 		}
-		// Numerically stable running average: avg += (delta / count)
-		ql.stats.AvgDuration += (duration - ql.stats.AvgDuration) / time.Duration(ql.stats.TotalQueries)
+		// Decaying average: avg = avg * (1 - alpha) + value * alpha
+		// This avoids integer overflow issues when TotalQueries is very large
+		const avgAlpha = 0.001 // 0.1% weight for new values
+		avgNs := float64(ql.stats.AvgDuration)
+		durationNs := float64(duration)
+		newAvgNs := avgNs*(1-avgAlpha) + durationNs*avgAlpha
+		ql.stats.AvgDuration = time.Duration(newAvgNs)
 	}
 
 	// Update top queries (simple implementation - could be optimized)
