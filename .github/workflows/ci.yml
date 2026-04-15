@@ -38,7 +38,7 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test -short -race -coverprofile=coverage.out ./...
+        run: CGO_ENABLED=1 go test -short -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.24'
