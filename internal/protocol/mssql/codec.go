@@ -603,6 +603,21 @@ func (t Token) IsError() bool {
 	return t.Type == TokenTypeError
 }
 
+// IsSSPI returns true if this is an SSPI token (NTLM/Kerberos challenge).
+func (t Token) IsSSPI() bool {
+	return t.Type == TokenTypeSSPI
+}
+
+// IsLoginAck returns true if this is a login acknowledgement.
+func (t Token) IsLoginAck() bool {
+	return t.Type == TokenTypeLoginAck
+}
+
+// IsEnvChange returns true if this is an environment change token.
+func (t Token) IsEnvChange() bool {
+	return t.Type == TokenTypeEnvChange
+}
+
 // Constants
 const (
 	// Packet types
@@ -651,16 +666,20 @@ const (
 	LoginOption1SetLangOn    uint32 = 0x00000080
 
 	// Token types
-	TokenTypeSQLText     byte = 0x00
-	TokenTypeColMetadata byte = 0x81
-	TokenTypeRow         byte = 0xD1
-	TokenTypeDone        byte = 0xFD
-	TokenTypeDoneProc    byte = 0xFE
-	TokenTypeDoneInProc  byte = 0xFF
-	TokenTypeError       byte = 0xAA
-	TokenTypeInfo        byte = 0xAB
-	TokenTypeLoginAck    byte = 0xAD
-	TokenTypeEnvChange   byte = 0xE3
+	TokenTypeSQLText      byte = 0x00
+	TokenTypeColMetadata  byte = 0x81
+	TokenTypeRow          byte = 0xD1
+	TokenTypeDone         byte = 0xFD
+	TokenTypeDoneProc     byte = 0xFE
+	TokenTypeDoneInProc   byte = 0xFF
+	TokenTypeError        byte = 0xAA
+	TokenTypeInfo         byte = 0xAB
+	TokenTypeLoginAck     byte = 0xAD
+	TokenTypeEnvChange    byte = 0xE3
+	TokenTypeSSPI         byte = 0xED // NTLM/Kerberos authentication token
+	TokenTypeFeatureExt   byte = 0xEE // Feature extension ACK
+	TokenTypeTracking     byte = 0xA9 // SQL batch tracking
+	TokenTypeNTLMAuth     byte = 0xED // Alias for SSPI (NTLM challenge/response)
 )
 
 // EncryptMode type for encryption settings
