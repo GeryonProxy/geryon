@@ -204,9 +204,12 @@ All P0 critical bugs fixed:
   - Wired into listener.go prepared statement handling (track pending parse, lastBoundStmt for re-prep)
   - Fixed extractRPCQuery fallback to return lowercase (was uppercase, breaking test)
 
-- [ ] **PG COPY Protocol Passthrough** — `internal/protocol/postgresql/`
-  - Status: ⚠️ **Low priority** (per TASKS.md)
-  - Effort: 16h
+- [x] **PG COPY Protocol Passthrough** — `internal/protocol/postgresql/codec.go`, `internal/proxy/listener.go`
+  - Status: ✅ **IMPLEMENTED** (2026-04-15)
+  - Added IsCopyInResponse ('G'), IsCopyOutResponse ('H'), IsCopyBothResponse ('W')
+  - Added IsCopyData ('d'), IsCopyDone ('c')
+  - Wired COPY message types into forwardServerToClient relay — no query completion treatment
+  - Server-to-client COPY data flow passes through relay correctly
 
 - [x] **PG LISTEN/NOTIFY Passthrough** — `internal/protocol/postgresql/codec.go`, `internal/proxy/listener.go`
   - Status: ✅ **IMPLEMENTED** (2026-04-15)
@@ -221,7 +224,7 @@ All P0 critical bugs fixed:
   - `checkPostgreSQL()`, `checkMySQL()`, `checkMSSQL()` all send `SELECT 1` and verify response
   - Already present in `performCheck()` method with protocol-specific switch
 
-**Phase 5 Total:** ~48 hours (3/5 done)
+**Phase 5 Total:** ~32 hours (4/5 done — NTLM remains)
 
 ---
 
