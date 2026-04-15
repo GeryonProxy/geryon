@@ -349,6 +349,46 @@ func (c *PGCodec) IsSync(msg *common.Message) bool {
 	return msg.Type == 'S'
 }
 
+// IsNotice returns true if this is a NoticeResponse message.
+// NoticeResponse ('N') is sent by the server to the client to report a notice.
+func (c *PGCodec) IsNotice(msg *common.Message) bool {
+	return msg.Type == 'N'
+}
+
+// IsNotification returns true if this is a NotificationResponse message.
+// NotificationResponse ('A') is sent when a LISTEN/Notify condition is met.
+func (c *PGCodec) IsNotification(msg *common.Message) bool {
+	return msg.Type == 'A'
+}
+
+// IsCopyInResponse returns true if this is a CopyInResponse message.
+// CopyInResponse ('G') indicates the server is ready to receive copy data.
+func (c *PGCodec) IsCopyInResponse(msg *common.Message) bool {
+	return msg.Type == 'G'
+}
+
+// IsCopyOutResponse returns true if this is a CopyOutResponse message.
+// CopyOutResponse ('H') indicates the server will send copy data.
+func (c *PGCodec) IsCopyOutResponse(msg *common.Message) bool {
+	return msg.Type == 'H'
+}
+
+// IsCopyBothResponse returns true if this is a CopyBothResponse message.
+// CopyBothResponse ('W') is used for logical replication.
+func (c *PGCodec) IsCopyBothResponse(msg *common.Message) bool {
+	return msg.Type == 'W'
+}
+
+// IsCopyData returns true if this is a CopyData message ('d').
+func (c *PGCodec) IsCopyData(msg *common.Message) bool {
+	return msg.Type == 'd'
+}
+
+// IsCopyDone returns true if this is a CopyDone message ('c').
+func (c *PGCodec) IsCopyDone(msg *common.Message) bool {
+	return msg.Type == 'c'
+}
+
 // GenerateResetSequence returns messages to reset server state.
 func (c *PGCodec) GenerateResetSequence() []*common.Message {
 	// Send DISCARD ALL to reset the connection state

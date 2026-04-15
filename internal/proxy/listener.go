@@ -2961,6 +2961,33 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 			ps.pendingParseMu.Unlock()
 		}
 
+		// Handle async notifications and notices from server
+		// NotificationResponse ('A') — LISTEN/NOTIFY result, not a query response
+		// NoticeResponse ('N') — server notice, not a query response
+		if msg.Type == 'A' || msg.Type == 'N' {
+			// Forward async notifications/notices immediately without logging as queries
+			if err := codec.WriteMessage(clientConn, msg); err != nil {
+				return err
+			}
+			continue // don't treat as query completion
+		}
+
+		// Handle COPY operations — these have their own flow
+		if msg.Type == 'G' || msg.Type == 'H' || msg.Type == 'W' {
+			// CopyIn/CopyOut/CopyBoth response — forward and continue
+			if err := codec.WriteMessage(clientConn, msg); err != nil {
+				return err
+			}
+			continue
+		}
+		if msg.Type == 'd' || msg.Type == 'c' {
+			// CopyData/CopyDone — forward and continue
+			if err := codec.WriteMessage(clientConn, msg); err != nil {
+				return err
+			}
+			continue
+		}
+
 		// Check for query completion (protocol-specific)
 		// PostgreSQL: 'Z' ReadyForQuery with 'I' (Idle) status
 		// MySQL: 0x00 OK packet or 0xfe EOF packet

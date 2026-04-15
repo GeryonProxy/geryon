@@ -208,17 +208,20 @@ All P0 critical bugs fixed:
   - Status: ⚠️ **Low priority** (per TASKS.md)
   - Effort: 16h
 
-- [ ] **PG LISTEN/NOTIFY Passthrough** — `internal/protocol/postgresql/`
-  - Status: ⚠️ **Low priority** (per TASKS.md)
-  - NotificationResponse forwarding
-  - Effort: 16h
+- [x] **PG LISTEN/NOTIFY Passthrough** — `internal/protocol/postgresql/codec.go`, `internal/proxy/listener.go`
+  - Status: ✅ **IMPLEMENTED** (2026-04-15)
+  - Added `IsNotice()` for 'N' NoticeResponse, `IsNotification()` for 'A' NotificationResponse
+  - Added `IsCopyInResponse()`, `IsCopyOutResponse()`, `IsCopyBothResponse()` for COPY protocol
+  - Added `IsCopyData()`, `IsCopyDone()` for COPY data flow
+  - Wired into forwardServerToClient relay — notifications forwarded immediately without query logging
+  - COPY responses/data/done forwarded without treating as query completion
 
 - [x] **Health Check Protocol Queries** — `internal/pool/health.go`
   - Status: ✅ **IMPLEMENTED** (2026-04-14)
   - `checkPostgreSQL()`, `checkMySQL()`, `checkMSSQL()` all send `SELECT 1` and verify response
   - Already present in `performCheck()` method with protocol-specific switch
 
-**Phase 5 Total:** ~72 hours (2/5 done)
+**Phase 5 Total:** ~48 hours (3/5 done)
 
 ---
 
