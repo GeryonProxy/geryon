@@ -1,0 +1,46 @@
+project_name: geryon
+version: 1
+builds:
+  - id: geryon
+    main: ./cmd/geryon
+    binary: geryon
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - none:\n.txt
+checksum:
+  name: checksums.txt
+changelog:
+  skip: false
+  format: markdown
+  filters:
+    exclude:
+      - '^docs:'
+      - '^chore:'
+      - '^style:'
+      - '^merge:'
+dockers:
+  - image_templates:
+      - ghcr.io/geryonproxy/geryon:{{ .Tag }}
+      - ghcr.io/geryonproxy/geryon:latest
+    dockerfile: Dockerfile
+    build_args:
+      - VERSION={{ .Version }}
+snapshot:
+  name_template: "{{ .Tag }}-next"
