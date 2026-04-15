@@ -326,6 +326,8 @@ func assignValue(state *parserState, key, value string, indent int, lineNum int)
 			state.cfg.Global.LogFormat = value
 		case "pid_file":
 			state.cfg.Global.PIDFile = value
+		case "max_memory":
+			state.cfg.Global.MaxMemory = value
 		}
 		return nil
 	}

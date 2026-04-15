@@ -14,6 +14,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/cache"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
+	"github.com/GeryonProxy/geryon/internal/metrics"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
 	"github.com/GeryonProxy/geryon/internal/tokenizer"
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
@@ -106,6 +107,7 @@ type ServerConn struct {
 	id            uint64
 	conn          net.Conn
 	backend       *Backend
+	pool          *Pool
 	codec         common.Codec
 	createdAt     time.Time
 	lastUsedAt    atomic.Value // time.Time
@@ -166,6 +168,10 @@ func (s *ServerConn) MarkIdle() {
 
 // Close closes the server connection.
 func (s *ServerConn) Close() error {
+	// Release global memory
+	if s.pool != nil && s.pool.manager != nil {
+		s.pool.manager.Free()
+	}
 	// Decrement backend connection counter
 	if s.backend != nil {
 		s.backend.ConnCount.Add(-1)
@@ -473,6 +479,7 @@ type Pool struct {
 	clientCount     atomic.Int64
 	queryCount      atomic.Int64
 	txnCount        atomic.Int64
+	manager         *Manager
 	stmtCache       *PreparedStatementCache
 	queryCache      *cache.Store
 	log             *logger.Logger
@@ -483,6 +490,7 @@ type Pool struct {
 	healthChecker   *HealthChecker
 	txnManager      *TransactionManager
 	userConnCounts  sync.Map // map[string]*atomic.Int64 - per-user connection counts
+	poolMetrics     *metrics.PoolMetrics
 }
 
 // PoolStats contains pool statistics.
@@ -507,7 +515,7 @@ type PoolStats struct {
 }
 
 // NewPool creates a new connection pool.
-func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*Pool, error) {
+func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger, manager *Manager) (*Pool, error) {
 	mode, err := ParsePoolMode(cfg.Mode)
 	if err != nil {
 		return nil, err
@@ -528,6 +536,8 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 		ctx:         ctx,
 		cancel:      cancel,
 		closeCh:     make(chan struct{}),
+		poolMetrics: metrics.NewPoolMetrics(metrics.DefaultRegistry, cfg.Name),
+		manager:     manager,
 	}
 
 	// Initialize prepared statement cache (default: 1000 statements, 30min TTL)
@@ -598,6 +608,11 @@ func (p *Pool) Mode() PoolMode {
 // Codec returns the pool's codec.
 func (p *Pool) Codec() common.Codec {
 	return p.codec
+}
+
+// Metrics returns the pool's metrics collector.
+func (p *Pool) Metrics() *metrics.PoolMetrics {
+	return p.poolMetrics
 }
 
 // Acquire gets a server connection from the pool.
@@ -680,6 +695,11 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 		return nil, fmt.Errorf("no backends available")
 	}
 
+	// Check global memory limit before allocating connection
+	if p.manager != nil && !p.manager.TryAlloc() {
+		return nil, fmt.Errorf("global memory limit exceeded")
+	}
+
 	// Try backends with retry logic
 	maxRetries := 3
 	baseDelay := 100 * time.Millisecond
@@ -688,6 +708,9 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 		// Select a backend
 		backend := p.selectBackendWithFallback()
 		if backend == nil {
+			if p.manager != nil {
+				p.manager.Free() // Release memory on failure
+			}
 			return nil, fmt.Errorf("no healthy backends available")
 		}
 
@@ -728,6 +751,9 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 		}
 	}
 
+	if p.manager != nil {
+		p.manager.Free() // Release memory on total failure
+	}
 	return nil, fmt.Errorf("failed to connect to any backend after %d attempts", maxRetries)
 }
 
@@ -737,12 +763,20 @@ func (p *Pool) createServerConnToRole(role string) (*ServerConn, error) {
 		return nil, fmt.Errorf("no backends available")
 	}
 
+	// Check global memory limit before allocating connection
+	if p.manager != nil && !p.manager.TryAlloc() {
+		return nil, fmt.Errorf("global memory limit exceeded")
+	}
+
 	maxRetries := 3
 	baseDelay := 100 * time.Millisecond
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		backend := p.selectBackendByRole(role)
 		if backend == nil {
+			if p.manager != nil {
+				p.manager.Free()
+			}
 			return nil, fmt.Errorf("no healthy %s backend available", role)
 		}
 
@@ -780,6 +814,9 @@ func (p *Pool) createServerConnToRole(role string) (*ServerConn, error) {
 		}
 	}
 
+	if p.manager != nil {
+		p.manager.Free()
+	}
 	return nil, fmt.Errorf("failed to connect to %s backend after %d attempts", role, maxRetries)
 }
 
@@ -861,6 +898,7 @@ func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 		id:            connIDCounter.Add(1),
 		conn:          netConn,
 		backend:       backend,
+		pool:          p,
 		codec:         p.codec,
 		createdAt:     time.Now(),
 		preparedStmts: make(map[string]bool),

@@ -152,7 +152,7 @@ func TestPool_GetCachedResult_Disabled(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestPool_SetCachedResult_Disabled(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestPool_InvalidateCache_Disabled(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestPool_CacheOperations_Enabled(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestPool_Stats_WithCache(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestNewPool_WithTLS(t *testing.T) {
 		},
 	}
 
-	_, err := NewPool(cfg, nil, log)
+	_, err := NewPool(cfg, nil, log, nil)
 	t.Logf("NewPool with TLS: %v (expected to fail on cert parse)", err)
 }
 
@@ -332,7 +332,7 @@ func TestNewPool_WithCAFile(t *testing.T) {
 		},
 	}
 
-	_, err := NewPool(cfg, nil, log)
+	_, err := NewPool(cfg, nil, log, nil)
 	t.Logf("NewPool with CA file: %v (expected to fail on cert parse)", err)
 }
 
@@ -351,7 +351,7 @@ func TestPool_AcquireToRole_NoBackends(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestSession_HandleMessage_TransactionBegin(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &mockCodecTxn{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestSession_HandleMessage_TransactionBegin_StrategyError(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &mockCodecTxn{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestSession_HandleMessage_TransactionEnd(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &mockCodecTxn{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestSession_HandleMessage_TransactionEnd_StrategyError(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &mockCodecTxn{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestSession_HandleMessage_OnQueryNilConn(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &MockCodecQuery{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -664,7 +664,7 @@ func TestSession_HandleMessage_WriteMessageError(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &mockCodecWriteErr{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -704,7 +704,7 @@ func TestSession_HandleMessage_OnQueryCompleteError(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &MockCodecQuery{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -745,7 +745,7 @@ func TestSession_HandleMessage_ExtractQueryError(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &mockCodecExtractErr{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -788,7 +788,7 @@ func TestSession_HandleMessage_QuerySuccess(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &MockCodecQuery{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -834,7 +834,7 @@ func TestStatementStrategy_OnTransactionBegin_Error(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -862,7 +862,7 @@ func TestStatementStrategy_OnQuery_NoIdleConns(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -910,7 +910,7 @@ func TestPool_AcquireToRole_IdleConn(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -952,7 +952,7 @@ func TestPool_Release_WithWaiter(t *testing.T) {
 			Hosts: []config.BackendHost{{Host: "127.0.0.1", Port: 5432, Role: "primary"}},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -1212,7 +1212,7 @@ func TestSelectBackendWithFallback_HealthyReplica(t *testing.T) {
 			},
 		},
 	}
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}

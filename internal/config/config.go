@@ -7,6 +7,7 @@ type GlobalConfig struct {
 	LogLevel  string `yaml:"log_level"`
 	LogFormat string `yaml:"log_format"`
 	PIDFile   string `yaml:"pid_file"`
+	MaxMemory string `yaml:"max_memory"`
 }
 
 // TLSConfig contains TLS settings.

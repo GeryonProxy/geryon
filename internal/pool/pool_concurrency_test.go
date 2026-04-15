@@ -57,7 +57,7 @@ func TestPool_AcquireRelease_Concurrent(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestPool_ExhaustAndWait(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestPool_MaxConnectionLimits(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}

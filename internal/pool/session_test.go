@@ -22,7 +22,7 @@ func TestSession_NewSession(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestSession_User(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestSession_Database(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestSession_AuthDone(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestSession_InTransaction(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSession_AutoCommitRelease(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestSession_TransactionStart(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestSession_StartedAt(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestSession_LastActive(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestSession_QueryCount(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestSession_BytesIn(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestSession_BytesOut(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestSession_LastQuery(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestSession_PreparedStatements(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestSession_Stats(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestSession_Pool(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestSession_Strategy(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestSession_TargetRole(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}

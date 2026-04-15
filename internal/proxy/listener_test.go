@@ -278,7 +278,7 @@ func TestNewListener(t *testing.T) {
 		Body: "postgresql",
 		Mode: "transaction",
 	}
-	p, _ := pool.NewPool(poolCfg, nil, log)
+	p, _ := pool.NewPool(poolCfg, nil, log, nil)
 
 	userDB := auth.NewUserDatabase()
 
@@ -342,7 +342,7 @@ func TestListenerPool(t *testing.T) {
 		Body: "postgresql",
 		Mode: "transaction",
 	}
-	p, _ := pool.NewPool(poolCfg, nil, log)
+	p, _ := pool.NewPool(poolCfg, nil, log, nil)
 
 	l := &Listener{
 		pool: p,

@@ -2815,6 +2815,9 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 			// Log query with timing
 			if ps.queryLogger != nil && query != "" {
 				duration := time.Since(queryStartTime)
+				if ps.pool != nil {
+					ps.pool.Metrics().RecordQuery(duration)
+				}
 				backendAddr := ""
 				if ps.serverConn != nil {
 					backendAddr = ps.serverConn.Conn().RemoteAddr().String()
@@ -2968,6 +2971,9 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 		// Log query completion for non-cached queries
 		if ps.queryLogger != nil && ps.currentQuery != "" {
 			duration := time.Since(ps.queryStartTime)
+			if ps.pool != nil {
+				ps.pool.Metrics().RecordQuery(duration)
+			}
 			backendAddr := ""
 			if ps.serverConn != nil {
 				backendAddr = ps.serverConn.Conn().RemoteAddr().String()

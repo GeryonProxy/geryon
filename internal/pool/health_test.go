@@ -964,7 +964,7 @@ func TestHealthChecker_PoolIntegration(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}

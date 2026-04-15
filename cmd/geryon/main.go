@@ -131,6 +131,7 @@ func main() {
 
 	// Create pool manager
 	poolMgr := pool.NewManager(log)
+	poolMgr.SetGlobalMaxMemory(cfg.Global.MaxMemory)
 
 	// Create pools from config
 	for _, poolCfg := range cfg.Pools {

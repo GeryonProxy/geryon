@@ -4274,7 +4274,7 @@ func TestListener_ActiveState(t *testing.T) {
 	}
 
 	codec := postgresql.NewCodec()
-	p, _ := pool.NewPool(poolCfg, codec, log)
+	p, _ := pool.NewPool(poolCfg, codec, log, nil)
 
 	l, err := NewListener(p, poolCfg, codec, nil, log)
 	if err != nil {

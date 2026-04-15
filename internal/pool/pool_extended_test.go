@@ -97,7 +97,7 @@ func TestNewPool_WithReplicaWeights(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestNewPool_NoHosts(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestPool_Mode(t *testing.T) {
 		log, _ := logger.New("error", "json")
 		codec := &MockCodec{}
 
-		pool, err := NewPool(cfg, codec, log)
+		pool, err := NewPool(cfg, codec, log, nil)
 		if err != nil {
 			t.Fatalf("NewPool failed for mode %s: %v", tt.modeStr, err)
 		}
@@ -245,7 +245,7 @@ func TestPool_GetBackends(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestPool_GetPrimary(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestPool_GetReplicas(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestPool_DrainBackend(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestPool_DrainBackend_NotFound(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestPool_CancelDrain_NotFound(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestPool_GetDrainingBackends(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestPool_IsDraining_NotFound(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -522,7 +522,7 @@ func TestPool_Stats(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -554,7 +554,7 @@ func TestPool_PreparedStatementCache(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -581,7 +581,7 @@ func TestPool_QueryCache(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestPool_Name(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -829,7 +829,7 @@ func TestPool_DrainBackend_AlreadyDraining(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -857,7 +857,7 @@ func TestPool_CancelDrain_NotDraining(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -883,7 +883,7 @@ func TestPool_IncrementTxnCount(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -910,7 +910,7 @@ func TestPool_selectBackend_NoBackends(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -934,7 +934,7 @@ func TestPool_createServerConn_NoBackends(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -1059,7 +1059,7 @@ func TestPool_ClientCount(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -1091,7 +1091,7 @@ func TestPool_ServerConnCount(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -1123,7 +1123,7 @@ func TestPool_QueryCount(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -1162,7 +1162,7 @@ func TestPool_TxnCount(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -1195,7 +1195,7 @@ func TestPool_Limits(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2115,7 +2115,7 @@ func TestPool_TryIncrementClientCount_Race(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2159,7 +2159,7 @@ func TestPool_SelectBackendWithFallback(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2227,7 +2227,7 @@ func TestPool_SelectBackend(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2277,7 +2277,7 @@ func TestPool_GetCachedResult_NoCache(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2310,7 +2310,7 @@ func TestPool_SetCachedResult_NoCache(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2340,7 +2340,7 @@ func TestPool_InvalidateCache_NoCache(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	codec := &MockCodec{}
 
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2712,7 +2712,7 @@ func TestPool_UpdateConfig(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2764,7 +2764,7 @@ func TestPool_UpdateConfig_UnsafeChange(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2800,7 +2800,7 @@ func TestPool_UpdateBackends(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2843,7 +2843,7 @@ func TestPool_StartHealthChecks(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2870,7 +2870,7 @@ func TestPool_CancelDrain(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2892,7 +2892,7 @@ func TestPool_IsDraining(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -2958,7 +2958,7 @@ func TestPool_updateBackendLists(t *testing.T) {
 		},
 	}
 
-	p, err := NewPool(cfg, nil, log)
+	p, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3114,7 +3114,7 @@ func TestPool_SelectBackendByRole_Primary(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3146,7 +3146,7 @@ func TestPool_SelectBackendByRole_Replica(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3181,7 +3181,7 @@ func TestPool_SelectBackendByRole_ReplicaFallbackToPrimary(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3218,7 +3218,7 @@ func TestPool_SelectBackendByRole_NoHealthyBackends(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3257,7 +3257,7 @@ func TestPool_SelectBackendByRole_DrainingFallback(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3285,7 +3285,7 @@ func TestPool_SelectBackendForQuery_Write(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3319,7 +3319,7 @@ func TestPool_SelectBackendForQuery_Read_WithReadWriteSplit(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3358,7 +3358,7 @@ func TestPool_SelectBackendForQuery_Read_WithoutReadWriteSplit(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3394,7 +3394,7 @@ func TestPool_SelectBackendForQuery_Write_PrimaryDown(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3429,7 +3429,7 @@ func TestPool_SelectBackendForQuery_NoHealthyBackends(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3463,7 +3463,7 @@ func TestPool_SelectBackendForQuery_Read_NoReplicas(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3497,7 +3497,7 @@ func TestPool_SelectBackendForQuery_Read_ReplicasDown(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3609,7 +3609,7 @@ func TestPool_Release_SignalWaiter(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3657,7 +3657,7 @@ func TestPool_Release_NoWaiter_ReturnsToPool(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3700,7 +3700,7 @@ func TestPool_Acquire_FromIdle(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3739,7 +3739,7 @@ func TestPool_AcquireToRole_FromIdle(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3777,7 +3777,7 @@ func TestPool_AcquireToRole_NoMatchingRole(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3806,7 +3806,7 @@ func TestPool_SelectBackendWithFallback_AllDraining(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3837,7 +3837,7 @@ func TestPool_SelectBackendWithFallback_PrimaryHealthy(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3871,7 +3871,7 @@ func TestPool_SelectBackendWithFallback_PrimaryDraining_UseReplica(t *testing.T)
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3906,7 +3906,7 @@ func TestPool_SelectBackend_NoHealthy_FallbackFirst(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3940,7 +3940,7 @@ func TestPool_SelectBackend_WeightedSelection(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -3973,7 +3973,7 @@ func TestPool_SelectBackend_SingleHealthy(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4005,7 +4005,7 @@ func TestPool_Acquire_WaitTimeout(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4042,7 +4042,7 @@ func TestPool_SelectBackendForQuery_Write_AllBackendsDown(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4076,7 +4076,7 @@ func TestPool_SelectBackendForQuery_Read_PrimaryDraining(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4113,7 +4113,7 @@ func TestPool_SelectBackendByRole_UnknownRole(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4147,7 +4147,7 @@ func TestPool_SelectBackendForQuery_Read_ReplicaDraining_FallbackPrimary(t *test
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4183,7 +4183,7 @@ func TestPool_CreateServerConnToRole_NoBackends(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4207,7 +4207,7 @@ func TestPool_CreateServerConnToRole_NoMatchingRole(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4232,7 +4232,7 @@ func TestPool_SelectBackendByRole_PrimaryDraining_FallbackAny(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4269,7 +4269,7 @@ func TestNewSessionStrategy(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4295,7 +4295,7 @@ func TestSessionStrategy_OnQueryComplete(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4322,7 +4322,7 @@ func TestSessionStrategy_OnTransactionBeginEnd(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4361,7 +4361,7 @@ func TestNewTransactionStrategy(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4387,7 +4387,7 @@ func TestTransactionStrategy_OnClientConnect(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4420,7 +4420,7 @@ func TestTransactionStrategy_OnTransactionEnd(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4463,7 +4463,7 @@ func TestNewStatementStrategy(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4489,7 +4489,7 @@ func TestStatementStrategy_OnClientConnect(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4519,7 +4519,7 @@ func TestStatementStrategy_OnTransactionBegin(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4546,7 +4546,7 @@ func TestStatementStrategy_OnTransactionEnd(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4585,7 +4585,7 @@ func TestStrategyFactory_CreateStrategy(t *testing.T) {
 			},
 		}
 
-		pool, err := NewPool(cfg, nil, log)
+		pool, err := NewPool(cfg, nil, log, nil)
 		if err != nil {
 			t.Fatalf("NewPool failed for mode %s: %v", tc.mode, err)
 		}
@@ -4614,7 +4614,7 @@ func TestStrategyFactory_CreateStrategy_InvalidMode(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4647,7 +4647,7 @@ func TestSession_ServerConn(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4685,7 +4685,7 @@ func TestSession_GetLastQuery(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4716,7 +4716,7 @@ func TestSession_HandleMessage_NilMessage(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4742,7 +4742,7 @@ func TestSession_HandleMessage_NilCodec(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4771,7 +4771,7 @@ func TestSession_HandleMessage_QueryWithNilServerConn(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &MockCodecQuery{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4813,7 +4813,7 @@ func TestSession_UserDatabase(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4852,7 +4852,7 @@ func TestSession_AuthDone_Extended(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4883,7 +4883,7 @@ func TestSession_TransactionStart_Extended(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4914,7 +4914,7 @@ func TestSession_UpdateLastActive(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4942,7 +4942,7 @@ func TestSession_BytesInOut(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -4981,7 +4981,7 @@ func TestSession_QueryCount_Extended(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5014,7 +5014,7 @@ func TestSession_TargetRole_Extended(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5045,7 +5045,7 @@ func TestSession_Stats_Extended(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5105,7 +5105,7 @@ func TestSession_Stats_NoServerConn(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5270,7 +5270,7 @@ func TestPool_TransactionManager(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5295,7 +5295,7 @@ func TestPool_Codec_Nil(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5320,7 +5320,7 @@ func TestPool_DecrementClientCount(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5353,7 +5353,7 @@ func TestPool_Close_WithHealthChecker(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5399,7 +5399,7 @@ func TestPool_TryConnect_Failure(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5430,7 +5430,7 @@ func TestPool_CreateServerConn_AllAttemptsFail(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5458,7 +5458,7 @@ func TestPool_CreateServerConn_OnlyDrainingBackends(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5489,7 +5489,7 @@ func TestPool_Acquire_WaitContextCancelled(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5526,7 +5526,7 @@ func TestPool_SelectBackendWithFallback_NoPrimary(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5559,7 +5559,7 @@ func TestPool_SelectBackendByRole_ReplicaWithNoPrimary(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5601,7 +5601,7 @@ func TestPool_SelectBackendForQuery_WriteOnlyReplica(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5633,7 +5633,7 @@ func TestSession_HandleMessage_Prepare(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &MockCodecPrepare{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5676,7 +5676,7 @@ func TestSession_HandleMessage_Close(t *testing.T) {
 	}
 	log, _ := logger.New("error", "json")
 	codec := &MockCodecClose{}
-	pool, err := NewPool(cfg, codec, log)
+	pool, err := NewPool(cfg, codec, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5709,7 +5709,7 @@ func TestPool_GetCachedResult_WithCache(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5733,7 +5733,7 @@ func TestPool_SetCachedResult_WithCache(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5757,7 +5757,7 @@ func TestPool_InvalidateCache_WithCache(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -5971,7 +5971,7 @@ func TestPool_TryConnect_MarksHealthy(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -6007,7 +6007,7 @@ func TestPool_CreateServerConnToRole_ErrorFormat(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -6045,7 +6045,7 @@ func TestPool_Acquire_CreateConnError(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -6071,7 +6071,7 @@ func TestSession_IncrementQueryCount_UpdatesLastActive(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -6149,7 +6149,7 @@ func setupPoolWithMockBackend(t *testing.T, mode string) (*Pool, net.Listener) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -6574,7 +6574,7 @@ func TestTransactionStrategy_OnQuery_WithTargetRole(t *testing.T) {
 	}
 
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
@@ -6947,7 +6947,7 @@ func TestPool_BackendCount(t *testing.T) {
 		},
 	}
 	log, _ := logger.New("error", "json")
-	pool, err := NewPool(cfg, nil, log)
+	pool, err := NewPool(cfg, nil, log, nil)
 	if err != nil {
 		t.Fatalf("NewPool failed: %v", err)
 	}
