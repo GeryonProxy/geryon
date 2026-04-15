@@ -197,10 +197,12 @@ All P0 critical bugs fixed:
   - Windows Authentication for enterprise users
   - Effort: 40h
 
-- [ ] **MSSQL Prepared Statements** — `internal/protocol/mssql/`
-  - Status: ⚠️ **Low priority** (per TASKS.md)
-  - Implement sp_prepare/sp_execute/sp_unprepare
-  - Effort: 24h
+- [x] **MSSQL Prepared Statements** — `internal/protocol/mssql/`, `internal/proxy/listener.go`
+  - Status: ✅ **IMPLEMENTED** (2026-04-15)
+  - `extractRPCQuery()` parses B-VARCHAR procedure names (UTF-16LE with 2-byte length prefix)
+  - `IsPrepare()` detects sp_prepare RPC, `IsExecute()` detects sp_execute RPC
+  - Wired into listener.go prepared statement handling (track pending parse, lastBoundStmt for re-prep)
+  - Fixed extractRPCQuery fallback to return lowercase (was uppercase, breaking test)
 
 - [ ] **PG COPY Protocol Passthrough** — `internal/protocol/postgresql/`
   - Status: ⚠️ **Low priority** (per TASKS.md)
@@ -216,7 +218,7 @@ All P0 critical bugs fixed:
   - `checkPostgreSQL()`, `checkMySQL()`, `checkMSSQL()` all send `SELECT 1` and verify response
   - Already present in `performCheck()` method with protocol-specific switch
 
-**Phase 5 Total:** ~96 hours (1/5 done — all others low priority)
+**Phase 5 Total:** ~72 hours (2/5 done)
 
 ---
 

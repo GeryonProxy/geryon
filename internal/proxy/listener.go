@@ -2546,49 +2546,71 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			}
 		}
 
-		// Handle prepared statements (Parse, Bind, Close)
-		if ps.poolSession.PreparedStatements() != nil && ps.config.Body == "postgresql" {
+		// Handle prepared statements (Parse, Bind, Close for PG; sp_prepare/sp_execute for MSSQL)
+		if ps.poolSession.PreparedStatements() != nil && (ps.config.Body == "postgresql" || ps.config.Body == "mssql") {
 			switch {
 			case codec.IsPrepare(msg):
-				// Parse message - track pending parse for confirmation
-				// M-8 fix: wait for ParseComplete before marking as prepared
-				pgCodec := codec.(*postgresql.PGCodec)
-				stmtName, _ := pgCodec.ExtractStatementName(msg)
-				query, _ := pgCodec.ExtractQuery(msg)
-				if query != "" {
-					// Track pending parse - will be confirmed on ParseComplete
-					ps.pendingParseMu.Lock()
-					ps.pendingParseStmt = stmtName
-					ps.pendingParseQuery = query
-					ps.pendingParseMu.Unlock()
-					ps.log.Debug("Prepared statement pending confirmation",
-						"name", stmtName,
-						"query", query[:min(len(query), 50)],
-					)
+				// Parse message (PG) or sp_prepare RPC (MSSQL) — track pending parse
+				if ps.config.Body == "postgresql" {
+					pgCodec := codec.(*postgresql.PGCodec)
+					stmtName, _ := pgCodec.ExtractStatementName(msg)
+					query, _ := pgCodec.ExtractQuery(msg)
+					if query != "" {
+						ps.pendingParseMu.Lock()
+						ps.pendingParseStmt = stmtName
+						ps.pendingParseQuery = query
+						ps.pendingParseMu.Unlock()
+						ps.log.Debug("Prepared statement pending confirmation",
+							"name", stmtName,
+							"query", query[:min(len(query), 50)],
+						)
+					}
+				} else {
+					// MSSQL sp_prepare — extract procedure name as statement name
+					stmtName, _ := codec.ExtractQuery(msg)
+					if stmtName != "" {
+						ps.pendingParseMu.Lock()
+						ps.pendingParseStmt = stmtName
+						ps.pendingParseQuery = "" // MSSQL doesn't expose the SQL in sp_prepare
+						ps.pendingParseMu.Unlock()
+						ps.log.Debug("MSSQL prepared statement pending", "name", stmtName)
+					}
 				}
 
 			case codec.IsBind(msg):
-				// Track bound statement name for re-preparation
-				if pgCodec, ok := codec.(*postgresql.PGCodec); ok {
-					if stmtName, err := pgCodec.ExtractBindStatementName(msg); err == nil && stmtName != "" {
+				// Bind message — track bound statement name for re-preparation
+				if ps.config.Body == "postgresql" {
+					if pgCodec, ok := codec.(*postgresql.PGCodec); ok {
+						if stmtName, err := pgCodec.ExtractBindStatementName(msg); err == nil && stmtName != "" {
+							ps.lastBoundStmt = stmtName
+						}
+					}
+				}
+				// MSSQL: sp_execute carries params inline, no separate bind
+
+			case codec.IsExecute(msg):
+				// Execute message — track for re-preparation
+				if ps.config.Body == "mssql" {
+					// Extract statement name from sp_execute
+					if stmtName, _ := codec.ExtractQuery(msg); stmtName != "" {
 						ps.lastBoundStmt = stmtName
 					}
 				}
 
 			case codec.IsClose(msg):
-				// Close message - remove from cache
-				// Close message format: 'C' + type + name
-				// Type: 'S' = statement, 'P' = portal
-				if len(msg.Payload) > 2 && msg.Payload[0] == 'S' {
-					// Statement close
-					namePos := 1
-					for namePos < len(msg.Payload) && msg.Payload[namePos] != 0 {
-						namePos++
+				// Close message — remove from cache
+				if ps.config.Body == "postgresql" {
+					if len(msg.Payload) > 2 && msg.Payload[0] == 'S' {
+						namePos := 1
+						for namePos < len(msg.Payload) && msg.Payload[namePos] != 0 {
+							namePos++
+						}
+						stmtName := string(msg.Payload[1:namePos])
+						ps.poolSession.PreparedStatements().Register(stmtName, "", nil)
+						ps.log.Debug("Prepared statement closed", "name", stmtName)
 					}
-					stmtName := string(msg.Payload[1:namePos])
-					ps.poolSession.PreparedStatements().Register(stmtName, "", nil)
-					ps.log.Debug("Prepared statement closed", "name", stmtName)
 				}
+				// MSSQL: sp_unprepare RPC (not commonly used, connections are reset)
 			}
 		}
 

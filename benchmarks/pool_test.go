@@ -60,7 +60,7 @@ func BenchmarkPoolAcquireRelease(b *testing.B) {
 	}
 
 	log, _ := logger.New("error", "json")
-	p, err := pool.NewPool(cfg, nil, log)
+	p, err := pool.NewPool(cfg, nil, log, nil)
 	if err != nil {
 		b.Fatalf("NewPool failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func BenchmarkPoolAcquireReleaseWithLatency(b *testing.B) {
 	}
 
 	log, _ := logger.New("error", "json")
-	p, err := pool.NewPool(cfg, nil, log)
+	p, err := pool.NewPool(cfg, nil, log, nil)
 	if err != nil {
 		b.Fatalf("NewPool failed: %v", err)
 	}
@@ -153,7 +153,7 @@ func BenchmarkPoolConnectionReuse(b *testing.B) {
 	}
 
 	log, _ := logger.New("error", "json")
-	p, err := pool.NewPool(cfg, nil, log)
+	p, err := pool.NewPool(cfg, nil, log, nil)
 	if err != nil {
 		b.Fatalf("NewPool failed: %v", err)
 	}
