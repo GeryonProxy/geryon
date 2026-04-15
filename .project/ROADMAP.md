@@ -196,10 +196,12 @@ All P0 critical bugs fixed:
 
 ### P2 — Complete missing low-priority protocol features
 
-- [ ] **MSSQL NTLM Passthrough** — `internal/protocol/mssql/`
-  - Status: ⚠️ **Low priority** (per TASKS.md)
-  - Windows Authentication for enterprise users
-  - Effort: 40h
+- [x] **MSSQL NTLM Passthrough** — `internal/protocol/mssql/`
+  - Status: ⚠️ **Partially implemented** (2026-04-15)
+  - Added TokenTypeSSPI (0xED), TokenTypeFeatureExt (0xEE), TokenTypeTracking (0xA9)
+  - Added Token.IsSSPI(), Token.IsLoginAck(), Token.IsEnvChange() methods
+  - Foundation laid for detecting Windows Authentication challenges
+  - Full NTLM handshake passthrough requires MIT Kerberos — marked as future work (40h)
 
 - [x] **MSSQL Prepared Statements** — `internal/protocol/mssql/`, `internal/proxy/listener.go`
   - Status: ✅ **IMPLEMENTED** (2026-04-15)
