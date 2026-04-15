@@ -5,6 +5,7 @@ global:
   log_level: info           # debug | info | warn | error
   log_format: json          # json | text
   pid_file: /var/run/geryon.pid
+  max_memory: ""           # Global memory limit for server connections (e.g. "4GB", "1GB", "512MB")
 
 admin:
   rest:
