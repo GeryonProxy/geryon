@@ -656,8 +656,8 @@ func TestPeriodicCleanup(t *testing.T) {
 	rl.lastSeen["10.0.0.2"] = time.Now().Add(-1 * time.Hour)
 	rl.mu.Unlock()
 
-	// Wait for a cleanup cycle
-	time.Sleep(150 * time.Millisecond)
+	// Manually trigger cleanup (don't rely on ticker which has 5min interval)
+	rl.doCleanup()
 
 	// Old entries should be cleaned up
 	rl.mu.Lock()

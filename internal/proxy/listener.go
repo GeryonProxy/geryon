@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -30,6 +31,29 @@ import (
 
 // MySQL packet size limit (16MB is protocol max)
 const maxMySQLPayload = 16 << 20
+
+// bufferPool provides reusable buffers for relay operations to reduce allocations.
+// Using sync.Pool for lock-free get/put under high concurrency.
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		// Default 4KB buffer, will grow as needed
+		return make([]byte, 4096)
+	},
+}
+
+// getBuffer retrieves a buffer from the pool.
+func getBuffer() []byte {
+	return bufferPool.Get().([]byte)
+}
+
+// putBuffer returns a buffer to the pool.
+func putBuffer(buf []byte) {
+	// Reset to 4KB capacity if grown too large
+	if cap(buf) > 8192 {
+		buf = buf[:4096][:0:4096]
+	}
+	bufferPool.Put(buf)
+}
 
 // Listener manages incoming client connections for a pool.
 type Listener struct {
@@ -1211,8 +1235,39 @@ func (ps *ProxySession) forwardAuthToBackend() error {
 
 // handleMySQLStartup handles MySQL startup handshake.
 func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
-	// For MySQL, we need to connect to backend first to get the handshake
-	// Connect to backend
+	// Check rate limiter before starting MySQL authentication (M-4 fix)
+	clientIP := ps.clientConn.RemoteAddr().String()
+	if ps.authLimiter != nil && ps.authLimiter.IsLimited(clientIP) {
+		ps.log.Warn("Authentication blocked: client rate limited", "client", clientIP)
+		return fmt.Errorf("too many failed attempts, try again later")
+	}
+
+	// For MySQL auth, check if we're in interception mode with user DB
+	// In interception mode, we read client handshake first to get username
+	// In passthrough mode, we connect to backend and let it handle auth
+	useInterception := ps.authMode == "interception" && ps.userDB != nil
+
+	if useInterception {
+		// Interception: read client handshake first to get username
+		username, err := ps.readMySQLClientHandshake()
+		if err != nil {
+			return fmt.Errorf("failed to read client handshake: %w", err)
+		}
+
+		ps.username = username
+		user := ps.userDB.GetUser(ps.username)
+
+		return ps.handleMySQLInterception(ctx, user, clientIP)
+	}
+
+	// Passthrough or default: connect to backend first, forward all auth
+	return ps.handleMySQLPassthrough(ctx)
+}
+
+// handleMySQLPassthrough handles MySQL passthrough authentication.
+// Connects to backend and forwards all auth messages.
+func (ps *ProxySession) handleMySQLPassthrough(ctx context.Context) error {
+	// Connect to backend first to get the handshake
 	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
 		return fmt.Errorf("failed to connect to backend: %w", err)
 	}
@@ -1316,6 +1371,180 @@ func (ps *ProxySession) handleMySQLStartup(ctx context.Context) error {
 	ps.poolSession.SetAuthDone()
 
 	return nil
+}
+
+// handleMySQLInterception handles MySQL interception authentication.
+// Geryon authenticates the client using its own user database,
+// then connects to backend with pooled credentials.
+func (ps *ProxySession) handleMySQLInterception(ctx context.Context, user *auth.User, clientIP string) error {
+	// Verify user exists in Geryon database
+	if user == nil {
+		ps.log.Warn("Unknown user in interception mode", "user", ps.username)
+		ps.recordAuthFailure()
+		return fmt.Errorf("unknown user: %s", ps.username)
+	}
+
+	// Check per-user connection limit
+	if user.MaxConnections > 0 {
+		if !ps.pool.TryIncrementUserCount(ps.username, user.MaxConnections) {
+			ps.log.Warn("Per-user connection limit exceeded", "user", ps.username, "limit", user.MaxConnections)
+			ps.recordAuthFailure()
+			return fmt.Errorf("too many connections for user %s", ps.username)
+		}
+	}
+
+	// Check pool access authorization
+	if !user.CanAccessPool(ps.pool.Name()) {
+		ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+		ps.recordAuthFailure()
+		return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
+	}
+
+	// Generate random scramble for challenge-response auth
+	scramble := make([]byte, 20)
+	if _, err := rand.Read(scramble); err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to generate scramble: %w", err)
+	}
+
+	// Send our handshake to client (server speaks first in MySQL protocol)
+	handshake := createMySQLHandshake(ps.id, scramble)
+	pkt := make([]byte, 4+len(handshake))
+	binary.LittleEndian.PutUint32(pkt[0:4], uint32(len(handshake)))
+	pkt[4] = 0 // sequence number 0
+	copy(pkt[5:], handshake)
+
+	if _, err := ps.clientConn.Write(pkt); err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to send handshake: %w", err)
+	}
+
+	// Read client handshake response
+	reader := bufio.NewReader(ps.clientConn)
+
+	// Read packet header (4 bytes)
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to read handshake header: %w", err)
+	}
+
+	length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
+	if length > maxMySQLPayload {
+		ps.recordAuthFailure()
+		return fmt.Errorf("handshake response too large: %d bytes", length)
+	}
+
+	// Read handshake payload
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to read handshake payload: %w", err)
+	}
+
+	// Parse to get username and auth response
+	username, authResponse, err := parseMySQLHandshakeResponseWithAuth(payload)
+	if err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to parse handshake response: %w", err)
+	}
+
+	// Update username if different from initial read
+	if username != "" {
+		ps.username = username
+	}
+
+	// Verify password if we have MySQL password hash stored
+	if user.MysqlPasswordHash != "" {
+		if err := auth.VerifyMySQLPassword(user.MysqlPasswordHash, scramble, authResponse); err != nil {
+			ps.log.Warn("MySQL password verification failed", "user", ps.username, "error", err)
+			ps.recordAuthFailure()
+			// Send error packet to client
+			errPkt := createMySQLErrorPacket(1045, "28000", "Access denied")
+			ps.clientConn.Write(errPkt)
+			return fmt.Errorf("authentication failed: %w", err)
+		}
+	} else if user.PasswordHash != "" {
+		// Fall back to SCRAM-SHA-256 (treat as PostgreSQL format)
+		ps.log.Warn("No MySQL password hash, using SCRAM fallback", "user", ps.username)
+		ps.recordAuthFailure()
+		errPkt := createMySQLErrorPacket(1045, "28000", "MySQL password not configured")
+		ps.clientConn.Write(errPkt)
+		return fmt.Errorf("MySQL password hash required for interception mode")
+	} else {
+		ps.log.Warn("No password hash available for user", "user", ps.username)
+		ps.recordAuthFailure()
+		errPkt := createMySQLErrorPacket(1045, "28000", "Access denied")
+		ps.clientConn.Write(errPkt)
+		return fmt.Errorf("no password hash available for user %s", ps.username)
+	}
+
+	// Send OK packet to client
+	okPacket := createMySQLOKPacket()
+	if _, err := ps.clientConn.Write(okPacket); err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to send auth response: %w", err)
+	}
+
+	// Now connect to backend with pooled credentials
+	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to connect to backend: %w", err)
+	}
+
+	serverConn := ps.poolSession.ServerConn()
+	if serverConn == nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("no server connection available")
+	}
+
+	ps.serverConn = serverConn
+	ps.authenticated.Store(true)
+	ps.recordAuthSuccess()
+	ps.poolSession.SetAuthDone()
+
+	return nil
+}
+
+// readMySQLClientHandshake reads and parses the initial handshake from MySQL client.
+func (ps *ProxySession) readMySQLClientHandshake() (string, error) {
+	reader := bufio.NewReader(ps.clientConn)
+
+	// Read packet header (4 bytes)
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return "", fmt.Errorf("failed to read handshake header: %w", err)
+	}
+
+	length := int(header[0]) | int(header[1])<<8 | int(header[2])<<16
+	_ = header[3] // sequence
+
+	if length > maxMySQLPayload {
+		return "", fmt.Errorf("mysql handshake too large: %d bytes", length)
+	}
+
+	handshakeData := make([]byte, length)
+	if _, err := io.ReadFull(reader, handshakeData); err != nil {
+		return "", fmt.Errorf("failed to read handshake data: %w", err)
+	}
+
+	// Parse username from handshake
+	username, _, err := parseMySQLHandshakeResponse(handshakeData)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse handshake: %w", err)
+	}
+
+	return username, nil
+}
+
+// createMySQLOKPacket creates a MySQL OK packet for authentication completion.
+func createMySQLOKPacket() []byte {
+	// OK packet: 0x00 (header) + affected rows (1) + inserted ID (4) + server status (2) + warnings (2)
+	pkt := make([]byte, 11)
+	pkt[0] = 0x00 // OK packet type
+	// Fields already zeroed
+	pkt[5] = 0x02 // server status: autocommit
+	return pkt
 }
 
 // extractMySQLScramble extracts the auth scramble from handshake packet.
@@ -1492,6 +1721,61 @@ func parseMySQLHandshakeResponse(data []byte) (username, database string, err er
 	return username, database, nil
 }
 
+// parseMySQLHandshakeResponseWithAuth parses the client handshake response and extracts auth data.
+// Returns username, database, and auth response (password proof).
+func parseMySQLHandshakeResponseWithAuth(data []byte) (username string, authResponse []byte, err error) {
+	if len(data) < 32 {
+		return "", nil, fmt.Errorf("response too short")
+	}
+
+	pos := 0
+
+	// Capability flags (4 bytes)
+	pos += 4
+
+	// Max packet size (4 bytes)
+	pos += 4
+
+	// Character set (1 byte)
+	pos++
+
+	// Reserved (23 bytes)
+	pos += 23
+
+	// Username (null-terminated)
+	usernameStart := pos
+	for pos < len(data) && data[pos] != 0 {
+		pos++
+	}
+	username = string(data[usernameStart:pos])
+	pos++ // skip null
+
+	// Auth response (length-encoded string)
+	if pos < len(data) {
+		authLen := int(data[pos])
+		pos++
+		if authLen > 0 && pos+authLen <= len(data) {
+			authResponse = make([]byte, authLen)
+			copy(authResponse, data[pos:pos+authLen])
+			pos += authLen
+		}
+	}
+
+	return username, authResponse, nil
+}
+
+// createMySQLErrorPacket creates a MySQL error packet.
+func createMySQLErrorPacket(code uint16, state, message string) []byte {
+	// Error packet: 0xff (header) + error code (2) + SQL state (5) + message
+	buf := make([]byte, 0, 9+len(message))
+	buf = append(buf, 0xff) // Error packet type
+	buf = binary.LittleEndian.AppendUint16(buf, code)
+	buf = append(buf, '#')
+	buf = append(buf, []byte(state)...)
+	buf = append(buf, []byte(message)...)
+	return buf
+}
+
 // forwardMySQLAuth forwards authentication packets until completion.
 func (ps *ProxySession) forwardMySQLAuth() error {
 	// Forward packets between client and server until OK or ERR
@@ -1573,6 +1857,90 @@ func (ps *ProxySession) handleMSSQLStartup(ctx context.Context) error {
 		return fmt.Errorf("too many failed attempts, try again later")
 	}
 
+	// For MSSQL, check if we're in interception mode with user DB
+	// In interception mode, we read client handshake first to get username
+	// In passthrough mode, we connect to backend and let it handle auth
+	useInterception := ps.authMode == "interception" && ps.userDB != nil
+
+	if useInterception {
+		// Interception: read Pre-Login and Login7 from client to get username
+		preLoginData, login7Data, err := ps.readMSSQLClientHandshake()
+		if err != nil {
+			return fmt.Errorf("failed to read MSSQL handshake: %w", err)
+		}
+
+		// Extract username for verification
+		if len(login7Data) > 0 {
+			ps.extractLogin7Credentials(login7Data)
+		}
+
+		user := ps.userDB.GetUser(ps.username)
+		return ps.handleMSSQLInterception(ctx, user, clientIP, preLoginData, login7Data)
+	}
+
+	// Passthrough or default: connect to backend first, forward all auth
+	return ps.handleMSSQLPassthrough(ctx)
+}
+
+// readMSSQLClientHandshake reads Pre-Login and Login7 from MSSQL client.
+func (ps *ProxySession) readMSSQLClientHandshake() ([]byte, []byte, error) {
+	reader := bufio.NewReader(ps.clientConn)
+
+	// Read Pre-Login header (8 bytes)
+	preLoginHeader := make([]byte, 8)
+	if _, err := io.ReadFull(reader, preLoginHeader); err != nil {
+		return nil, nil, fmt.Errorf("failed to read Pre-Login header: %w", err)
+	}
+
+	if preLoginHeader[0] != 0x12 { // PacketTypePreLogin
+		return nil, nil, fmt.Errorf("expected Pre-Login packet, got 0x%02x", preLoginHeader[0])
+	}
+
+	preLoginLength := binary.BigEndian.Uint16(preLoginHeader[2:4])
+	preLoginPayloadLen := int(preLoginLength) - 8
+	if preLoginPayloadLen < 0 || preLoginPayloadLen > maxMySQLPayload {
+		return nil, nil, fmt.Errorf("invalid MSSQL Pre-Login length: %d", preLoginPayloadLen)
+	}
+
+	preLoginPayload := make([]byte, preLoginPayloadLen)
+	if _, err := io.ReadFull(reader, preLoginPayload); err != nil {
+		return nil, nil, fmt.Errorf("failed to read Pre-Login payload: %w", err)
+	}
+
+	preLoginData := make([]byte, 8+preLoginPayloadLen)
+	copy(preLoginData[0:8], preLoginHeader)
+	copy(preLoginData[8:], preLoginPayload)
+
+	// Read Login7 header (8 bytes)
+	login7Header := make([]byte, 8)
+	if _, err := io.ReadFull(reader, login7Header); err != nil {
+		return nil, nil, fmt.Errorf("failed to read Login7 header: %w", err)
+	}
+
+	if login7Header[0] != 0x10 { // PacketTypeLogin7
+		return nil, nil, fmt.Errorf("expected Login7 packet, got 0x%02x", login7Header[0])
+	}
+
+	login7Length := binary.BigEndian.Uint16(login7Header[2:4])
+	login7PayloadLen := int(login7Length) - 8
+	if login7PayloadLen < 0 || login7PayloadLen > maxMySQLPayload {
+		return nil, nil, fmt.Errorf("invalid MSSQL Login7 length: %d", login7PayloadLen)
+	}
+
+	login7Payload := make([]byte, login7PayloadLen)
+	if _, err := io.ReadFull(reader, login7Payload); err != nil {
+		return nil, nil, fmt.Errorf("failed to read Login7 payload: %w", err)
+	}
+
+	login7Data := make([]byte, 8+login7PayloadLen)
+	copy(login7Data[0:8], login7Header)
+	copy(login7Data[8:], login7Payload)
+
+	return preLoginData, login7Data, nil
+}
+
+// handleMSSQLPassthrough handles MSSQL passthrough authentication.
+func (ps *ProxySession) handleMSSQLPassthrough(ctx context.Context) error {
 	// TDS protocol: Pre-Login -> Login7 -> Auth complete
 	// Connect to backend first
 	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
@@ -1586,14 +1954,41 @@ func (ps *ProxySession) handleMSSQLStartup(ctx context.Context) error {
 
 	ps.serverConn = serverConn
 
-	// Forward Pre-Login from client to server
+	// Read and forward Pre-Login from client to server
 	if err := ps.forwardMSSQLPreLogin(); err != nil {
 		return fmt.Errorf("pre-login failed: %w", err)
 	}
 
-	// Forward Login7 from client to server
-	if err := ps.forwardMSSQLLogin7(); err != nil {
-		return fmt.Errorf("login failed: %w", err)
+	// Read Login7 from client
+	reader := bufio.NewReader(ps.clientConn)
+	loginHeader := make([]byte, 8)
+	if _, err := io.ReadFull(reader, loginHeader); err != nil {
+		return fmt.Errorf("failed to read Login7 header: %w", err)
+	}
+	if loginHeader[0] != 0x10 {
+		return fmt.Errorf("expected Login7 packet, got 0x%02x", loginHeader[0])
+	}
+	loginLength := binary.BigEndian.Uint16(loginHeader[2:4])
+	loginPayloadLen := int(loginLength) - 8
+	if loginPayloadLen < 0 || loginPayloadLen > maxMySQLPayload {
+		return fmt.Errorf("invalid MSSQL Login7 length: %d", loginPayloadLen)
+	}
+	loginPayload := make([]byte, loginPayloadLen)
+	if _, err := io.ReadFull(reader, loginPayload); err != nil {
+		return fmt.Errorf("failed to read Login7 payload: %w", err)
+	}
+
+	// Forward Login7 to server
+	login7 := make([]byte, loginLength)
+	copy(login7[0:8], loginHeader)
+	copy(login7[8:], loginPayload)
+	if _, err := ps.serverConn.Conn().Write(login7); err != nil {
+		return fmt.Errorf("failed to forward Login7: %w", err)
+	}
+
+	// Read Login7 response from server and forward to client
+	if err := ps.forwardMSSQLLogin7Response(); err != nil {
+		return fmt.Errorf("login response failed: %w", err)
 	}
 
 	ps.authenticated.Store(true)
@@ -1603,41 +1998,75 @@ func (ps *ProxySession) handleMSSQLStartup(ctx context.Context) error {
 	return nil
 }
 
-// forwardMSSQLPreLogin forwards Pre-Login negotiation.
-func (ps *ProxySession) forwardMSSQLPreLogin() error {
-	// Read Pre-Login from client
-	reader := bufio.NewReader(ps.clientConn)
-
-	// Read TDS header (8 bytes)
-	header := make([]byte, 8)
-	if _, err := io.ReadFull(reader, header); err != nil {
-		return fmt.Errorf("failed to read Pre-Login header: %w", err)
+// handleMSSQLInterception handles MSSQL interception authentication.
+// Geryon verifies user exists and has pool access, then forwards auth to backend.
+func (ps *ProxySession) handleMSSQLInterception(ctx context.Context, user *auth.User, clientIP string, preLoginData, login7Data []byte) error {
+	// Verify user exists in Geryon database
+	if user == nil {
+		ps.log.Warn("Unknown user in interception mode", "user", ps.username)
+		ps.recordAuthFailure()
+		return fmt.Errorf("unknown user: %s", ps.username)
 	}
 
-	if header[0] != 0x12 { // PacketTypePreLogin
-		return fmt.Errorf("expected Pre-Login packet, got 0x%02x", header[0])
+	// Check per-user connection limit
+	if user.MaxConnections > 0 {
+		if !ps.pool.TryIncrementUserCount(ps.username, user.MaxConnections) {
+			ps.log.Warn("Per-user connection limit exceeded", "user", ps.username, "limit", user.MaxConnections)
+			ps.recordAuthFailure()
+			return fmt.Errorf("too many connections for user %s", ps.username)
+		}
 	}
 
-	length := binary.BigEndian.Uint16(header[2:4])
-	payloadLen := int(length) - 8
-	if payloadLen < 0 || payloadLen > maxMySQLPayload {
-		return fmt.Errorf("invalid MSSQL Pre-Login length: %d", payloadLen)
+	// Check pool access authorization
+	if !user.CanAccessPool(ps.pool.Name()) {
+		ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+		ps.recordAuthFailure()
+		return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
 	}
 
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(reader, payload); err != nil {
-		return fmt.Errorf("failed to read Pre-Login payload: %w", err)
+	// Connect to backend
+	if err := ps.poolSession.Strategy().OnClientConnect(ctx, ps.poolSession); err != nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("failed to connect to backend: %w", err)
 	}
 
-	// Forward to server
-	preLogin := make([]byte, length)
-	copy(preLogin[0:8], header)
-	copy(preLogin[8:], payload)
+	serverConn := ps.poolSession.ServerConn()
+	if serverConn == nil {
+		ps.recordAuthFailure()
+		return fmt.Errorf("no server connection available")
+	}
 
-	if _, err := ps.serverConn.Conn().Write(preLogin); err != nil {
+	ps.serverConn = serverConn
+
+	// Forward Pre-Login to server
+	if _, err := ps.serverConn.Conn().Write(preLoginData); err != nil {
 		return fmt.Errorf("failed to forward Pre-Login: %w", err)
 	}
 
+	// Read Pre-Login response from server and forward to client
+	if err := ps.forwardMSSQLPreLoginResponse(); err != nil {
+		return fmt.Errorf("pre-login response failed: %w", err)
+	}
+
+	// Forward Login7 to server
+	if _, err := ps.serverConn.Conn().Write(login7Data); err != nil {
+		return fmt.Errorf("failed to forward Login7: %w", err)
+	}
+
+	// Read Login7 response (OK or error)
+	if err := ps.forwardMSSQLLogin7Response(); err != nil {
+		return fmt.Errorf("login response failed: %w", err)
+	}
+
+	ps.authenticated.Store(true)
+	ps.recordAuthSuccess()
+	ps.poolSession.SetAuthDone()
+
+	return nil
+}
+
+// forwardMSSQLPreLoginResponse forwards Pre-Login response to client.
+func (ps *ProxySession) forwardMSSQLPreLoginResponse() error {
 	// Read response from server
 	serverReader := bufio.NewReader(ps.serverConn.Conn())
 
@@ -1677,12 +2106,105 @@ func (ps *ProxySession) forwardMSSQLPreLogin() error {
 	return nil
 }
 
-// forwardMSSQLLogin7 forwards Login7 authentication.
-func (ps *ProxySession) forwardMSSQLLogin7() error {
-	// Read Login7 from client
+// forwardMSSQLLogin7Response forwards Login7 response to client.
+func (ps *ProxySession) forwardMSSQLLogin7Response() error {
+	// Read response from server
+	serverReader := bufio.NewReader(ps.serverConn.Conn())
+
+	for {
+		// Read header
+		respHeader := make([]byte, 8)
+		if _, err := io.ReadFull(serverReader, respHeader); err != nil {
+			return fmt.Errorf("failed to read Login7 response header: %w", err)
+		}
+
+		respLength := binary.BigEndian.Uint16(respHeader[2:4])
+		respPayloadLen := int(respLength) - 8
+		if respPayloadLen < 0 || respPayloadLen > maxMySQLPayload {
+			return fmt.Errorf("invalid MSSQL Login7 response length: %d", respPayloadLen)
+		}
+
+		respPayload := make([]byte, respPayloadLen)
+		if _, err := io.ReadFull(serverReader, respPayload); err != nil {
+			return fmt.Errorf("failed to read Login7 response payload: %w", err)
+		}
+
+		// Forward to client
+		resp := make([]byte, respLength)
+		copy(resp[0:8], respHeader)
+		copy(resp[8:], respPayload)
+
+		if _, err := ps.clientConn.Write(resp); err != nil {
+			return fmt.Errorf("failed to send Login7 response: %w", err)
+		}
+
+		// Check for OK (0x00) or ENV_CHANGE (0xE3)
+		if respPayloadLen > 0 {
+			switch respPayload[0] {
+			case 0x00: // OK
+				return nil
+			case 0xFF: // ERROR
+				ps.recordAuthFailure()
+				return fmt.Errorf("authentication failed")
+			case 0xE3: // ENV_CHANGE
+				// Continue - can have multiple responses
+			}
+		}
+
+		// Check for end of message
+		if respHeader[1]&0x01 != 0 { // StatusEndOfMessage
+			break
+		}
+	}
+
+	return nil
+}
+
+// forwardMSSQLPreLogin handles Pre-Login (backward compatibility for tests).
+// Reads Pre-Login from client, forwards to server, reads response, forwards to client.
+func (ps *ProxySession) forwardMSSQLPreLogin() error {
 	reader := bufio.NewReader(ps.clientConn)
 
-	// Read TDS header (8 bytes)
+	// Read header (8 bytes)
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return fmt.Errorf("failed to read Pre-Login header: %w", err)
+	}
+
+	if header[0] != 0x12 { // PacketTypePreLogin
+		return fmt.Errorf("expected Pre-Login packet, got 0x%02x", header[0])
+	}
+
+	length := binary.BigEndian.Uint16(header[2:4])
+	payloadLen := int(length) - 8
+	if payloadLen < 0 || payloadLen > maxMySQLPayload {
+		return fmt.Errorf("invalid MSSQL Pre-Login length: %d", payloadLen)
+	}
+
+	payload := make([]byte, payloadLen)
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return fmt.Errorf("failed to read Pre-Login payload: %w", err)
+	}
+
+	// Forward to server
+	preLogin := make([]byte, length)
+	copy(preLogin[0:8], header)
+	copy(preLogin[8:], payload)
+
+	if _, err := ps.serverConn.Conn().Write(preLogin); err != nil {
+		return fmt.Errorf("failed to forward Pre-Login: %w", err)
+	}
+
+	// Read response from server and forward to client
+	return ps.forwardMSSQLPreLoginResponse()
+}
+
+// forwardMSSQLLogin7 handles Login7 (backward compatibility for tests).
+// Reads Login7 from client, forwards to server, reads response, forwards to client.
+func (ps *ProxySession) forwardMSSQLLogin7() error {
+	reader := bufio.NewReader(ps.clientConn)
+
+	// Read header (8 bytes)
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return fmt.Errorf("failed to read Login7 header: %w", err)
@@ -1703,7 +2225,7 @@ func (ps *ProxySession) forwardMSSQLLogin7() error {
 		return fmt.Errorf("failed to read Login7 payload: %w", err)
 	}
 
-	// Extract username from Login7 for logging
+	// Extract username for logging
 	ps.extractLogin7Credentials(payload)
 
 	// Forward to server
@@ -1715,12 +2237,8 @@ func (ps *ProxySession) forwardMSSQLLogin7() error {
 		return fmt.Errorf("failed to forward Login7: %w", err)
 	}
 
-	// Forward authentication response packets
-	if err := ps.forwardMSSQLAuthResponse(); err != nil {
-		return fmt.Errorf("auth response failed: %w", err)
-	}
-
-	return nil
+	// Forward auth response
+	return ps.forwardMSSQLAuthResponse()
 }
 
 // extractLogin7Credentials extracts username from Login7 packet.
@@ -2265,7 +2783,10 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 
 	// Read and capture response
 	// For PostgreSQL, we need to read multiple messages until ReadyForQuery
-	var response bytes.Buffer
+	// Use pooled buffer for response aggregation
+	responseBuf := getBuffer()
+	defer putBuffer(responseBuf)
+	response := bytes.NewBuffer(responseBuf)
 	var rowCount int64
 
 	for {
@@ -2415,61 +2936,73 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 			ps.pendingParseMu.Unlock()
 		}
 
+		// Check for query completion (protocol-specific)
+		// PostgreSQL: 'Z' ReadyForQuery with 'I' (Idle) status
+		// MySQL: 0x00 OK packet or 0xfe EOF packet
+		queryComplete := false
+		if msg.Type == 'Z' && len(msg.Payload) > 0 {
+			// PostgreSQL ReadyForQuery
+			status := msg.Payload[0]
+			switch status {
+			case 'I': // Idle (not in transaction)
+				ps.poolSession.SetInTransaction(false)
+				queryComplete = true
+			case 'T', 'E': // In transaction block or failed transaction
+				ps.poolSession.SetInTransaction(true)
+			}
+		} else if msg.Type == 0x00 || msg.Type == 0xfe {
+			// MySQL OK or EOF packet - indicates end of result/completion
+			ps.poolSession.SetInTransaction(false)
+			queryComplete = true
+		}
+
+		if queryComplete {
+			ps.OnQueryComplete()
+		}
+
 		// Write message to client
 		if err := codec.WriteMessage(clientConn, msg); err != nil {
 			return err
 		}
 
-		// Check for transaction state changes in ReadyForQuery
-		if msg.Type == 'Z' && len(msg.Payload) > 0 {
-			status := msg.Payload[0]
-			switch status {
-			case 'I': // Idle (not in transaction)
-				ps.poolSession.SetInTransaction(false)
-				ps.OnQueryComplete()
-			case 'T', 'E': // In transaction block or failed transaction
-				ps.poolSession.SetInTransaction(true)
+		// Log query completion for non-cached queries
+		if ps.queryLogger != nil && ps.currentQuery != "" {
+			duration := time.Since(ps.queryStartTime)
+			backendAddr := ""
+			if ps.serverConn != nil {
+				backendAddr = ps.serverConn.Conn().RemoteAddr().String()
 			}
+			ps.queryLogger.LogQuery(logger.QueryLogEntry{
+				Timestamp:    ps.queryStartTime,
+				QueryID:      fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
+				Pool:         ps.config.Name,
+				ClientAddr:   ps.clientConn.RemoteAddr().String(),
+				BackendAddr:  backendAddr,
+				Username:     ps.username,
+				Database:     ps.database,
+				Query:        ps.currentQuery,
+				QueryHash:    cache.GenerateKey(ps.currentQuery).String(),
+				Duration:     duration,
+				RowsReturned: rowCount,
+				IsCached:     false,
+				TransactionID: func() string {
+					if ps.transactionInfo != nil {
+						return fmt.Sprintf("%d", ps.transactionInfo.ID)
+					}
+					return ""
+				}(),
+			})
 
-			// Log query completion for non-cached queries
-			if ps.queryLogger != nil && ps.currentQuery != "" {
-				duration := time.Since(ps.queryStartTime)
-				backendAddr := ""
-				if ps.serverConn != nil {
-					backendAddr = ps.serverConn.Conn().RemoteAddr().String()
-				}
-				ps.queryLogger.LogQuery(logger.QueryLogEntry{
-					Timestamp:   ps.queryStartTime,
-					QueryID:     fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
-					Pool:        ps.config.Name,
-					ClientAddr:  ps.clientConn.RemoteAddr().String(),
-					BackendAddr: backendAddr,
-					Username:    ps.username,
-					Database:    ps.database,
-					Query:       ps.currentQuery,
-					QueryHash:   cache.GenerateKey(ps.currentQuery).String(),
-					Duration:    duration,
-					RowsReturned: rowCount,
-					IsCached:    false,
-					TransactionID: func() string {
-						if ps.transactionInfo != nil {
-							return fmt.Sprintf("%d", ps.transactionInfo.ID)
-						}
-						return ""
-					}(),
-				})
+			// Reset query tracking
+			ps.currentQuery = ""
+			ps.queryStartTime = time.Time{}
+			rowCount = 0
+		}
 
-				// Reset query tracking
-				ps.currentQuery = ""
-				ps.queryStartTime = time.Time{}
-				rowCount = 0
-			}
-
-			// Update transaction activity if in a transaction
-			if ps.transactionInfo != nil {
-				ps.transactionMgr.UpdateActivity(ps.transactionInfo.ID)
-				ps.transactionMgr.IncrementQueryCount(ps.transactionInfo.ID)
-			}
+		// Update transaction activity if in a transaction
+		if ps.transactionInfo != nil {
+			ps.transactionMgr.UpdateActivity(ps.transactionInfo.ID)
+			ps.transactionMgr.IncrementQueryCount(ps.transactionInfo.ID)
 		}
 	}
 }

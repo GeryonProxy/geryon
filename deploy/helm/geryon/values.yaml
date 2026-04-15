@@ -1,0 +1,122 @@
+# Default values for Geryon.
+# This file is part of the official Helm chart.
+
+image:
+  repository: ghcr.io/geryonproxy/geryon
+  tag: ""  # Use app.version if empty
+  pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+replicaCount: 1
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+service:
+  type: ClusterIP
+  port: 5432
+  annotations: {}
+
+# Pool configuration (key:value format matching geryon.yaml)
+pools:
+  main:
+    mode: transaction
+    body: postgresql
+    port: 5432
+    backend:
+      host: postgres.default.svc.cluster.local
+      port: 5432
+      database: postgres
+
+auth:
+  mode: passthrough
+  users: []
+
+admin:
+  rest:
+    listen: "0.0.0.0:8080"
+  grpc:
+    listen: "0.0.0.0:9090"
+  mcp:
+    listen: "0.0.0.0:8081"
+  dashboard:
+    listen: "0.0.0.0:8082"
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+livenessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/v1/ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+podAnnotations: {}
+podLabels: {}
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+containerSecurityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+config:
+  existingSecret: ""
+  global:
+    log_level: info
+    log_format: json
+  cluster:
+    enabled: false
+    raft:
+      listen: "0.0.0.0:12000"
+    gossip:
+      listen: "0.0.0.0:13000"
+  limits:
+    max_server_connections: 100
+    max_client_connections: 10000
+
+persistence:
+  enabled: false
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  annotations: {}
+
+# For multi-pool setups, use values-overrides.yaml
+# See docs/OPERATIONS.md for configuration details

@@ -1,0 +1,149 @@
+# Kubernetes Deployment Manifest for Geryon
+# Single-node deployment for reference purposes
+# For production multi-node deployments, use the Helm chart in deploy/helm/
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: geryon-config
+  namespace: default
+data:
+  geryon.yaml: |
+    global:
+      log_level: info
+      log_format: json
+
+    limits:
+      max_server_connections: 100
+      max_client_connections: 10000
+
+    pools:
+      main:
+        name: main
+        mode: transaction
+        body: postgresql
+        port: 5432
+        backend:
+          hosts:
+            - host: postgres.default.svc.cluster.local
+              port: 5432
+              role: primary
+        limits:
+          max_server_connections: 50
+
+    auth:
+      mode: passthrough
+
+    admin:
+      rest:
+        listen: "0.0.0.0:8080"
+      grpc:
+        listen: "0.0.0.0:9090"
+      mcp:
+        listen: "0.0.0.0:8081"
+      dashboard:
+        listen: "0.0.0.0:8082"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geryon
+  namespace: default
+  labels:
+    app: geryon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: geryon
+  template:
+    metadata:
+      labels:
+        app: geryon
+    spec:
+      containers:
+        - name: geryon
+          image: ghcr.io/geryonproxy/geryon:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config
+            - /etc/geryon/geryon.yaml
+          ports:
+            - name: proxy
+              containerPort: 5432
+              protocol: TCP
+            - name: rest
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+            - name: mcp
+              containerPort: 8081
+              protocol: TCP
+            - name: dashboard
+              containerPort: 8082
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/geryon
+              readOnly: true
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: config
+          configMap:
+            name: geryon-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: geryon
+  namespace: default
+  labels:
+    app: geryon
+spec:
+  type: ClusterIP
+  ports:
+    - name: proxy
+      port: 5432
+      targetPort: proxy
+      protocol: TCP
+    - name: rest
+      port: 8080
+      targetPort: rest
+      protocol: TCP
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+      protocol: TCP
+    - name: mcp
+      port: 8081
+      targetPort: mcp
+      protocol: TCP
+    - name: dashboard
+      port: 8082
+      targetPort: dashboard
+      protocol: TCP
+  selector:
+    app: geryon

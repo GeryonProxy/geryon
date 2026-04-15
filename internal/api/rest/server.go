@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"regexp"
 	"strconv"
 	"strings"
@@ -75,6 +76,13 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 
 	// Prometheus metrics endpoint (always requires auth)
 	mux.Handle("/metrics", s.requireAuth(http.HandlerFunc(s.handleMetrics)))
+
+	// pprof endpoints (always requires auth for security)
+	mux.Handle("/debug/pprof/", s.requireAuth(http.HandlerFunc(pprof.Index)))
+	mux.Handle("/debug/pprof/cmdline", s.requireAuth(http.HandlerFunc(pprof.Cmdline)))
+	mux.Handle("/debug/pprof/profile", s.requireAuth(http.HandlerFunc(pprof.Profile)))
+	mux.Handle("/debug/pprof/symbol", s.requireAuth(http.HandlerFunc(pprof.Symbol)))
+	mux.Handle("/debug/pprof/trace", s.requireAuth(http.HandlerFunc(pprof.Trace)))
 
 	// Dashboard routes
 	if err := s.setupDashboard(mux); err != nil {

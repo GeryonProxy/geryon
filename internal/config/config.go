@@ -118,11 +118,12 @@ type ListenConfig struct {
 
 // User represents a proxy user.
 type User struct {
-	Username       string   `yaml:"username"`
-	PasswordHash   string   `yaml:"password_hash"`
-	MaxConnections int      `yaml:"max_connections"`
-	DefaultPool    string   `yaml:"default_pool"`
-	AllowedPools   []string `yaml:"allowed_pools"`
+	Username         string   `yaml:"username"`
+	PasswordHash     string   `yaml:"password_hash"`     // SCRAM-SHA-256 (PostgreSQL)
+	MysqlPasswordHash string   `yaml:"mysql_password_hash"` // SHA256(SHA256(password)) for MySQL
+	MaxConnections   int      `yaml:"max_connections"`
+	DefaultPool      string   `yaml:"default_pool"`
+	AllowedPools     []string `yaml:"allowed_pools"`
 }
 
 // AuthConfig contains authentication settings.
@@ -167,7 +168,7 @@ type RESTAuthConfig struct {
 	Token   string `yaml:"token"`
 }
 
-// AdminGRPCConfig contains gRPC API settings.
+// AdminGRPCConfig contains HTTP/2 API settings (streaming stats, not protobuf gRPC).
 type AdminGRPCConfig struct {
 	Listen string         `yaml:"listen"`
 	Auth   RESTAuthConfig `yaml:"auth"`

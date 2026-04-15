@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // envVarPattern matches ${VAR} or ${VAR:-default} syntax.
@@ -92,21 +94,115 @@ type parserState struct {
 }
 
 // parseYAML parses YAML content into Config.
-// This is a custom YAML parser implementation to maintain zero dependencies.
-// Supports the full YAML spec needed for Geryon configuration.
+// Uses gopkg.in/yaml.v3 for standard YAML parsing with full spec support.
+// Starts with DefaultConfig to preserve legacy behavior (auth enabled by default).
 func parseYAML(content string) (*Config, error) {
-	cfg := DefaultConfig()
-	state := &parserState{cfg: cfg}
-	lines := strings.Split(content, "\n")
+	cfg := DefaultConfig() // Start with defaults (auth enabled by default)
 
-	for i, line := range lines {
-		lineNum := i + 1
-		if err := parseLine(state, line, lineNum); err != nil {
-			return nil, err
-		}
+	// Override with YAML content
+	if err := yaml.Unmarshal([]byte(content), cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
+	// Set defaults for any remaining unspecified fields
+	setDefaults(cfg)
+
 	return cfg, nil
+}
+
+// setDefaults applies default values to unspecified fields.
+func setDefaults(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+
+	// Set global defaults
+	if cfg.Global.LogLevel == "" {
+		cfg.Global.LogLevel = "info"
+	}
+	if cfg.Global.LogFormat == "" {
+		cfg.Global.LogFormat = "json"
+	}
+
+	// Ensure slices are non-nil (yaml.v3 unmarshal sets them to empty slices)
+	if cfg.Auth.Users == nil {
+		cfg.Auth.Users = []User{}
+	}
+	if cfg.Pools == nil {
+		cfg.Pools = []PoolConfig{}
+	}
+
+	// Set admin defaults - only set listen addresses, don't force auth enabled
+	if cfg.Admin.REST.Listen == "" {
+		cfg.Admin.REST.Listen = "127.0.0.1:8080"
+	}
+
+	if cfg.Admin.GRPC.Listen == "" {
+		cfg.Admin.GRPC.Listen = "127.0.0.1:9090"
+	}
+
+	if cfg.Admin.MCP.Listen == "" {
+		cfg.Admin.MCP.Listen = "127.0.0.1:8081"
+	}
+	if cfg.Admin.MCP.Transport == "" {
+		cfg.Admin.MCP.Transport = "sse"
+	}
+
+	if cfg.Admin.Dashboard.Listen == "" {
+		cfg.Admin.Dashboard.Listen = "127.0.0.1:8082"
+	}
+
+	// Set pool defaults
+	for i := range cfg.Pools {
+		setPoolDefaults(&cfg.Pools[i])
+	}
+}
+
+// setPoolDefaults applies defaults to a pool config.
+func setPoolDefaults(pool *PoolConfig) {
+	if pool == nil {
+		return
+	}
+
+	if pool.Mode == "" {
+		pool.Mode = "transaction"
+	}
+	if pool.Listen.Host == "" {
+		pool.Listen.Host = "0.0.0.0"
+	}
+	if pool.Listen.Port == 0 {
+		pool.Listen.Port = 5432
+	}
+	if pool.Limits.MaxClientConnections == 0 {
+		pool.Limits.MaxClientConnections = 10000
+	}
+	if pool.Limits.MaxServerConnections == 0 {
+		pool.Limits.MaxServerConnections = 100
+	}
+	if pool.Limits.MinServerConnections == 0 {
+		pool.Limits.MinServerConnections = 5
+	}
+	if pool.Limits.IdleTransactionTimeout == "" {
+		pool.Limits.IdleTransactionTimeout = "30m"
+	}
+	if pool.Health.CheckInterval == "" {
+		pool.Health.CheckInterval = "10s"
+	}
+	if pool.Health.MaxFailures == 0 {
+		pool.Health.MaxFailures = 3
+	}
+	if pool.Cache.DefaultTTL == "" {
+		pool.Cache.DefaultTTL = "5m"
+	}
+	if pool.Transaction.Timeout == "" {
+		pool.Transaction.Timeout = "30m"
+	}
+	if pool.Transaction.IdleTimeout == "" {
+		pool.Transaction.IdleTimeout = "5m"
+	}
+	if pool.Transaction.CheckInterval == "" {
+		pool.Transaction.CheckInterval = "30s"
+	}
 }
 
 // parseLine parses a single YAML line.

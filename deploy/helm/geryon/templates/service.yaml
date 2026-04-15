@@ -1,0 +1,40 @@
+{{- $root := . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "geryon.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "geryon.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: proxy
+      port: 5432
+      targetPort: proxy
+      protocol: TCP
+    - name: rest
+      port: 8080
+      targetPort: rest
+      protocol: TCP
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+      protocol: TCP
+    - name: mcp
+      port: 8081
+      targetPort: mcp
+      protocol: TCP
+    - name: dashboard
+      port: 8082
+      targetPort: dashboard
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "geryon.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}

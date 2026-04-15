@@ -533,9 +533,11 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger) (*P
 	// Initialize prepared statement cache (default: 1000 statements, 30min TTL)
 	pool.stmtCache = NewPreparedStatementCache(1000, 30*time.Minute)
 
-	// Initialize transaction manager
-	timeout := parseDuration(cfg.Limits.IdleTransactionTimeout, 30*time.Minute)
-	pool.txnManager = NewTransactionManager(timeout, 5*time.Minute, 0, log)
+	// Initialize transaction manager with configurable timeouts
+	txnTimeout := parseDuration(cfg.Transaction.Timeout, 30*time.Minute)
+	txnIdleTimeout := parseDuration(cfg.Transaction.IdleTimeout, 5*time.Minute)
+	txnCheckInterval := parseDuration(cfg.Transaction.CheckInterval, 30*time.Second)
+	pool.txnManager = NewTransactionManager(txnTimeout, txnIdleTimeout, txnCheckInterval, log)
 
 	// Initialize query result cache if enabled
 	if cfg.Cache.Enabled {
@@ -689,11 +691,24 @@ func (p *Pool) createServerConn() (*ServerConn, error) {
 			return nil, fmt.Errorf("no healthy backends available")
 		}
 
+		// Check circuit breaker
+		if p.isCircuitOpen(backend) {
+			p.log.Debug("Circuit breaker open, skipping backend",
+				"backend", backend.Address(),
+			)
+			continue
+		}
+
 		// Try to connect
 		conn, err := p.tryConnect(backend)
 		if err == nil {
+			// Record success through circuit breaker
+			p.recordBackendSuccess(backend)
 			return conn, nil
 		}
+
+		// Record failure through circuit breaker
+		p.recordBackendFailure(backend)
 
 		// Mark backend as unhealthy temporarily
 		backend.Healthy.Store(false)
@@ -731,10 +746,23 @@ func (p *Pool) createServerConnToRole(role string) (*ServerConn, error) {
 			return nil, fmt.Errorf("no healthy %s backend available", role)
 		}
 
+		// Check circuit breaker
+		if p.isCircuitOpen(backend) {
+			p.log.Debug("Circuit breaker open, skipping backend",
+				"backend", backend.Address(),
+			)
+			continue
+		}
+
 		conn, err := p.tryConnect(backend)
 		if err == nil {
+			// Record success through circuit breaker
+			p.recordBackendSuccess(backend)
 			return conn, nil
 		}
+
+		// Record failure through circuit breaker
+		p.recordBackendFailure(backend)
 
 		backend.Healthy.Store(false)
 		p.log.Warn("Backend connection failed, marking unhealthy",
@@ -849,28 +877,31 @@ func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 }
 
 // selectBackendWithFallback selects a healthy backend, preferring primary.
+// Respects circuit breaker state - skips backends with open circuits.
 func (p *Pool) selectBackendWithFallback() *Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Try primary first if healthy and not draining
+	// Try primary first if healthy, not draining, and circuit is not open
 	if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
-		return p.primary
+		if !p.isCircuitOpen(p.primary) {
+			return p.primary
+		}
 	}
 
 	// Try replicas with round-robin
 	if len(p.replicas) > 0 {
-		// Simple round-robin: find first healthy replica that is not draining
+		// Simple round-robin: find first healthy replica that is not draining and circuit not open
 		for _, replica := range p.replicas {
-			if replica.Healthy.Load() && !replica.Draining.Load() {
+			if replica.Healthy.Load() && !replica.Draining.Load() && !p.isCircuitOpen(replica) {
 				return replica
 			}
 		}
 	}
 
-	// Fallback: try any backend that is not draining
+	// Fallback: try any backend that is not draining and circuit not open
 	for _, backend := range p.backends {
-		if backend.Healthy.Load() && !backend.Draining.Load() {
+		if backend.Healthy.Load() && !backend.Draining.Load() && !p.isCircuitOpen(backend) {
 			return backend
 		}
 	}
@@ -878,8 +909,45 @@ func (p *Pool) selectBackendWithFallback() *Backend {
 	return nil
 }
 
+// isCircuitOpen checks if the circuit breaker is open for a backend.
+func (p *Pool) isCircuitOpen(backend *Backend) bool {
+	if p.healthChecker == nil {
+		return false
+	}
+	health := p.healthChecker.GetHealth(backend)
+	if health == nil {
+		return false
+	}
+	return health.IsCircuitOpen()
+}
+
+// recordBackendSuccess records a successful connection to the backend.
+func (p *Pool) recordBackendSuccess(backend *Backend) {
+	if p.healthChecker == nil {
+		return
+	}
+	health := p.healthChecker.GetHealth(backend)
+	if health == nil {
+		return
+	}
+	health.RecordSuccess()
+}
+
+// recordBackendFailure records a failed connection to the backend.
+func (p *Pool) recordBackendFailure(backend *Backend) {
+	if p.healthChecker == nil {
+		return
+	}
+	health := p.healthChecker.GetHealth(backend)
+	if health == nil {
+		return
+	}
+	health.RecordFailure()
+}
+
 // selectBackendByRole selects a healthy backend matching the requested role.
 // Falls back to any available backend if the requested role is unavailable.
+// Respects circuit breaker state.
 func (p *Pool) selectBackendByRole(role string) *Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -888,23 +956,23 @@ func (p *Pool) selectBackendByRole(role string) *Backend {
 	case "replica":
 		// Round-robin across healthy replicas
 		for _, replica := range p.replicas {
-			if replica.Healthy.Load() && !replica.Draining.Load() {
+			if replica.Healthy.Load() && !replica.Draining.Load() && !p.isCircuitOpen(replica) {
 				return replica
 			}
 		}
 		// Fallback to primary
-		if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
+		if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() && !p.isCircuitOpen(p.primary) {
 			return p.primary
 		}
 	case "primary":
-		if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() {
+		if p.primary != nil && p.primary.Healthy.Load() && !p.primary.Draining.Load() && !p.isCircuitOpen(p.primary) {
 			return p.primary
 		}
 	}
 
 	// Fallback: try any backend
 	for _, backend := range p.backends {
-		if backend.Healthy.Load() && !backend.Draining.Load() {
+		if backend.Healthy.Load() && !backend.Draining.Load() && !p.isCircuitOpen(backend) {
 			return backend
 		}
 	}

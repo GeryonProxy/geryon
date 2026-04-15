@@ -50,6 +50,7 @@ pools:
     body: postgresql
     mode: transaction
     listen:
+      # M-6 fix: Use 127.0.0.1 for internal-only pools, 0.0.0.0 exposes on all interfaces
       host: "0.0.0.0"
       port: 5432
     backend:

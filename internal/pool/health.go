@@ -61,6 +61,33 @@ type BackendHealth struct {
 	ConsecutiveFailures int
 	Latency        time.Duration
 	mu             sync.RWMutex
+
+	// Circuit breaker state
+	circuitState   CircuitState // closed, open, halfOpen
+	circuitOpened  time.Time    // when circuit was opened
+	lastProbeTime  time.Time    // last probe attempt in half-open
+}
+
+// CircuitState represents the circuit breaker state.
+type CircuitState int
+
+const (
+	CircuitClosed CircuitState = iota
+	CircuitOpen
+	CircuitHalfOpen
+)
+
+func (s CircuitState) String() string {
+	switch s {
+	case CircuitClosed:
+		return "closed"
+	case CircuitOpen:
+		return "open"
+	case CircuitHalfOpen:
+		return "half-open"
+	default:
+		return "unknown"
+	}
 }
 
 // NewHealthChecker creates a new health checker.
@@ -120,6 +147,81 @@ func (hc *HealthChecker) GetHealth(backend *Backend) *BackendHealth {
 	defer hc.mu.RUnlock()
 
 	return hc.backends[backend.Address()]
+}
+
+// IsCircuitOpen returns true if the circuit is open (rejecting requests).
+func (bh *BackendHealth) IsCircuitOpen() bool {
+	bh.mu.Lock()
+	defer bh.mu.Unlock()
+	return bh.circuitState == CircuitOpen
+}
+
+// AllowProbe returns true if a probe request should be allowed (half-open state).
+func (bh *BackendHealth) AllowProbe() bool {
+	bh.mu.Lock()
+	defer bh.mu.Unlock()
+
+	switch bh.circuitState {
+	case CircuitClosed:
+		return true // Normal operation
+	case CircuitOpen:
+		// Check if cooldown has elapsed (30 seconds default)
+		if time.Since(bh.circuitOpened) > 30*time.Second {
+			bh.circuitState = CircuitHalfOpen
+			bh.lastProbeTime = time.Now()
+			return true
+		}
+		return false
+	case CircuitHalfOpen:
+		// Allow only one probe at a time
+		if time.Since(bh.lastProbeTime) > 5*time.Second {
+			bh.lastProbeTime = time.Now()
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// RecordSuccess records a successful request and closes the circuit if it was open.
+func (bh *BackendHealth) RecordSuccess() {
+	bh.mu.Lock()
+	defer bh.mu.Unlock()
+
+	bh.ConsecutiveFailures = 0
+	bh.LastSuccess = time.Now()
+	bh.Status = HealthHealthy
+
+	if bh.circuitState != CircuitClosed {
+		bh.circuitState = CircuitClosed
+	}
+}
+
+// RecordFailure records a failed request and may open the circuit.
+func (bh *BackendHealth) RecordFailure() {
+	bh.mu.Lock()
+	defer bh.mu.Unlock()
+
+	bh.ConsecutiveFailures++
+	bh.LastFailure = time.Now()
+
+	if bh.circuitState == CircuitHalfOpen {
+		// Probe failed, reopen circuit
+		bh.circuitState = CircuitOpen
+		bh.circuitOpened = time.Now()
+	} else if bh.ConsecutiveFailures >= 5 {
+		// Threshold reached, open circuit
+		bh.circuitState = CircuitOpen
+		bh.circuitOpened = time.Now()
+		bh.Status = HealthUnhealthy
+	}
+}
+
+// CircuitState returns the current circuit breaker state.
+func (bh *BackendHealth) CircuitState() CircuitState {
+	bh.mu.RLock()
+	defer bh.mu.RUnlock()
+	return bh.circuitState
 }
 
 // Start starts the health checker.
