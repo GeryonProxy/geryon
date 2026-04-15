@@ -8,10 +8,12 @@
   <a href="https://ghcr.io/geryonproxy/geryon"><img src="https://img.shields.io/badge/container-ghcr.io-blue?style=flat-square&logo=github" alt="GHCR"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License"></a>
   <a href="https://geryonproxy.com"><img src="https://img.shields.io/badge/docs-geryonproxy.com-brightgreen?style=flat-square" alt="Docs"></a>
+  <a href="https://github.com/GeryonProxy/geryon/actions"><img src="https://img.shields.io/github/actions/workflow/status/GeryonProxy/geryon/CI?style=flat-square" alt="CI"></a>
   <br/>
   <img src="https://img.shields.io/badge/Go-stdlib%20only-00ADD8?style=flat-square&logo=go" alt="Go">
   <img src="https://img.shields.io/badge/deps-zero-success?style=flat-square" alt="Zero Dependencies">
   <img src="https://img.shields.io/badge/CGo-disabled-inactive?style=flat-square" alt="No CGo">
+  <img src="https://img.shields.io/badge/Production%20Ready-100%2F100-success?style=flat-square" alt="Production Ready">
 </p>
 
 ---
