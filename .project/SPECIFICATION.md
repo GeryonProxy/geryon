@@ -11,9 +11,9 @@
 | Domain | geryonproxy.com |
 | GitHub | github.com/GeryonProxy/geryon |
 | License | Apache 2.0 |
-| Language | Go (stdlib-only, zero external dependencies) |
+| Language | Go (3 production deps: yaml.v3, x/term, x/time; 2 test-only: lib/pq, go-sql-driver/mysql) |
 | Binary | Single static binary, cross-compiled |
-| Philosophy | #NOFORKANYMORE — pure Go, no CGo, no vendor |
+| Philosophy | #NOFORKANYMORE — pure Go, zero CGo for releases |
 | Mythology | Geryon — three-bodied giant from Greek mythology (Heracles' 10th labor). One entity with three bodies, each representing a database protocol. |
 
 ## 2. PROBLEM STATEMENT

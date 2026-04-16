@@ -2,6 +2,7 @@ package mssql
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
@@ -436,5 +437,75 @@ func makeRPCMessage(proc string) *common.Message {
 	return &common.Message{
 		Type:    PacketTypeRPC,
 		Payload: []byte(proc),
+	}
+}
+
+func TestToken_IsSSPI(t *testing.T) {
+	if !(Token{Type: TokenTypeSSPI}).IsSSPI() {
+		t.Error("TokenTypeSSPI should be SSPI")
+	}
+	if (Token{Type: TokenTypeLoginAck}).IsSSPI() {
+		t.Error("TokenTypeLoginAck should not be SSPI")
+	}
+}
+
+func TestSSPI_PacketType(t *testing.T) {
+	if PacketTypeSSPI != 0x11 {
+		t.Errorf("PacketTypeSSPI = 0x%02x, want 0x11", PacketTypeSSPI)
+	}
+	if TokenTypeSSPI != 0xED {
+		t.Errorf("TokenTypeSSPI = 0x%02x, want 0xED", TokenTypeSSPI)
+	}
+	if TokenTypeNTLMAuth != TokenTypeSSPI {
+		t.Error("TokenTypeNTLMAuth should equal TokenTypeSSPI")
+	}
+}
+
+func TestCodec_ReadMessage_SSPI(t *testing.T) {
+	c := NewCodec()
+
+	// SSPI packet: type=0x11(SSPI), status=0x01, length=20 (8 header + 12 payload)
+	ntlmChallenge := []byte("NTLMSSP\x00\x02\x00") // NTLM Type 2 header
+	header := []byte{PacketTypeSSPI, StatusEndOfMessage, 0x00, byte(8 + len(ntlmChallenge)), 0x00, 0x00, 0x00, 0x00}
+	data := append(header, ntlmChallenge...)
+
+	msg, err := c.ReadMessage(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("ReadMessage failed: %v", err)
+	}
+	if msg.Type != PacketTypeSSPI {
+		t.Errorf("Type = 0x%02x, want 0x11", msg.Type)
+	}
+	if string(msg.Payload) != string(ntlmChallenge) {
+		t.Errorf("Payload mismatch")
+	}
+}
+
+func TestSSPI_TokenStream(t *testing.T) {
+	// Token stream containing SSPI token (0xED) followed by ENV_CHANGE (0xE3)
+	// SSPI token: type + 2-byte length (LE) + length bytes of data
+	sspiData := []byte{TokenTypeSSPI}
+	sspiData = binary.LittleEndian.AppendUint16(sspiData, 8) // 8 bytes of SSPI data
+	sspiData = append(sspiData, make([]byte, 8)...)           // actual SSPI payload
+
+	// ENV_CHANGE token: type + 2-byte length + length bytes
+	envData := []byte{TokenTypeEnvChange}
+	envData = binary.LittleEndian.AppendUint16(envData, 4) // 4 bytes
+	envData = append(envData, make([]byte, 4)...)
+
+	data := append(sspiData, envData...)
+
+	tokens, err := ParseTokenStream(data)
+	if err != nil {
+		t.Fatalf("ParseTokenStream failed: %v", err)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("Expected 2 tokens, got %d", len(tokens))
+	}
+	if !tokens[0].IsSSPI() {
+		t.Error("First token should be SSPI")
+	}
+	if !tokens[1].IsEnvChange() {
+		t.Error("Second token should be ENV_CHANGE")
 	}
 }

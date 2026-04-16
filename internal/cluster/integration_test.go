@@ -10,14 +10,23 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 )
 
+func clusterWaitFor(t *testing.T, timeout time.Duration, check func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for condition")
+}
+
 // TestClusterIntegration_3Node tests a 3-node cluster with leader election and failover
 func TestClusterIntegration_3Node(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
-
-	// Skip flaky integration test - timing issues in test environment
-	t.Skip("Skipping flaky integration test - timing dependent")
 
 	log, _ := logger.New("info", "text")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -73,8 +82,12 @@ func TestClusterIntegration_3Node(t *testing.T) {
 		if err := coord.Start(); err != nil {
 			t.Fatalf("Failed to start coordinator %d: %v", i, err)
 		}
+		coord.swimProto.WaitReady()
 		t.Logf("Coordinator %d started", i+1)
 	}
+
+	// Brief propagation delay before SWIM join
+	time.Sleep(200 * time.Millisecond)
 
 	// Join SWIM cluster
 	for i := 1; i < 3; i++ {
@@ -132,15 +145,12 @@ func TestClusterIntegration_3Node(t *testing.T) {
 
 	// Test 3: Verify membership
 	t.Log("Verifying cluster membership...")
-	time.Sleep(2 * time.Second) // Allow membership to propagate
 
 	for i, coord := range coordinators {
-		members := coord.GetMembers()
-		// Should have at least itself
-		if len(members) < 1 {
-			t.Errorf("Coordinator %d sees no members", i+1)
-		}
-		t.Logf("Coordinator %d sees %d members", i+1, len(members))
+		clusterWaitFor(t, 10*time.Second, func() bool {
+			return len(coord.GetMembers()) >= 1
+		})
+		t.Logf("Coordinator %d sees %d members", i+1, len(coord.GetMembers()))
 	}
 
 	// Test 4: Leader failover - kill current leader
@@ -358,20 +368,26 @@ func TestClusterIntegration_BackendHealthSharing(t *testing.T) {
 		if err := coord.Start(); err != nil {
 			t.Fatalf("Failed to start coordinator %d: %v", i, err)
 		}
+		coord.swimProto.WaitReady()
 	}
+
+	// Brief propagation delay before SWIM join
+	time.Sleep(200 * time.Millisecond)
 
 	// Node 2 joins via SWIM
 	coordinators[1].swimProto.Join([]string{swimAddrs[0]})
 
-	// Wait for membership
-	time.Sleep(2 * time.Second)
+	// Wait for membership propagation
+	clusterWaitFor(t, 10*time.Second, func() bool {
+		return len(coordinators[0].GetMembers()) >= 2
+	})
 
 	// Test backend health sharing
 	t.Log("Testing backend health sharing...")
 	coordinators[0].shareBackendHealth("backend-1")
 
 	// Give time for broadcast
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	t.Log("Backend health sharing test passed!")
 
@@ -430,13 +446,19 @@ func TestClusterIntegration_MetadataBroadcast(t *testing.T) {
 		if err := coord.Start(); err != nil {
 			t.Fatalf("Failed to start coordinator %d: %v", i, err)
 		}
+		coord.swimProto.WaitReady()
 	}
+
+	// Brief propagation delay before SWIM join
+	time.Sleep(200 * time.Millisecond)
 
 	// Node 2 joins
 	coordinators[1].swimProto.Join([]string{swimAddrs[0]})
 
-	// Wait for membership
-	time.Sleep(2 * time.Second)
+	// Wait for membership propagation
+	clusterWaitFor(t, 10*time.Second, func() bool {
+		return len(coordinators[0].GetMembers()) >= 2
+	})
 
 	// Verify membership
 	for i, coord := range coordinators {

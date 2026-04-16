@@ -1,3 +1,6 @@
+// Package mssql implements the TDS 7.4+ (Tabular Data Stream) wire protocol
+// codec for Microsoft SQL Server. It handles pre-login, Login7 authentication,
+// SSPI/NTLM passthrough, token stream parsing, SQL Batch, and RPC requests.
 package mssql
 
 import (
@@ -574,6 +577,29 @@ func ParseTokenStream(data []byte) ([]Token, error) {
 			pos += 2
 			// Skip column info for now
 			tokens = append(tokens, Token{Type: tokenType, ColumnCount: int(count)})
+
+		case TokenTypeSSPI:
+			// SSPI/NTLM authentication token
+			if pos+2 > len(data) {
+				return tokens, fmt.Errorf("truncated SSPI token")
+			}
+			length := binary.LittleEndian.Uint16(data[pos:])
+			pos += 2
+			if pos+int(length) > len(data) {
+				return tokens, fmt.Errorf("truncated SSPI token data")
+			}
+			pos += int(length)
+			tokens = append(tokens, Token{Type: tokenType})
+
+		case TokenTypeEnvChange:
+			// Environment change token
+			if pos+2 > len(data) {
+				return tokens, fmt.Errorf("truncated EnvChange token")
+			}
+			length := binary.LittleEndian.Uint16(data[pos:])
+			pos += 2
+			pos += int(length)
+			tokens = append(tokens, Token{Type: tokenType})
 
 		default:
 			// Unknown token, try to skip or break

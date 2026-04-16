@@ -1,3 +1,7 @@
+// Package postgresql implements the PostgreSQL v3 Frontend/Backend wire
+// protocol codec. It handles message framing, authentication (SCRAM-SHA-256,
+// MD5, trust), extended query protocol, SSL negotiation, and parameter
+// status tracking.
 package postgresql
 
 import (

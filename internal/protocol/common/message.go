@@ -1,3 +1,6 @@
+// Package common defines shared interfaces and message types used across
+// all three database protocol implementations (PostgreSQL, MySQL, MSSQL)
+// in the Geryon proxy.
 package common
 
 import (

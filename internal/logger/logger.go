@@ -1,3 +1,5 @@
+// Package logger provides structured logging with configurable output format
+// (JSON or console), log levels, and slow query logging for the Geryon proxy.
 package logger
 
 import (

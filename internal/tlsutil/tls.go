@@ -1,3 +1,6 @@
+// Package tlsutil provides TLS utilities for the Geryon proxy, including
+// self-signed certificate generation, mutual TLS configuration, and
+// backend TLS policy loading.
 package tlsutil
 
 import (

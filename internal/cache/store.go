@@ -1,3 +1,6 @@
+// Package cache provides an in-memory LRU result cache with TTL expiration,
+// memory-aware eviction, and configurable cache rules for query responses
+// in the Geryon proxy.
 package cache
 
 import (

@@ -1,3 +1,7 @@
+// Package raft implements the Raft consensus algorithm from scratch for
+// configuration replication and leader election across Geryon proxy cluster
+// nodes. It includes log replication, snapshot support, and a write-ahead
+// log for durability.
 package raft
 
 import (

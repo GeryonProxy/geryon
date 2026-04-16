@@ -424,7 +424,7 @@ func TestServerConnPoolAcquireRelease(t *testing.T) {
 	}
 
 	// Release it
-	pool.release(mockConn)
+	pool.release(mockConn, nil)
 
 	if pool.activeCount() != 0 {
 		t.Errorf("expected 0 active connections after release, got %d", pool.activeCount())
@@ -457,7 +457,7 @@ func TestServerConnPoolSize(t *testing.T) {
 		t.Errorf("expected pool size 2, got %d", pool.size())
 	}
 
-	pool.release(conn1)
+	pool.release(conn1, nil)
 
 	if pool.size() != 2 {
 		t.Errorf("expected pool size 2 after release, got %d", pool.size())

@@ -1,3 +1,6 @@
+// Package dashboard provides the embedded web UI for monitoring and
+// managing the Geryon proxy. It serves static assets via embed.FS and
+// exposes a REST API for configuration editing.
 package dashboard
 
 import (
@@ -35,10 +38,12 @@ type Server struct {
 
 // Config holds dashboard configuration.
 type Config struct {
-	Enabled bool
-	Listen  string
-	Path    string
-	Auth    config.RESTAuthConfig
+	Enabled      bool
+	Listen       string
+	Path         string
+	Auth         config.RESTAuthConfig
+	ReadTimeout  string
+	WriteTimeout string
 }
 
 // NewServer creates a new dashboard server.
@@ -81,11 +86,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/queries", s.handleQueries)
 	mux.HandleFunc("/api/v1/config", s.handleConfig)
 
+	readTimeout := parseDuration(s.config.ReadTimeout, 30*time.Second)
+	writeTimeout := parseDuration(s.config.WriteTimeout, 30*time.Second)
 	s.server = &http.Server{
 		Addr:         s.config.Listen,
-		Handler:      s.withLogging(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux)))),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Handler:      s.withLogging(s.withPanicRecovery(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux))))),
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
 	}
 
 	ready := make(chan struct{})
@@ -119,6 +126,19 @@ func (s *Server) Stop() error {
 func (s *Server) withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.log.Debug("Dashboard request", "method", r.Method, "path", r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withPanicRecovery recovers from panics in handlers and returns 500.
+func (s *Server) withPanicRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				s.log.Error("Panic recovered in dashboard handler", "error", err, "path", r.URL.Path)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
 		next.ServeHTTP(w, r)
 	})
 }
@@ -422,4 +442,15 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeJSON(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+func parseDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }

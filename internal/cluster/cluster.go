@@ -1,3 +1,7 @@
+// Package cluster integrates Raft consensus with SWIM gossip to provide
+// distributed cluster management for the Geryon proxy. It handles node
+// discovery, leader election, configuration replication, and backend
+// health sharing across cluster nodes.
 package cluster
 
 import (
@@ -100,6 +104,8 @@ type SwimGossip struct {
 	// Failure suspicion
 	suspected map[string]time.Time
 	alive     map[string]time.Time
+	// CRIT-1 fix: Semaphore to bound concurrent probe goroutines
+	probeSem chan struct{}
 }
 
 // New creates a new cluster instance.
@@ -141,6 +147,7 @@ func New(config Config) *Cluster {
 		numIndirectProbes: 3,
 		suspected:         make(map[string]time.Time),
 		alive:             make(map[string]time.Time),
+		probeSem:          make(chan struct{}, 10),
 	}
 
 	return c
@@ -559,6 +566,13 @@ func (c *Cluster) GetLeader() string {
 	return c.leaderID
 }
 
+// GetTerm returns the current Raft term.
+func (c *Cluster) GetTerm() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.currentTerm
+}
+
 // GetNodes returns all known nodes.
 func (c *Cluster) GetNodes() []*Node {
 	c.mu.RLock()
@@ -628,6 +642,14 @@ func (s *SwimGossip) protocolRound() {
 
 // probe sends a direct ping to a node.
 func (s *SwimGossip) probe(target *Node) {
+	// CRIT-1 fix: Acquire semaphore to bound concurrent probes
+	select {
+	case s.probeSem <- struct{}{}:
+	default:
+		return // Skip if semaphore full
+	}
+	defer func() { <-s.probeSem }()
+
 	// Send ping with deadline
 	conn, err := net.DialTimeout("tcp", target.Address, s.probeTimeout)
 	if err != nil {
@@ -686,6 +708,11 @@ func (c *Cluster) GetState() NodeState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.state
+}
+
+// StateString returns the current node state as a plain string.
+func (c *Cluster) StateString() string {
+	return string(c.GetState())
 }
 
 // GetNodeCount returns the number of nodes in the cluster.

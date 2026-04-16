@@ -1,3 +1,7 @@
+// Package pool implements the connection pooling engine for the Geryon
+// proxy. It supports three pooling modes (session, transaction, statement),
+// read/write splitting, backend health checking, prepared statement caching,
+// and query result caching.
 package pool
 
 import (
@@ -108,13 +112,12 @@ type ServerConn struct {
 	conn          net.Conn
 	backend       *Backend
 	pool          *Pool
-	codec         common.Codec
 	createdAt     time.Time
 	lastUsedAt    atomic.Value // time.Time
 	txnActive     atomic.Bool
 	mu            sync.Mutex
-	preparedStmts map[string]bool // stmt name -> exists
-	paramStatus   map[string]string
+	preparedStmts map[string]bool // stmt name -> exists, lazy-allocated
+	paramStatus   map[string]string // PostgreSQL parameter status, lazy-allocated
 	capabilities  uint32 // MySQL capability flags
 	inUse         atomic.Bool
 	resetPending  atomic.Bool
@@ -193,6 +196,9 @@ func (s *ServerConn) HasPreparedStatement(name string) bool {
 func (s *ServerConn) AddPreparedStatement(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.preparedStmts == nil {
+		s.preparedStmts = make(map[string]bool)
+	}
 	s.preparedStmts[name] = true
 }
 
@@ -212,6 +218,7 @@ type serverConnPool struct {
 	mu        sync.Mutex
 	idle      []*ServerConn
 	active    map[uint64]*ServerConn
+	idleIndex map[uint64]int // conn ID → index in idle slice for O(1) removal
 	maxSize   int
 	minSize   int
 	byBackend map[string][]*ServerConn
@@ -222,6 +229,7 @@ func newServerConnPool(minSize, maxSize int) *serverConnPool {
 	return &serverConnPool{
 		idle:      make([]*ServerConn, 0, maxSize),
 		active:    make(map[uint64]*ServerConn),
+		idleIndex: make(map[uint64]int),
 		maxSize:   maxSize,
 		minSize:   minSize,
 		byBackend: make(map[string][]*ServerConn),
@@ -237,6 +245,7 @@ func (p *serverConnPool) acquire() *ServerConn {
 		// Get the most recently used connection (LIFO for cache efficiency)
 		conn := p.idle[len(p.idle)-1]
 		p.idle = p.idle[:len(p.idle)-1]
+		delete(p.idleIndex, conn.id)
 		p.active[conn.id] = conn
 		conn.MarkInUse()
 		return conn
@@ -246,7 +255,7 @@ func (p *serverConnPool) acquire() *ServerConn {
 }
 
 // release returns a connection to the idle pool.
-func (p *serverConnPool) release(conn *ServerConn) {
+func (p *serverConnPool) release(conn *ServerConn, codec common.Codec) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -257,9 +266,9 @@ func (p *serverConnPool) release(conn *ServerConn) {
 		// Perform connection state reset before returning to pool.
 		// This must complete BEFORE the connection becomes available again
 		// to prevent handing out connections in an inconsistent state.
-		if conn.codec != nil {
+		if codec != nil && conn.conn != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := ResetConnection(ctx, conn.conn, conn.codec); err != nil {
+			if err := ResetConnection(ctx, conn.conn, codec); err != nil {
 				// Reset failed, close the connection
 				conn.Close()
 				cancel()
@@ -268,6 +277,7 @@ func (p *serverConnPool) release(conn *ServerConn) {
 			cancel()
 		}
 		conn.MarkIdle()
+		p.idleIndex[conn.id] = len(p.idle)
 		p.idle = append(p.idle, conn)
 	} else {
 		// Pool is full, close the connection
@@ -290,12 +300,17 @@ func (p *serverConnPool) remove(conn *ServerConn) {
 
 	delete(p.active, conn.id)
 
-	// Remove from idle list if present
-	for i, c := range p.idle {
-		if c.id == conn.id {
-			p.idle = append(p.idle[:i], p.idle[i+1:]...)
-			break
+	// Remove from idle list if present (O(1) via index swap)
+	if idx, ok := p.idleIndex[conn.id]; ok {
+		delete(p.idleIndex, conn.id)
+		// Swap with last element and pop for O(1) removal
+		last := len(p.idle) - 1
+		if idx != last {
+			p.idle[idx] = p.idle[last]
+			p.idleIndex[p.idle[idx].id] = idx
 		}
+		p.idle[last] = nil
+		p.idle = p.idle[:last]
 	}
 }
 
@@ -491,6 +506,7 @@ type Pool struct {
 	txnManager     *TransactionManager
 	userConnCounts sync.Map // map[string]*atomic.Int64 - per-user connection counts
 	poolMetrics    *metrics.PoolMetrics
+	rrIndex        int // last selected index for weighted round-robin
 }
 
 // PoolStats contains pool statistics.
@@ -512,6 +528,9 @@ type PoolStats struct {
 	QueryCacheEntries     int     `json:"query_cache_entries"`
 	QueryCacheMemoryUsed  int64   `json:"query_cache_memory_used"`
 	QueryCacheHitRate     float64 `json:"query_cache_hit_rate"`
+	QueryCacheHits        uint64  `json:"query_cache_hits"`
+	QueryCacheMisses      uint64  `json:"query_cache_misses"`
+	QueryCacheEvictions   uint64  `json:"query_cache_evictions"`
 }
 
 // NewPool creates a new connection pool.
@@ -540,8 +559,16 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger, man
 		manager:     manager,
 	}
 
-	// Initialize prepared statement cache (default: 1000 statements, 30min TTL)
-	pool.stmtCache = NewPreparedStatementCache(1000, 30*time.Minute)
+	// Initialize prepared statement cache (configurable, default: 1000 statements, 30min TTL)
+	stmtMaxSize := 1000
+	stmtTTL := 30 * time.Minute
+	if cfg.PreparedStmt.MaxSize > 0 {
+		stmtMaxSize = cfg.PreparedStmt.MaxSize
+	}
+	if cfg.PreparedStmt.TTL != "" {
+		stmtTTL = parseDuration(cfg.PreparedStmt.TTL, stmtTTL)
+	}
+	pool.stmtCache = NewPreparedStatementCache(stmtMaxSize, stmtTTL)
 
 	// Initialize transaction manager with configurable timeouts
 	txnTimeout := parseDuration(cfg.Transaction.Timeout, 30*time.Minute)
@@ -590,6 +617,12 @@ func NewPool(cfg *config.PoolConfig, codec common.Codec, log *logger.Logger, man
 		} else {
 			pool.replicas = append(pool.replicas, backend)
 		}
+	}
+
+	// Prefill pool with minimum connections if configured
+	minConns := cfg.Limits.MinServerConnections
+	if minConns > 0 {
+		pool.prefetchConns(minConns)
 	}
 
 	return pool, nil
@@ -686,7 +719,37 @@ func (p *Pool) Release(conn *ServerConn) {
 	}
 
 	// No waiters, return to pool
-	p.serverConns.release(conn)
+	p.serverConns.release(conn, p.codec)
+}
+
+// prefetchConns proactively creates connections up to the target count.
+// Reduces latency for initial requests by maintaining idle connections.
+func (p *Pool) prefetchConns(target int) {
+	maxConns := p.config.Limits.MaxServerConnections
+	if maxConns == 0 {
+		maxConns = 100 // Default max if not set
+	}
+	if target > maxConns {
+		target = maxConns
+	}
+
+	// Create connections in background to not block pool startup
+	go func() {
+		ctx, cancel := context.WithTimeout(p.ctx, 30*time.Second)
+		defer cancel()
+
+		for p.serverConns.idleCount()+p.serverConns.activeCount() < target {
+			if ctx.Err() != nil || p.serverConns.size() >= maxConns {
+				return
+			}
+			if _, err := p.createServerConn(); err != nil {
+				p.log.Warn("Prefetch: failed to create connection", "error", err)
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			time.Sleep(50 * time.Millisecond) // Stagger connection creation
+		}
+	}()
 }
 
 // createServerConn creates a new server connection with retry and failover.
@@ -895,14 +958,11 @@ func (p *Pool) tryConnect(backend *Backend) (*ServerConn, error) {
 	// The pool uses backend credentials from config for auth interception mode
 
 	conn := &ServerConn{
-		id:            connIDCounter.Add(1),
-		conn:          netConn,
-		backend:       backend,
-		pool:          p,
-		codec:         p.codec,
-		createdAt:     time.Now(),
-		preparedStmts: make(map[string]bool),
-		paramStatus:   make(map[string]string),
+		id:        connIDCounter.Add(1),
+		conn:      netConn,
+		backend:   backend,
+		pool:      p,
+		createdAt: time.Now(),
 	}
 	conn.lastUsedAt.Store(time.Now())
 
@@ -1043,25 +1103,48 @@ func (p *Pool) selectBackend() *Backend {
 		return healthyBackends[0]
 	}
 
-	// Weighted round-robin selection
-	// Find backend with highest effective weight
+	// Weighted round-robin selection with index tracking.
+	// Uses smooth weighted round-robin: each backend has an effectiveWeight
+	// that accumulates, and the one with highest effectiveWeight is selected,
+	// then its effectiveWeight is decremented by totalWeight.
+	var totalWeight int
+	type weightedBackend struct {
+		b               *Backend
+		weight          int
+		effectiveWeight int
+	}
+	wbs := make([]weightedBackend, 0, len(healthyBackends))
+	for _, b := range healthyBackends {
+		w := b.Weight
+		if w <= 0 {
+			w = 100 // Default weight
+		}
+		wbs = append(wbs, weightedBackend{b: b, weight: w, effectiveWeight: w})
+		totalWeight += w
+	}
+
+	// Select the backend with highest effectiveWeight
 	var selected *Backend
 	maxWeight := -1
-
-	for _, b := range healthyBackends {
-		weight := b.Weight
-		if weight <= 0 {
-			weight = 100 // Default weight
+	selectedIdx := -1
+	for i, wb := range wbs {
+		if wb.effectiveWeight > maxWeight {
+			maxWeight = wb.effectiveWeight
+			selected = wb.b
+			selectedIdx = i
 		}
+	}
 
-		// Factor in connection count for load balancing
-		connCount := int(b.ConnCount.Load())
-		effectiveWeight := weight - connCount*10
-
-		if effectiveWeight > maxWeight {
-			maxWeight = effectiveWeight
-			selected = b
+	// Decrement selected backend's effectiveWeight and increment others
+	if selectedIdx >= 0 {
+		wbs[selectedIdx].effectiveWeight -= totalWeight
+		for i := range wbs {
+			if i != selectedIdx {
+				wbs[i].effectiveWeight += wbs[i].weight
+			}
 		}
+		// Track index for next selection
+		p.rrIndex = selectedIdx
 	}
 
 	return selected
@@ -1238,11 +1321,17 @@ func (p *Pool) Stats() PoolStats {
 	var queryCacheEntries int
 	var queryCacheMemory int64
 	var queryCacheHitRate float64
+	var queryCacheHits uint64
+	var queryCacheMisses uint64
+	var queryCacheEvictions uint64
 	if p.queryCache != nil {
 		qcStats := p.queryCache.Stats()
 		queryCacheEntries = qcStats.Entries
 		queryCacheMemory = qcStats.MemoryUsed
 		queryCacheHitRate = qcStats.HitRate
+		queryCacheHits = qcStats.Hits
+		queryCacheMisses = qcStats.Misses
+		queryCacheEvictions = qcStats.Evictions
 	}
 
 	return PoolStats{
@@ -1263,7 +1352,19 @@ func (p *Pool) Stats() PoolStats {
 		QueryCacheEntries:     queryCacheEntries,
 		QueryCacheMemoryUsed:  queryCacheMemory,
 		QueryCacheHitRate:     queryCacheHitRate,
+		QueryCacheHits:        queryCacheHits,
+		QueryCacheMisses:      queryCacheMisses,
+		QueryCacheEvictions:   queryCacheEvictions,
 	}
+}
+
+// ListBackends returns a copy of all backends.
+func (p *Pool) ListBackends() []*Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	backends := make([]*Backend, len(p.backends))
+	copy(backends, p.backends)
+	return backends
 }
 
 // PreparedStatementCache returns the prepared statement cache.
@@ -1469,9 +1570,16 @@ func (p *Pool) DrainBackend(backendAddr string) (int, error) {
 			backend.drainStart = time.Now()
 			backend.Healthy.Store(false) // Mark unhealthy to prevent new connections
 
-			// Count active connections to this backend
-			activeCount := 0
+			// Count active connections to this backend (snapshot under lock)
+			p.serverConns.mu.Lock()
+			connections := make([]*ServerConn, 0, len(p.serverConns.active))
 			for _, conn := range p.serverConns.active {
+				connections = append(connections, conn)
+			}
+			p.serverConns.mu.Unlock()
+
+			activeCount := 0
+			for _, conn := range connections {
 				if conn.backend.Address() == backendAddr {
 					activeCount++
 				}

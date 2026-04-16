@@ -16,6 +16,8 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
 archives:
   - id: default
     format: tar.gz
@@ -23,24 +25,51 @@ archives:
       - goos: windows
         format: zip
     files:
-      - none:\n.txt
+      - LICENSE
+      - README.md
 checksum:
-  name: checksums.txt
+  name_template: "checksums.txt"
 changelog:
   skip: false
-  format: markdown
+  sort: asc
   filters:
     exclude:
       - '^docs:'
       - '^chore:'
       - '^style:'
       - '^merge:'
+release:
+  github:
+    owner: GeryonProxy
+    name: geryon
+  draft: true
+  prerelease: auto
 dockers:
   - image_templates:
-      - ghcr.io/geryonproxy/geryon:{{ .Tag }}
-      - ghcr.io/geryonproxy/geryon:latest
-    dockerfile: Dockerfile
-    build_args:
-      - VERSION={{ .Version }}
+      - ghcr.io/geryonproxy/geryon:{{ .Tag }}-amd64
+      - ghcr.io/geryonproxy/geryon:latest-amd64
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - --platform=linux/amd64
+    extra_files:
+      - geryon
+  - image_templates:
+      - ghcr.io/geryonproxy/geryon:{{ .Tag }}-arm64
+      - ghcr.io/geryonproxy/geryon:latest-arm64
+    goarch: arm64
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - --platform=linux/arm64
+    extra_files:
+      - geryon
+docker_manifests:
+  - name_template: ghcr.io/geryonproxy/geryon:{{ .Tag }}
+    image_templates:
+      - ghcr.io/geryonproxy/geryon:{{ .Tag }}-amd64
+      - ghcr.io/geryonproxy/geryon:{{ .Tag }}-arm64
+  - name_template: ghcr.io/geryonproxy/geryon:latest
+    image_templates:
+      - ghcr.io/geryonproxy/geryon:latest-amd64
+      - ghcr.io/geryonproxy/geryon:latest-arm64
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  name_template: "{{ incpatch .Version }}-next"

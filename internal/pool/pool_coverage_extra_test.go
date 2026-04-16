@@ -922,7 +922,7 @@ func TestPool_AcquireToRole_IdleConn(t *testing.T) {
 		conn:    client,
 		backend: &Backend{Host: "127.0.0.1", Port: 5432},
 	}
-	p.serverConns.release(sc)
+	p.serverConns.release(sc, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

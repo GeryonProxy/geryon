@@ -17,8 +17,8 @@
 - [x] T006: Implement YAML parser using `gopkg.in/yaml.v3` (switched from scratch - external dep acceptable for config)
 - [x] T007: Implement config validation (port conflicts, pool name uniqueness, required fields, enum values)
 - [x] T008: Implement `--generate-config` to emit `geryon.example.yaml` with comments
-- [x] T009: Implement config file watcher + SIGHUP reload trigger
-- [x] T010: Implement hot reload logic — diff old/new config, apply changes, validate before swap
+- [x] T009: Implement config file watcher + SIGHUP reload trigger — completed 2026-04-16: unified reloadFn for SIGHUP, config watcher, and API endpoint
+- [x] T010: Implement hot reload logic — diff old/new config, apply changes, validate before swap — completed 2026-04-16: full dynamic reload of pool configs, auth users, add/remove pools
 
 ### 1.3 Common Protocol Layer
 - [x] T011: Define `common.Message` struct, `Codec` interface, `Direction` type, `Protocol` enum
@@ -61,7 +61,7 @@
 
 ### 3.3 Connection Reset
 - [x] T036: Implement PG connection reset — `DISCARD ALL` or selective reset, track dirty state
-- [x] T037: Implement smart reset — only reset what was actually modified (avoid unnecessary round-trips) — ✅ `SmartResetter` implemente edildi
+- [x] T037: Implement smart reset — only reset what was actually modified (avoid unnecessary round-trips) — ✅ `SmartResetter` implemented
 
 ### 3.4 Pool Manager
 - [x] T038: Implement `PoolManager` — creates/manages multiple pools from config, handles lifecycle
@@ -86,16 +86,16 @@
 - [x] T051: Implement MySQL auth — caching_sha2_password (SHA256 + RSA)
 - [x] T052: Implement MySQL COM_QUERY handling — text protocol query + result set
 - [x] T053: Implement MySQL COM_STMT_PREPARE / COM_STMT_EXECUTE / COM_STMT_CLOSE — binary protocol
-- [x] T054: Implement MySQL COM_CHANGE_USER for connection reset — ✅ `MySQLResetter` implemente edildi
-- [x] T055: Implement MySQL COM_RESET_CONNECTION for connection reset (5.7.3+) — ✅ `MySQLResetter` implemente edildi
+- [x] T054: Implement MySQL COM_CHANGE_USER for connection reset — ✅ `MySQLResetter` implemented
+- [x] T055: Implement MySQL COM_RESET_CONNECTION for connection reset (5.7.3+) — ✅ `MySQLResetter` implemented
 - [x] T056: Implement MySQL capability flags negotiation between client and pooled server
 - [x] T057: Implement MySQL SSL handshake (SSL_REQUEST packet, TLS upgrade)
 
 ### 4.2 MySQL Pool Integration
-- [x] T058: Wire MySQL codec into Pool, implement MySQL-specific transaction detection (BEGIN, COMMIT, ROLLBACK, autocommit) — ✅ `MySQLResetter` + `TransactionStrategy` entegre edildi
-- [x] T059: Implement MySQL connection state reset strategy (COM_RESET_CONNECTION → COM_CHANGE_USER fallback) — ✅ `MySQLResetter.Reset()` implemente edildi
-- [x] T060: Integration test: connect via `mysql` CLI, run queries through Geryon — ✅ `TestMySQL_Connect`, `TestMySQL_Ping` implemente edildi
-- [x] T061: Test all three pooling modes with MySQL backend — ✅ Test yapısı oluşturuldu (MYSQL_POOL_MODE ortam değişkeni ile)
+- [x] T058: Wire MySQL codec into Pool, implement MySQL-specific transaction detection (BEGIN, COMMIT, ROLLBACK, autocommit) — ✅ `MySQLResetter` + `TransactionStrategy` integrated
+- [x] T059: Implement MySQL connection state reset strategy (COM_RESET_CONNECTION → COM_CHANGE_USER fallback) — ✅ `MySQLResetter.Reset()` implemented
+- [x] T060: Integration test: connect via `mysql` CLI, run queries through Geryon — ✅ `TestMySQL_Connect`, `TestMySQL_Ping` implemented
+- [x] T061: Test all three pooling modes with MySQL backend — ✅ Test structure created (via MYSQL_POOL_MODE environment variable)
 
 ## PHASE 5: BODY III — MSSQL ✅ MOSTLY COMPLETE
 
@@ -103,34 +103,34 @@
 - [x] T062: Implement TDS packet codec — 8-byte header (type, status, length, SPID, packet#, window)
 - [x] T063: Implement TDS Pre-Login handshake — version negotiation, encryption negotiation
 - [x] T064: Implement TDS Login7 message — SQL Server Authentication
-- [x] T065: Implement TDS NTLM passthrough for Windows Authentication — ⚠️ *partial (token types added, full handshake pending)*
+- [x] T065: Implement TDS NTLM passthrough for Windows Authentication — *completed 2026-04-16 (SSPI challenge-response loop + token stream parsing)*
 - [x] T066: Implement TDS SQL Batch handling — send SQL text, parse token stream response
 - [x] T067: Implement TDS token stream parser — COLMETADATA, ROW, DONE, ERROR, ENVCHANGE, INFO, LOGINACK
 - [x] T068: Implement TDS RPC Request — sp_executesql for parameterized queries
 - [x] T069: Implement TDS sp_prepare / sp_execute / sp_unprepare for prepared statements — *completed 2026-04-15*
-- [x] T070: Implement TDS sp_reset_connection for connection state reset — ✅ `MSSQLResetter` implemente edildi
+- [x] T070: Implement TDS sp_reset_connection for connection state reset — ✅ `MSSQLResetter` implemented
 - [x] T071: Implement TDS encryption negotiation + TLS upgrade
 
 ### 5.2 MSSQL Pool Integration
-- [x] T072: Wire MSSQL codec into Pool, implement MSSQL-specific transaction detection (BEGIN TRAN, COMMIT, ROLLBACK) — ✅ `MSSQLResetter` + `TransactionStrategy` entegre edildi
-- [x] T073: Integration test: connect via `sqlcmd` or Go driver, run queries through Geryon — ✅ `TestMSSQL_Connect`, `TestMSSQL_PreLogin`, `TestMSSQL_SQLBatch` implemente edildi
-- [x] T074: Test all three pooling modes with MSSQL backend — ✅ Test yapısı oluşturuldu (MSSQL_POOL_MODE ile)
+- [x] T072: Wire MSSQL codec into Pool, implement MSSQL-specific transaction detection (BEGIN TRAN, COMMIT, ROLLBACK) — ✅ `MSSQLResetter` + `TransactionStrategy` integrated
+- [x] T073: Integration test: connect via `sqlcmd` or Go driver, run queries through Geryon — ✅ `TestMSSQL_Connect`, `TestMSSQL_PreLogin`, `TestMSSQL_SQLBatch` implemented
+- [x] T074: Test all three pooling modes with MSSQL backend — ✅ Test structure created (via MSSQL_POOL_MODE environment variable)
 
 ## PHASE 6: PREPARED STATEMENTS & CACHE ✅ MOSTLY COMPLETE
 
 ### 6.1 Prepared Statement Management
 - [x] T075: Implement `stmt.Cache` — global metadata cache: {client_stmt_name → (SQL, param_types)}
 - [x] T076: Implement `stmt.Tracker` — per-server-conn tracking of which statements are prepared
-- [x] T077: Implement `stmt.Remapper` — client→server stmt ID remapping (MySQL numeric IDs, PG named stmts) — ✅ Tamamlandı
-- [x] T078: Implement transparent re-preparation — detect stmt not on assigned server, re-prepare before execute — ✅ Temel yapı var
-- [x] T079: Implement LRU eviction for server-side prepared statements (configurable max per conn) — ✅ Temel yapı var
-- [x] T080: Test prepared statements across transaction pooling — prepare on server A, execute on server B — ✅ `TestPreparedStatement_AcrossServers`, `TestPreparedStatement_Reprepare` implemente edildi
+- [x] T077: Implement `stmt.Remapper` — client→server stmt ID remapping (MySQL numeric IDs, PG named stmts) — ✅ completed
+- [x] T078: Implement transparent re-preparation — detect stmt not on assigned server, re-prepare before execute — ✅ Basic structure in place
+- [x] T079: Implement LRU eviction for server-side prepared statements (configurable max per conn) — ✅ Basic structure in place
+- [x] T080: Test prepared statements across transaction pooling — prepare on server A, execute on server B — ✅ `TestPreparedStatement_AcrossServers`, `TestPreparedStatement_Reprepare` implemented
 
 ### 6.2 Query Result Cache
 - [x] T081: Implement `cache.Store` — LRU cache with TTL, max memory enforcement, atomic operations
 - [x] T082: Implement `cache.Key` — query normalization (strip whitespace, lowercase keywords, parameter placeholder normalization)
-- [x] T083: Implement cache rules engine — per-pattern TTL matching, never-cache rules — ✅ Tamamlandı
-- [x] T084: Implement write invalidation — parse write queries, extract table names, invalidate matching cache entries — ✅ Temel yapı var (InvalidateTables)
+- [x] T083: Implement cache rules engine — per-pattern TTL matching, never-cache rules — ✅ completed
+- [x] T084: Implement write invalidation — parse write queries, extract table names, invalidate matching cache entries — ✅ Basic structure in place (InvalidateTables)
 - [x] T085: Implement manual cache invalidation API
 - [x] T086: Test cache hit/miss, TTL expiry, write invalidation, memory limit eviction
 - [x] T087: Benchmark cache performance — hit latency, miss latency, memory overhead
@@ -146,19 +146,19 @@
 
 ### 7.2 TLS & mTLS
 - [x] T093: Implement TLS termination — configurable modes (disable/allow/prefer/require/verify-ca/verify-full)
-- [x] T094: Implement mTLS — client certificate validation, CN/SAN→username mapping — ✅ `CertAuthenticator` + `CertificateMapper` implemente edildi
+- [x] T094: Implement mTLS — client certificate validation, CN/SAN→username mapping — ✅ `CertAuthenticator` + `CertificateMapper` implemented
 - [x] T095: Implement per-pool TLS policy (some pools require mTLS, others allow password)
 - [x] T096: Implement `--generate-cert` CLI command (self-signed cert for testing)
-- [x] T097: Test: psql with sslmode=verify-full through Geryon — ✅ `TestTLS_PostgresSSLMode`, `TestTLS_mTLSClientAuth` implemente edildi
+- [x] T097: Test: psql with sslmode=verify-full through Geryon — ✅ `TestTLS_PostgresSSLMode`, `TestTLS_mTLSClientAuth` implemented
 
 ## PHASE 8: READ/WRITE SPLITTING & ROUTING ✅ MOSTLY COMPLETE
 
 - [x] T098: Implement SQL tokenizer — lightweight keyword detection (SELECT, INSERT, UPDATE, DELETE, BEGIN, COMMIT, etc.)
 - [x] T099: Implement table name extractor from tokenized query
-- [x] T100: Implement read/write routing rules engine (YAML-configurable) — ✅ `Router.RouteQuery()` implemente edildi
+- [x] T100: Implement read/write routing rules engine (YAML-configurable) — ✅ `Router.RouteQuery()` implemented
 - [x] T101: Implement transaction-aware routing — all queries in explicit txn go to same backend
 - [x] T102: Implement primary/replica backend role assignment and weighted selection
-- [x] T103: Test: SELECT queries route to replica, writes to primary, verify correctness — ✅ `TestReadWriteSplitting_*` testleri implemente edildi
+- [x] T103: Test: SELECT queries route to replica, writes to primary, verify correctness — ✅ `TestReadWriteSplitting_*` testleri implemented
 
 ## PHASE 9: MANAGEMENT INTERFACES ✅ COMPLETE
 
@@ -172,7 +172,7 @@
 - [x] T110: Implement cache endpoints (stats, invalidate)
 - [x] T111: Implement cluster endpoints (status, nodes)
 - [x] T112: Implement user management endpoints (CRUD)
-- [x] T113: Implement config endpoints (reload, validate)
+- [x] T113: Implement config endpoints (reload, validate) — completed 2026-04-16: reloadFn now performs full dynamic reload
 - [x] T114: Implement health + readiness probe endpoints
 
 ### 9.2 gRPC API
@@ -192,35 +192,35 @@
 - [x] T124: Implement Overview page — global stats cards, connection graphs, cluster health indicator
 - [x] T125: Implement Pools page — pool list with mode badges, connection bar charts, drill-down
 - [x] T126: Implement Backends page — backend table with status indicators, latency sparklines
-- [x] T127: Implement Connections page — live connection table with filtering, kill button — ✅ Tamamlandı
-- [x] T128: Implement Query Stats page — top queries table, slow query log — ✅ Tamamlandı
+- [x] T127: Implement Connections page — live connection table with filtering, kill button — ✅ completed
+- [x] T128: Implement Query Stats page — top queries table, slow query log — ✅ completed
 - [x] T129: Implement Cache page — hit/miss rate chart, memory gauge, top cached queries
 - [x] T130: Implement Cluster page — node topology view, Raft state, leader badge
 - [x] T131: Implement Config page — YAML editor with syntax highlighting, validate + reload buttons
-- [x] T132: Implement Users page — user table, create/edit modal, permission checkboxes — ✅ Temel yapı var
+- [x] T132: Implement Users page — user table, create/edit modal, permission checkboxes — ✅ Basic structure in place
 - [x] T133: Implement SSE real-time stats streaming to dashboard
 - [x] T134: Embed all static files using `embed.FS`, serve from binary
-- [x] T135-T141: Metrics & Observability — ✅ queries_per_sec, cache_hit_rate hesaplamaları tamamlandı
+- [x] T135-T141: Metrics & Observability — ✅ queries_per_sec, cache_hit_rate calculations completed
 
 ## PHASE 10: METRICS & OBSERVABILITY ✅ COMPLETE
 
 - [x] T135: Implement atomic counters (pool connections, queries, errors, cache hits/misses)
-- [x] T136: Implement histogram — query duration distribution with configurable buckets — ✅ Temel yapı var
+- [x] T136: Implement histogram — query duration distribution with configurable buckets — ✅ Basic structure in place
 - [x] T137: Implement metrics registry — collect all metrics, expose via REST `/api/v1/stats`
 - [x] T138: Implement per-pool metrics aggregation
-- [x] T139: Implement slow query log — configurable threshold, structured JSON output — ✅ Tamamlandı
+- [x] T139: Implement slow query log — configurable threshold, structured JSON output — ✅ completed
 - [x] T140: Implement connection lifecycle logging (connect, auth, pool assign, release, disconnect)
-- [x] T141: Implement query stats collector — top N queries by time, frequency, error rate — ✅ Tamamlandı
+- [x] T141: Implement query stats collector — top N queries by time, frequency, error rate — ✅ completed
 
 ## PHASE 11: CLUSTERING 🟡 SKELETON
 
 ### 11.1 Raft Consensus
-- [x] T142: Implement Raft log — append-only WAL with fsync, entry serialization — ✅ `WAL` implemente edildi
-- [x] T143: Implement Raft leader election — RequestVote RPC, randomized election timeout — ✅ Temel yapı var
-- [x] T144: Implement Raft log replication — AppendEntries RPC, heartbeat, commit index advancement — ✅ Temel yapı var
-- [x] T145: Implement Raft TCP transport — connection pool, message framing, TLS — ✅ Temel yapı var
-- [x] T146: Implement GeryonFSM — apply pool config changes, user CRUD, cache invalidation — ✅ `GeryonFSM` implemente edildi
-- [x] T147: Implement Raft snapshotting — compact log, restore from snapshot — ✅ `SnapshotStore` implemente edildi
+- [x] T142: Implement Raft log — append-only WAL with fsync, entry serialization — ✅ `WAL` implemented
+- [x] T143: Implement Raft leader election — RequestVote RPC, randomized election timeout — ✅ Basic structure in place
+- [x] T144: Implement Raft log replication — AppendEntries RPC, heartbeat, commit index advancement — ✅ Basic structure in place
+- [x] T145: Implement Raft TCP transport — connection pool, message framing, TLS — ✅ Basic structure in place
+- [x] T146: Implement GeryonFSM — apply pool config changes, user CRUD, cache invalidation — ✅ `GeryonFSM` implemented
+- [x] T147: Implement Raft snapshotting — compact log, restore from snapshot — ✅ `SnapshotStore` implemented
 - [ ] T148: Test: 3-node cluster, leader election, config change replication — ⚠️ *in progress (timing-dependent)*
 
 ### 11.2 Gossip Protocol (SWIM)
@@ -232,10 +232,10 @@
 - [x] T154: Test: 3-node discovery, failure detection, rejoin after recovery — ⚠️ *partial (integration tests exist, timing-dependent)*
 
 ### 11.3 Cluster Coordinator
-- [x] T155: Implement Cluster coordinator — wire Raft + SWIM together, expose unified cluster API — ✅ `Coordinator` implemente edildi
-- [x] T156: Implement cluster-aware config reload — changes via Raft, all nodes apply simultaneously — ✅ `handleReloadConfig()`, `forwardToLeader()` implemente edildi
-- [x] T157: Implement cross-node backend health sharing — avoid thundering herd on failover — ✅ `shareBackendHealth()`, `HealthBroadcast` implemente edildi
-- [x] T158: Integration test: 3-node cluster, kill leader, verify automatic failover + config consistency — ✅ `TestClusterIntegration_3Node()` implemente edildi
+- [x] T155: Implement Cluster coordinator — wire Raft + SWIM together, expose unified cluster API — ✅ `Coordinator` implemented
+- [x] T156: Implement cluster-aware config reload — changes via Raft, all nodes apply simultaneously — completed 2026-04-16: unified reloadFn now handles full dynamic pool updates, auth reload, add/remove pools
+- [x] T157: Implement cross-node backend health sharing — avoid thundering herd on failover — ✅ `shareBackendHealth()`, `HealthBroadcast` implemented
+- [x] T158: Integration test: 3-node cluster, kill leader, verify automatic failover + config consistency — ✅ `TestClusterIntegration_3Node()` implemented
 
 ## PHASE 12: POLISH & RELEASE 🟡 IN PROGRESS
 
@@ -276,13 +276,11 @@
 | Phase 9: Management Interfaces | ✅ Complete | ~95% |
 | Phase 10: Metrics & Observability | ✅ Complete | ~90% |
 | Phase 11: Clustering | ✅ Complete | ~95% |
-| Phase 12: Polish & Release | ✅ Mostly Complete | ~75% |
+| Phase 12: Polish & Release | ✅ Mostly Complete | ~85% |
 
-**Overall: ~98% Complete**
+**Overall: ~99% Complete**
 
 ### Critical TODOs (Next Priority)
 
-1. **T065**: MSSQL NTLM passthrough (test implemented, actual feature pending)
-2. **T069**: MSSQL sp_prepare/sp_execute/sp_unprepare (test implemented, actual feature pending)
-3. Final documentation review and release notes
-4. Performance benchmarks and optimization
+1. Final documentation review and release notes
+2. Performance benchmarks and optimization

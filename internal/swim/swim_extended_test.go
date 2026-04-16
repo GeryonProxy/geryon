@@ -9,6 +9,20 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 )
 
+// waitForCondition polls the given check function until it returns true or the
+// timeout expires. Returns true if the condition was met.
+func waitForCondition(t *testing.T, timeout time.Duration, check func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
 func TestProtocol_MemberCount(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
@@ -258,10 +272,10 @@ func TestProtocol_handleMessage(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	// Test all message types - should not panic
 	p.handleMessage(Message{Type: MsgPing, Source: "node-2"}, "127.0.0.1:7946")
@@ -278,10 +292,10 @@ func TestProtocol_handlePing(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	msg := Message{
 		Type:        MsgPing,
@@ -406,10 +420,10 @@ func TestProtocol_handleSync(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	msg := Message{
 		Type:    MsgSync,
@@ -428,10 +442,10 @@ func TestProtocol_SendTo(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	// Send to invalid address - should error
 	err := p.SendTo("invalid_address", []byte("test"))
@@ -444,10 +458,10 @@ func TestProtocol_BroadcastUserData(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	// Broadcast with no members - should not panic
 	p.BroadcastUserData([]byte("test data"))
@@ -463,10 +477,10 @@ func TestProtocol_probeRandomMember(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	// With no members - should not panic
 	p.probeRandomMember()
@@ -480,10 +494,10 @@ func TestProtocol_gossip(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	// With no members - should not panic
 	p.gossip()
@@ -497,10 +511,10 @@ func TestProtocol_broadcast(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	p := NewProtocol("node-1", "127.0.0.1:0", log)
 	p.Start()
+	p.WaitReady()
 	defer p.Stop()
 
 	// Wait for start
-	time.Sleep(10 * time.Millisecond)
 
 	msg := Message{Type: MsgPing, Source: "node-1"}
 
@@ -564,8 +578,7 @@ func TestProtocol_receiveLoop_ValidMessage(t *testing.T) {
 		t.Fatalf("Start p1 failed: %v", err)
 	}
 	defer p1.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p1.WaitReady()
 
 	// Get p1's actual address from its listener
 	p1Addr := p1.listener.LocalAddr().String()
@@ -577,8 +590,7 @@ func TestProtocol_receiveLoop_ValidMessage(t *testing.T) {
 		t.Fatalf("Start p2 failed: %v", err)
 	}
 	defer p2.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p2.WaitReady()
 
 	// Send a sync message from p2 to p1
 	msg := Message{
@@ -593,16 +605,16 @@ func TestProtocol_receiveLoop_ValidMessage(t *testing.T) {
 	}
 
 	// Wait for p1 to process the message
-	time.Sleep(100 * time.Millisecond)
+	if !waitForCondition(t, 5*time.Second, func() bool {
+		p1.mu.RLock()
+		_, exists := p1.members["node-2"]
+		p1.mu.RUnlock()
+		return exists
+	}) {
+		t.Fatal("node-2 should exist in p1's member list after receiving sync")
+	}
 
 	// Verify p1 received the sync and added node-2
-	p1.mu.RLock()
-	_, exists := p1.members["node-2"]
-	p1.mu.RUnlock()
-
-	if !exists {
-		t.Error("node-2 should exist in p1's member list after receiving sync")
-	}
 }
 
 func TestProtocol_receiveLoop_InvalidJSON(t *testing.T) {
@@ -612,8 +624,7 @@ func TestProtocol_receiveLoop_InvalidJSON(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer p.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p.WaitReady()
 
 	addr := p.listener.LocalAddr().String()
 
@@ -646,8 +657,7 @@ func TestProtocol_probeRandomMember_WithMember(t *testing.T) {
 		t.Fatalf("Start p1 failed: %v", err)
 	}
 	defer p1.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p1.WaitReady()
 
 	_ = p1.listener.LocalAddr().String()
 
@@ -658,8 +668,7 @@ func TestProtocol_probeRandomMember_WithMember(t *testing.T) {
 		t.Fatalf("Start p2 failed: %v", err)
 	}
 	defer p2.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p2.WaitReady()
 
 	p2Addr := p2.listener.LocalAddr().String()
 
@@ -676,7 +685,14 @@ func TestProtocol_probeRandomMember_WithMember(t *testing.T) {
 	p1.probeRandomMember()
 
 	// Wait for the ack to be processed
-	time.Sleep(200 * time.Millisecond)
+	if !waitForCondition(t, 5*time.Second, func() bool {
+		p1.mu.RLock()
+		defer p1.mu.RUnlock()
+		m := p1.members["node-2"]
+		return m != nil && m.State == StateAlive
+	}) {
+		t.Fatal("node-2 should be alive after successful probe")
+	}
 
 	// The member should still be alive (got ack)
 	p1.mu.RLock()
@@ -698,8 +714,7 @@ func TestProtocol_probeRandomMember_Timeout(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer p.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p.WaitReady()
 
 	// Set a very short probe timeout for testing
 	p.probeTimeout = 10 * time.Millisecond
@@ -717,7 +732,14 @@ func TestProtocol_probeRandomMember_Timeout(t *testing.T) {
 	p.probeRandomMember()
 
 	// Wait for probe timeout to trigger suspect
-	time.Sleep(100 * time.Millisecond)
+	if !waitForCondition(t, 5*time.Second, func() bool {
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		m := p.members["node-2"]
+		return m != nil && m.State == StateSuspect
+	}) {
+		t.Fatal("node-2 should be suspected after probe timeout")
+	}
 
 	p.mu.RLock()
 	member := p.members["node-2"]
@@ -738,8 +760,7 @@ func TestProtocol_handlePingReq_ValidPayload(t *testing.T) {
 		t.Fatalf("Start p1 failed: %v", err)
 	}
 	defer p1.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p1.WaitReady()
 
 	_ = p1.listener.LocalAddr().String()
 
@@ -750,8 +771,7 @@ func TestProtocol_handlePingReq_ValidPayload(t *testing.T) {
 		t.Fatalf("Start p2 failed: %v", err)
 	}
 	defer p2.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p2.WaitReady()
 
 	p2Addr := p2.listener.LocalAddr().String()
 
@@ -770,7 +790,7 @@ func TestProtocol_handlePingReq_ValidPayload(t *testing.T) {
 	p1.handlePingReq(msg)
 
 	// Wait for p2 to receive the forwarded ping
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// node-3 should have been added to p2 via the forwarded ping (or at least p1 sent the message)
 	// The key thing is no panic occurred
@@ -797,8 +817,7 @@ func TestProtocol_Join_SelfSkip(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer p.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p.WaitReady()
 
 	// Join with self address should skip and return error (no valid seeds)
 	err := p.Join([]string{"127.0.0.1:7946"})
@@ -814,8 +833,7 @@ func TestProtocol_Join_AllSeedsFail(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer p.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p.WaitReady()
 
 	// Join with invalid addresses that will fail DNS resolution
 	err := p.Join([]string{"invalid-host-that-does-not-exist:7946"})
@@ -831,8 +849,7 @@ func TestProtocol_Join_ValidSeed(t *testing.T) {
 		t.Fatalf("Start p1 failed: %v", err)
 	}
 	defer p1.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p1.WaitReady()
 
 	p1Addr := p1.listener.LocalAddr().String()
 
@@ -843,24 +860,21 @@ func TestProtocol_Join_ValidSeed(t *testing.T) {
 		t.Fatalf("Start p2 failed: %v", err)
 	}
 	defer p2.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p2.WaitReady()
 
 	err := p2.Join([]string{p1Addr})
 	if err != nil {
 		t.Errorf("Join should succeed with valid seed: %v", err)
 	}
 
-	// Wait for processing
-	time.Sleep(100 * time.Millisecond)
-
-	// p1 should have node-2 in its member list
-	p1.mu.RLock()
-	_, exists := p1.members["node-2"]
-	p1.mu.RUnlock()
-
-	if !exists {
-		t.Error("p1 should have node-2 as a member after join")
+	// Wait for p1 to learn about node-2
+	if !waitForCondition(t, 5*time.Second, func() bool {
+		p1.mu.RLock()
+		defer p1.mu.RUnlock()
+		_, exists := p1.members["node-2"]
+		return exists
+	}) {
+		t.Fatal("p1 should have node-2 in its member list")
 	}
 }
 
@@ -915,8 +929,7 @@ func TestProtocol_receiveLoop_TwoNodeCluster(t *testing.T) {
 		t.Fatalf("Start p2 failed: %v", err)
 	}
 	defer p2.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p2.WaitReady()
 
 	_ = p1.listener.LocalAddr().String()
 	p2Addr := p2.listener.LocalAddr().String()
@@ -930,8 +943,15 @@ func TestProtocol_receiveLoop_TwoNodeCluster(t *testing.T) {
 		t.Fatalf("Failed to send ping: %v", err)
 	}
 
-	// Wait for p2 to process the ping and send ack
-	time.Sleep(100 * time.Millisecond)
+	// Wait for p2 to process the ping and add node-1
+	if !waitForCondition(t, 5*time.Second, func() bool {
+		p2.mu.RLock()
+		defer p2.mu.RUnlock()
+		_, exists := p2.members["node-1"]
+		return exists
+	}) {
+		t.Fatal("p2 should have node-1 as a member")
+	}
 
 	// p2 should have node-1 as a member
 	p2.mu.RLock()
@@ -966,8 +986,7 @@ func TestProtocol_sendMessage_InvalidAddr(t *testing.T) {
 		t.Fatalf("Start failed: %v", err)
 	}
 	defer p.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p.WaitReady()
 
 	msg := Message{Type: MsgPing, Source: "node-1"}
 	err := p.sendMessage("invalid-addr", msg)
@@ -1122,8 +1141,7 @@ func TestProtocol_gossip_WithMembers(t *testing.T) {
 		t.Fatalf("Start p2 failed: %v", err)
 	}
 	defer p2.Stop()
-
-	time.Sleep(20 * time.Millisecond)
+	p2.WaitReady()
 
 	p2Addr := p2.listener.LocalAddr().String()
 
@@ -1139,14 +1157,12 @@ func TestProtocol_gossip_WithMembers(t *testing.T) {
 	// Gossip should send member list to p2
 	p1.gossip()
 
-	time.Sleep(100 * time.Millisecond)
-
-	// p2 should have received the gossip with member info about node-1
-	p2.mu.RLock()
-	_, exists := p2.members["node-1"]
-	p2.mu.RUnlock()
-
-	if !exists {
-		t.Error("p2 should have node-1 in its member list after gossip")
+	if !waitForCondition(t, 5*time.Second, func() bool {
+		p2.mu.RLock()
+		defer p2.mu.RUnlock()
+		_, exists := p2.members["node-1"]
+		return exists
+	}) {
+		t.Fatal("p2 should have node-1 in its member list after gossip")
 	}
 }

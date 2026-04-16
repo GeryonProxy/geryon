@@ -15,8 +15,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
 )
 
-// Estimated bytes per server connection (buffer + overhead)
-const connMemoryEstimate = 32 * 1024 // 32KB per connection
+// Estimated bytes per server connection (buffer + overhead, non-TLS idle footprint)
+const connMemoryEstimate = 8 * 1024 // 8KB per connection
 
 // Manager manages all connection pools.
 type Manager struct {

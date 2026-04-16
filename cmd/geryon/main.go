@@ -108,20 +108,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create reload function for config hot-reload
-	reloadFn := func() error {
-		newCfg, err := config.Load(safeConfigPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
-		if err := config.Validate(newCfg); err != nil {
-			return fmt.Errorf("invalid config: %w", err)
-		}
-		cfgHolder.Store(newCfg)
-		log.Info("Configuration reloaded", "path", safeConfigPath)
-		return nil
-	}
-
 	// Create user database
 	userDB := auth.NewUserDatabase()
 	if err := userDB.LoadFromConfig(&cfg.Auth); err != nil {
@@ -163,6 +149,80 @@ func main() {
 		}
 
 		listeners = append(listeners, listener)
+	}
+
+	// Create reload function for config hot-reload
+	// Dynamically updates pool configs, adds/removes pools, and reloads auth users
+	reloadFn := func() error {
+		newCfg, err := config.Load(safeConfigPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		if err := config.Validate(newCfg); err != nil {
+			return fmt.Errorf("invalid config: %w", err)
+		}
+
+		// Check for safe-to-reload changes
+		safe, unsafe := config.IsSafeReload(cfgHolder.Load(), newCfg)
+		if !safe {
+			log.Warn("Unsafe configuration changes detected", "changes", unsafe)
+			return fmt.Errorf("unsafe config changes detected (restart required): %v", unsafe)
+		}
+
+		// Reload auth users
+		if err := userDB.LoadFromConfig(&newCfg.Auth); err != nil {
+			return fmt.Errorf("failed to reload users: %w", err)
+		}
+		log.Info("Auth users reloaded")
+
+		// Build map of existing pool names for quick lookup
+		existingPools := make(map[string]bool)
+		for _, p := range poolMgr.ListPools() {
+			existingPools[p.Name()] = true
+		}
+
+		// Update or create pools
+		for i := range newCfg.Pools {
+			poolCfg := &newCfg.Pools[i]
+			poolCfg.AuthMode = newCfg.Auth.Mode
+			if existingPools[poolCfg.Name] {
+				// Update existing pool
+				if err := poolMgr.UpdatePoolConfig(poolCfg.Name, poolCfg); err != nil {
+					log.Error("Failed to update pool config", "pool", poolCfg.Name, "error", err)
+					return fmt.Errorf("failed to update pool %s: %w", poolCfg.Name, err)
+				}
+			} else {
+				// Create new pool
+				if err := poolMgr.CreatePool(poolCfg); err != nil {
+					return fmt.Errorf("failed to create pool %s: %w", poolCfg.Name, err)
+				}
+				log.Info("New pool created via reload", "pool", poolCfg.Name)
+			}
+		}
+
+		// Remove pools that no longer exist in config
+		newPoolNames := make(map[string]bool)
+		for _, p := range newCfg.Pools {
+			newPoolNames[p.Name] = true
+		}
+		for _, p := range poolMgr.ListPools() {
+			if !newPoolNames[p.Name()] {
+				if err := poolMgr.RemovePool(p.Name()); err != nil {
+					log.Error("Failed to remove pool", "pool", p.Name(), "error", err)
+				} else {
+					log.Info("Pool removed via reload", "pool", p.Name())
+				}
+			}
+		}
+
+		// Update global settings
+		poolMgr.SetGlobalMaxMemory(newCfg.Global.MaxMemory)
+
+		// Atomically swap config
+		cfgHolder.Store(newCfg)
+
+		log.Info("Configuration reloaded successfully", "path", safeConfigPath)
+		return nil
 	}
 
 	// Create and start REST API server
@@ -223,6 +283,9 @@ func main() {
 			os.Exit(1)
 		}
 		log.Info("Cluster node started", "node_id", cfg.Cluster.NodeID, "state", clusterNode.GetState())
+
+		// Wire cluster to REST API for metrics export
+		restServer.SetCluster(clusterNode)
 	}
 
 	// Create config watcher for hot reload
@@ -231,18 +294,11 @@ func main() {
 	configWatcher.OnChange(func(newCfg *config.Config) {
 		log.Info("Configuration file changed, reloading")
 
-		// Check if reload is safe
-		safe, unsafe := config.IsSafeReload(cfgHolder.Load(), newCfg)
-		if !safe {
-			log.Warn("Unsafe configuration changes detected", "changes", unsafe)
+		// Use the reloadFn for dynamic updates
+		if err := reloadFn(); err != nil {
+			log.Error("Config reload failed", "error", err)
 			log.Info("Restart required for these changes to take effect")
-			return
 		}
-
-		// Apply configuration changes
-		// Note: This is a simplified reload - full implementation would update
-		// pool limits, add/remove pools, etc.
-		log.Info("Configuration reloaded successfully (changes will take effect for new connections)")
 	})
 
 	if err := configWatcher.Start(); err != nil {
@@ -260,16 +316,8 @@ func main() {
 			switch sig {
 			case syscall.SIGHUP:
 				log.Info("Received SIGHUP, reloading configuration")
-				newCfg, err := config.HotReload(ctx, configFile, cfgHolder.Load(), func(newConfig *config.Config) error {
-					// Apply new configuration
-					// Note: In a full implementation, this would update
-					// pool configurations, limits, etc.
-					return nil
-				}, log)
-				if err != nil {
+				if err := reloadFn(); err != nil {
 					log.Error("Hot reload failed", "error", err)
-				} else {
-					cfgHolder.Store(newCfg)
 				}
 			case syscall.SIGINT, syscall.SIGTERM:
 				log.Info("Received shutdown signal", "signal", sig)
@@ -281,8 +329,11 @@ func main() {
 
 	<-ctx.Done()
 
-	// Graceful shutdown
+	// Graceful shutdown with 30-second deadline
 	log.Info("Shutting down...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 
 	// Stop listeners
 	for _, listener := range listeners {
@@ -292,12 +343,12 @@ func main() {
 	}
 
 	// Stop REST server
-	if err := restServer.Stop(context.Background()); err != nil {
+	if err := restServer.Stop(shutdownCtx); err != nil {
 		log.Error("Failed to stop REST server", "error", err)
 	}
 
 	// Stop MCP server
-	if err := mcpServer.Stop(context.Background()); err != nil {
+	if err := mcpServer.Stop(shutdownCtx); err != nil {
 		log.Error("Failed to stop MCP server", "error", err)
 	}
 
@@ -307,7 +358,7 @@ func main() {
 	}
 
 	// Stop gRPC server
-	if err := grpcServer.Stop(context.Background()); err != nil {
+	if err := grpcServer.Stop(shutdownCtx); err != nil {
 		log.Error("Failed to stop gRPC server", "error", err)
 	}
 
@@ -321,6 +372,10 @@ func main() {
 	// Close pools
 	if err := poolMgr.Close(); err != nil {
 		log.Error("Failed to close pool manager", "error", err)
+	}
+
+	if shutdownCtx.Err() == context.DeadlineExceeded {
+		log.Warn("Shutdown deadline exceeded — some components may not have stopped cleanly")
 	}
 
 	log.Info("Geryon shutdown complete")

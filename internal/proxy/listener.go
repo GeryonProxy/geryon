@@ -1,3 +1,7 @@
+// Package proxy implements the TCP listener and protocol-specific
+// connection handling for the Geryon database proxy. It manages client
+// acceptance, authentication, and the relay between client and backend
+// server connections for PostgreSQL, MySQL, and MSSQL protocols.
 package proxy
 
 import (
@@ -133,7 +137,7 @@ func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.C
 		// Load cache rules from config
 		for _, rule := range cfg.Cache.Rules {
 			ttl, _ := cache.ParseDuration(rule.TTL)
-			l.cacheRules.AddRule(rule.Match, ttl, true)
+			l.cacheRules.AddRule(rule.Match, ttl, !rule.NeverCache)
 		}
 
 		// Start cleanup goroutine
@@ -2107,6 +2111,9 @@ func (ps *ProxySession) forwardMSSQLPreLoginResponse() error {
 }
 
 // forwardMSSQLLogin7Response forwards Login7 response to client.
+// Handles SSPI/NTLM challenge-response rounds: if the server sends an SSPI
+// token (0xED), it forwards it to the client, reads the client's response,
+// and forwards it back to the server until LoginAck or error.
 func (ps *ProxySession) forwardMSSQLLogin7Response() error {
 	// Read response from server
 	serverReader := bufio.NewReader(ps.serverConn.Conn())
@@ -2121,12 +2128,31 @@ func (ps *ProxySession) forwardMSSQLLogin7Response() error {
 		respLength := binary.BigEndian.Uint16(respHeader[2:4])
 		respPayloadLen := int(respLength) - 8
 		if respPayloadLen < 0 || respPayloadLen > maxMySQLPayload {
-			return fmt.Errorf("invalid MSSQL Login7 response length: %d", respPayloadLen)
+			return fmt.Errorf("invalid MSSQL Login7 response length: %d", respLength)
 		}
 
 		respPayload := make([]byte, respPayloadLen)
 		if _, err := io.ReadFull(serverReader, respPayload); err != nil {
 			return fmt.Errorf("failed to read Login7 response payload: %w", err)
+		}
+
+		// Check for SSPI/NTLM authentication token (TokenTypeSSPI = 0xED)
+		// or SSPI packet type (0x11) — indicates challenge-response is needed
+		if respPayloadLen > 0 && (respPayload[0] == 0xED || respHeader[0] == 0x11) {
+			// Forward SSPI challenge to client
+			resp := make([]byte, respLength)
+			copy(resp[0:8], respHeader)
+			copy(resp[8:], respPayload)
+			if _, err := ps.clientConn.Write(resp); err != nil {
+				return fmt.Errorf("failed to send SSPI challenge: %w", err)
+			}
+
+			// Read client's SSPI response (NTLM Type 3 or next challenge)
+			if err := ps.forwardMSSQLClientSSPIResponse(serverReader); err != nil {
+				return fmt.Errorf("client SSPI response failed: %w", err)
+			}
+			// Continue reading — server may send more tokens or LoginAck
+			continue
 		}
 
 		// Forward to client
@@ -2138,21 +2164,82 @@ func (ps *ProxySession) forwardMSSQLLogin7Response() error {
 			return fmt.Errorf("failed to send Login7 response: %w", err)
 		}
 
-		// Check for OK (0x00) or ENV_CHANGE (0xE3)
-		if respPayloadLen > 0 {
-			switch respPayload[0] {
-			case 0x00: // OK
-				return nil
-			case 0xFF: // ERROR
-				ps.recordAuthFailure()
-				return fmt.Errorf("authentication failed")
-			case 0xE3: // ENV_CHANGE
-				// Continue - can have multiple responses
-			}
-		}
-
 		// Check for end of message
 		if respHeader[1]&0x01 != 0 { // StatusEndOfMessage
+			break
+		}
+	}
+
+	return nil
+}
+
+// forwardMSSQLClientSSPIResponse reads an SSPI response from the client
+// (NTLM Type 3 message) and forwards it to the server.
+func (ps *ProxySession) forwardMSSQLClientSSPIResponse(serverReader *bufio.Reader) error {
+	// Read client SSPI response header directly from the connection
+	clientHeader := make([]byte, 8)
+	if _, err := io.ReadFull(ps.clientConn, clientHeader); err != nil {
+		return fmt.Errorf("failed to read client SSPI response header: %w", err)
+	}
+
+	clientLength := binary.BigEndian.Uint16(clientHeader[2:4])
+	clientPayloadLen := int(clientLength) - 8
+	if clientPayloadLen < 0 || clientPayloadLen > maxMySQLPayload {
+		return fmt.Errorf("invalid MSSQL client SSPI response length: %d", clientLength)
+	}
+
+	clientPayload := make([]byte, clientPayloadLen)
+	if _, err := io.ReadFull(ps.clientConn, clientPayload); err != nil {
+		return fmt.Errorf("failed to read client SSPI response payload: %w", err)
+	}
+
+	// Forward to server
+	resp := make([]byte, clientLength)
+	copy(resp[0:8], clientHeader)
+	copy(resp[8:], clientPayload)
+	if _, err := ps.serverConn.Conn().Write(resp); err != nil {
+		return fmt.Errorf("failed to forward client SSPI response: %w", err)
+	}
+
+	// Read server's response to the client's SSPI message
+	for {
+		respHeader := make([]byte, 8)
+		if _, err := io.ReadFull(serverReader, respHeader); err != nil {
+			return fmt.Errorf("failed to read server SSPI response header: %w", err)
+		}
+
+		respLength := binary.BigEndian.Uint16(respHeader[2:4])
+		respPayloadLen := int(respLength) - 8
+		if respPayloadLen < 0 || respPayloadLen > maxMySQLPayload {
+			return fmt.Errorf("invalid MSSQL server SSPI response length: %d", respLength)
+		}
+
+		respPayload := make([]byte, respPayloadLen)
+		if _, err := io.ReadFull(serverReader, respPayload); err != nil {
+			return fmt.Errorf("failed to read server SSPI response payload: %w", err)
+		}
+
+		// Check if server sends another SSPI challenge (multi-round NTLM)
+		if respPayloadLen > 0 && (respPayload[0] == 0xED || respHeader[0] == 0x11) {
+			resp := make([]byte, respLength)
+			copy(resp[0:8], respHeader)
+			copy(resp[8:], respPayload)
+			if _, err := ps.clientConn.Write(resp); err != nil {
+				return fmt.Errorf("failed to send SSPI challenge: %w", err)
+			}
+			// Recursively handle next client response
+			return ps.forwardMSSQLClientSSPIResponse(serverReader)
+		}
+
+		// Forward final response to client
+		resp := make([]byte, respLength)
+		copy(resp[0:8], respHeader)
+		copy(resp[8:], respPayload)
+		if _, err := ps.clientConn.Write(resp); err != nil {
+			return fmt.Errorf("failed to forward server response: %w", err)
+		}
+
+		if respHeader[1]&0x01 != 0 {
 			break
 		}
 	}

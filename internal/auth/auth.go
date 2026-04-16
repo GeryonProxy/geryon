@@ -1,3 +1,7 @@
+// Package auth implements user authentication for the Geryon proxy.
+// It provides SCRAM-SHA-256 password hashing, user database management,
+// credential verification, and mTLS certificate-based auth with CN/SAN
+// to username mapping.
 package auth
 
 import (

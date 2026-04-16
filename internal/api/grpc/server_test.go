@@ -415,10 +415,10 @@ func TestReleaseStream(t *testing.T) {
 	}
 }
 
-func TestGRPCRateLimiter(t *testing.T) {
-	rl := newGRPCRateLimiter(5, 10)
+func TestAPIRateLimiter(t *testing.T) {
+	rl := newAPIRateLimiter(5, 10)
 	if rl == nil {
-		t.Fatal("newGRPCRateLimiter returned nil")
+		t.Fatal("newAPIRateLimiter returned nil")
 	}
 
 	l1 := rl.GetLimiter("10.0.0.1")
@@ -792,7 +792,7 @@ func TestServer_Auth_EmptyHeader(t *testing.T) {
 }
 
 func TestGRPCRateLimiter_MaxSizeEviction(t *testing.T) {
-	rl := newGRPCRateLimiter(5, 10)
+	rl := newAPIRateLimiter(5, 10)
 
 	// Add many limiters to trigger eviction
 	for i := 0; i < 10020; i++ {
@@ -807,7 +807,7 @@ func TestGRPCRateLimiter_MaxSizeEviction(t *testing.T) {
 }
 
 func TestGRPCRateLimiter_Cleanup(t *testing.T) {
-	rl := newGRPCRateLimiter(5, 10)
+	rl := newAPIRateLimiter(5, 10)
 	rl.cleanupTTL = 100 * time.Millisecond
 
 	// Add a limiter
@@ -1743,7 +1743,7 @@ func TestWithRateLimit_ExceedLimit(t *testing.T) {
 }
 
 func TestGRPCRateLimiter_MaxSizeEviction_DirectCheck(t *testing.T) {
-	rl := newGRPCRateLimiter(5, 10)
+	rl := newAPIRateLimiter(5, 10)
 
 	// Fill the map to exactly maxSize
 	for i := 0; i < rl.maxSize; i++ {

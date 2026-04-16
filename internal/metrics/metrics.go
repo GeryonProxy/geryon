@@ -1,3 +1,7 @@
+// Package metrics provides built-in observability for the Geryon proxy,
+// including counters, gauges, histograms, and a custom registry.
+// It exposes pool-level, backend, cache, and cluster metrics in both
+// JSON and Prometheus-compatible text formats.
 package metrics
 
 import (

@@ -1,3 +1,7 @@
+// Package config handles configuration loading, validation, and file
+// watching for the Geryon proxy. It defines all configuration structs
+// (global, pools, auth, admin, cluster) and supports safe hot-reload
+// detection to distinguish changes requiring a restart.
 package config
 
 import "fmt"
@@ -63,8 +67,9 @@ type HealthConfig struct {
 
 // CacheRule represents a cache rule.
 type CacheRule struct {
-	Match string `yaml:"match"`
-	TTL   string `yaml:"ttl"`
+	Match      string `yaml:"match"`
+	TTL        string `yaml:"ttl"`
+	NeverCache bool   `yaml:"never_cache"` // If true, never cache matching queries
 }
 
 // CacheConfig contains query cache settings.
@@ -73,6 +78,13 @@ type CacheConfig struct {
 	MaxMemory  string      `yaml:"max_memory"`
 	DefaultTTL string      `yaml:"default_ttl"`
 	Rules      []CacheRule `yaml:"rules"`
+}
+
+// PreparedStmtConfig contains prepared statement cache settings.
+type PreparedStmtConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	MaxSize int    `yaml:"max_size"`
+	TTL     string `yaml:"ttl"`
 }
 
 // RoutingRule represents a read/write routing rule.
@@ -105,8 +117,9 @@ type PoolConfig struct {
 	Limits      LimitConfig       `yaml:"limits"`
 	Health      HealthConfig      `yaml:"health"`
 	TLS         TLSConfig         `yaml:"tls"`
-	Cache       CacheConfig       `yaml:"cache"`
-	Routing     RoutingConfig     `yaml:"routing"`
+	Cache       CacheConfig          `yaml:"cache"`
+	PreparedStmt PreparedStmtConfig  `yaml:"prepared_stmt"`
+	Routing     RoutingConfig        `yaml:"routing"`
 	Transaction TransactionConfig `yaml:"transaction"`
 	AuthMode    string            `yaml:"auth_mode"` // "passthrough" or "interception"
 }
@@ -159,6 +172,8 @@ type ClusterConfig struct {
 // AdminRESTConfig contains REST API settings.
 type AdminRESTConfig struct {
 	Listen         string         `yaml:"listen"`
+	ReadTimeout    string         `yaml:"read_timeout"`
+	WriteTimeout   string         `yaml:"write_timeout"`
 	Auth           RESTAuthConfig `yaml:"auth"`
 	AllowedOrigins []string       `yaml:"allowed_origins"`
 }
@@ -171,22 +186,28 @@ type RESTAuthConfig struct {
 
 // AdminGRPCConfig contains HTTP/2 API settings (streaming stats, not protobuf gRPC).
 type AdminGRPCConfig struct {
-	Listen string         `yaml:"listen"`
-	Auth   RESTAuthConfig `yaml:"auth"`
+	Listen       string         `yaml:"listen"`
+	ReadTimeout  string         `yaml:"read_timeout"`
+	WriteTimeout string         `yaml:"write_timeout"`
+	Auth         RESTAuthConfig `yaml:"auth"`
 }
 
 // AdminMCPConfig contains MCP server settings.
 type AdminMCPConfig struct {
-	Transport string         `yaml:"transport"`
-	Listen    string         `yaml:"listen"`
-	Auth      RESTAuthConfig `yaml:"auth"`
+	Transport    string         `yaml:"transport"`
+	Listen       string         `yaml:"listen"`
+	ReadTimeout  string         `yaml:"read_timeout"`
+	WriteTimeout string         `yaml:"write_timeout"`
+	Auth         RESTAuthConfig `yaml:"auth"`
 }
 
 // AdminDashboardConfig contains dashboard settings.
 type AdminDashboardConfig struct {
-	Enabled bool           `yaml:"enabled"`
-	Listen  string         `yaml:"listen"`
-	Path    string         `yaml:"path"`
+	Enabled      bool           `yaml:"enabled"`
+	Listen       string         `yaml:"listen"`
+	Path         string         `yaml:"path"`
+	ReadTimeout  string         `yaml:"read_timeout"`
+	WriteTimeout string         `yaml:"write_timeout"`
 	Auth    RESTAuthConfig `yaml:"auth"`
 }
 

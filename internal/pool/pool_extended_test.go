@@ -1643,7 +1643,7 @@ func TestServerConnPool_release(t *testing.T) {
 	pool.addActive(mockConn)
 
 	// Release
-	pool.release(mockConn)
+	pool.release(mockConn, nil)
 
 	if pool.activeCount() != 0 {
 		t.Errorf("activeCount = %d, want 0", pool.activeCount())
@@ -1684,7 +1684,7 @@ func TestServerConnPool_remove(t *testing.T) {
 
 	// Add to active and idle
 	pool.addActive(mockConn)
-	pool.release(mockConn)
+	pool.release(mockConn, nil)
 
 	// Remove from active (should also remove from idle)
 	pool.remove(mockConn)
@@ -5934,16 +5934,15 @@ func TestManager_GetPool(t *testing.T) {
 func TestServerConnPool_release_WithNilCodecOnConn(t *testing.T) {
 	pool := newServerConnPool(1, 5)
 
-	// ServerConn with nil codec - release goes to idle without reset
+	// ServerConn with no codec - release goes to idle without reset
 	mockConn := &ServerConn{
 		id:            1,
-		codec:         nil, // nil codec, no reset attempted
 		preparedStmts: make(map[string]bool),
 		paramStatus:   make(map[string]string),
 	}
 
 	pool.addActive(mockConn)
-	pool.release(mockConn)
+	pool.release(mockConn, nil)
 
 	if pool.activeCount() != 0 {
 		t.Errorf("activeCount = %d, want 0", pool.activeCount())

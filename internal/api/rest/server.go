@@ -1,3 +1,6 @@
+// Package rest provides the REST API server for the Geryon proxy,
+// offering full CRUD for pools, backends, connections, users, and cache,
+// plus Prometheus metrics, SSE streaming stats, and config hot-reload.
 package rest
 
 import (
@@ -28,6 +31,13 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
+// Cluster provides cluster state for metrics export.
+type Cluster interface {
+	StateString() string
+	GetNodeCount() int
+	GetTerm() uint64
+}
+
 // Server represents the REST API server.
 type Server struct {
 	mu         sync.RWMutex
@@ -40,6 +50,7 @@ type Server struct {
 	started    bool
 	configPath string
 	reloadFn   func() error
+	cluster    Cluster
 }
 
 // NewServer creates a new REST API server.
@@ -89,14 +100,23 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 		return nil, fmt.Errorf("failed to setup dashboard: %w", err)
 	}
 
+	readTimeout := parseDuration(cfg.ReadTimeout, 30*time.Second)
+	writeTimeout := parseDuration(cfg.WriteTimeout, 30*time.Second)
 	s.httpServer = &http.Server{
 		Addr:         cfg.Listen,
-		Handler:      s.withLogging(s.withRateLimit(s.withSecurityHeaders(s.withCORS(s.withAuth(mux))))),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Handler:      s.withLogging(s.withPanicRecovery(s.withRateLimit(s.withSecurityHeaders(s.withCORS(s.withAuth(mux)))))),
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
 	}
 
 	return s, nil
+}
+
+// SetCluster sets the cluster for metrics export.
+func (s *Server) SetCluster(c Cluster) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cluster = c
 }
 
 // setupDashboard sets up the dashboard routes.
@@ -170,6 +190,19 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"duration", time.Since(start),
 		)
+	})
+}
+
+// withPanicRecovery recovers from panics in handlers and returns 500.
+func (s *Server) withPanicRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				s.log.Error("Panic recovered in HTTP handler", "error", err, "path", r.URL.Path)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -411,6 +444,19 @@ func validatePoolName(name string) bool {
 	return poolNameRegex.MatchString(name)
 }
 
+// backendAddrRegex validates backend addresses: host:port format.
+var backendAddrRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]+:\d{1,5}$`)
+
+// validateBackendAddr returns true if the backend address is valid.
+func validateBackendAddr(addr string) bool {
+	return backendAddrRegex.MatchString(addr)
+}
+
+// validateBackendAction returns true if the action is valid.
+func validateBackendAction(action string) bool {
+	return action == "drain" || action == "cancel-drain"
+}
+
 // validatePoolConfig validates pool configuration.
 func validatePoolConfig(cfg *config.PoolConfig) error {
 	if cfg.Name == "" {
@@ -575,7 +621,7 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		// Update pool configuration
 		var req config.PoolConfig
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "Invalid JSON: "+sanitizeErr(err))
 			return
 		}
@@ -604,6 +650,10 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		// Remove the pool
+		if !validatePoolName(poolName) {
+			writeError(w, http.StatusBadRequest, "Invalid pool name")
+			return
+		}
 		if err := s.poolMgr.RemovePool(poolName); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to delete pool: "+sanitizeErr(err))
 			return
@@ -878,6 +928,9 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Consume and limit request body to prevent large payload abuse
+	http.MaxBytesReader(w, r.Body, 1024)
+
 	s.log.Info("Configuration reload requested via API")
 
 	if s.reloadFn != nil {
@@ -912,7 +965,16 @@ func (s *Server) handleBackendAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	backendAddr := parts[4]
+	if !validateBackendAddr(backendAddr) {
+		writeError(w, http.StatusBadRequest, "Invalid backend address: must be host:port format")
+		return
+	}
+
 	action := parts[5]
+	if !validateBackendAction(action) {
+		writeError(w, http.StatusBadRequest, "Invalid backend action: must be drain or cancel-drain")
+		return
+	}
 
 	s.log.Info("Backend action requested", "address", backendAddr, "action", action)
 
@@ -922,10 +984,7 @@ func (s *Server) handleBackendAction(w http.ResponseWriter, r *http.Request) {
 	case "cancel-drain":
 		s.handleBackendCancelDrain(w, r, backendAddr)
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"status":  "error",
-			"message": "Unknown action: " + action,
-		})
+		writeError(w, http.StatusBadRequest, "Unknown backend action: "+action)
 	}
 }
 
@@ -1129,7 +1188,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pool metrics
+	// Pool metrics (spec §9.1 names)
 	pools := s.poolMgr.ListPools()
 	writeMetric("geryon_pools_total", "Total number of pools", "gauge", len(pools))
 
@@ -1137,25 +1196,43 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	var totalServerConns int64
 	var totalQueries int64
 	var totalTransactions int64
+	var totalCacheHits uint64
+	var totalCacheMisses uint64
+	var totalCacheEvictions uint64
+	var totalCacheMemory int64
+	var totalCacheEntries int
 
 	for _, p := range pools {
 		stats := p.Stats()
 		poolName := stats.Name
 
-		writeMetric("geryon_pool_client_connections", "Client connections per pool", "gauge",
+		// Spec §9.1 pool metric names
+		writeMetric("geryon_pool_client_connections_active", "Current active client connections", "gauge",
 			stats.ClientConnections, "pool", poolName)
-		writeMetric("geryon_pool_server_connections", "Server connections per pool", "gauge",
-			stats.ServerConnections, "pool", poolName)
-		writeMetric("geryon_pool_idle_connections", "Idle connections per pool", "gauge",
-			stats.IdleConnections, "pool", poolName)
-		writeMetric("geryon_pool_active_connections", "Active connections per pool", "gauge",
-			stats.ActiveConnections, "pool", poolName)
-		writeMetric("geryon_pool_waiting_clients", "Waiting clients per pool", "gauge",
+		writeMetric("geryon_pool_client_connections_waiting", "Clients waiting for server connection", "gauge",
 			stats.WaitingClients, "pool", poolName)
-		writeMetric("geryon_pool_total_queries", "Total queries per pool", "counter",
+		writeMetric("geryon_pool_server_connections_active", "Server connections in use", "gauge",
+			stats.ActiveConnections, "pool", poolName)
+		writeMetric("geryon_pool_server_connections_idle", "Idle server connections", "gauge",
+			stats.IdleConnections, "pool", poolName)
+		writeMetric("geryon_pool_server_connections_total", "Total server connections (active + idle)", "gauge",
+			stats.ServerConnections, "pool", poolName)
+		writeMetric("geryon_pool_queries_total", "Total queries processed", "counter",
 			stats.TotalQueries, "pool", poolName)
-		writeMetric("geryon_pool_total_transactions", "Total transactions per pool", "counter",
+		writeMetric("geryon_pool_transactions_total", "Total transactions", "counter",
 			stats.TotalTransactions, "pool", poolName)
+
+		// Query cache metrics per pool (spec §9.1 cache metrics)
+		writeMetric("geryon_cache_hits_total", "Cache hits", "counter",
+			stats.QueryCacheHits, "pool", poolName)
+		writeMetric("geryon_cache_misses_total", "Cache misses", "counter",
+			stats.QueryCacheMisses, "pool", poolName)
+		writeMetric("geryon_cache_evictions_total", "Cache evictions", "counter",
+			stats.QueryCacheEvictions, "pool", poolName)
+		writeMetric("geryon_cache_memory_bytes", "Cache memory usage", "gauge",
+			stats.QueryCacheMemoryUsed, "pool", poolName)
+		writeMetric("geryon_cache_entries", "Number of cached entries", "gauge",
+			stats.QueryCacheEntries, "pool", poolName)
 
 		// Prepared statement cache metrics
 		writeMetric("geryon_pool_prepared_cache_size", "Prepared statement cache size", "gauge",
@@ -1163,10 +1240,30 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeMetric("geryon_pool_prepared_cache_hit_rate", "Prepared statement cache hit rate", "gauge",
 			fmt.Sprintf("%.2f", stats.PreparedStmtHitRate), "pool", poolName)
 
+		// Backend metrics (spec §9.1 backend metrics)
+		for _, b := range p.ListBackends() {
+			healthStatus := 0
+			if b.Healthy.Load() {
+				healthStatus = 1
+			}
+			if b.Draining.Load() {
+				healthStatus = 2 // degraded
+			}
+			writeMetric("geryon_backend_status", "Backend health: 0=down, 1=up, 2=degraded", "gauge",
+				healthStatus, "pool", poolName, "backend", b.Address(), "role", b.Role)
+			writeMetric("geryon_backend_connections", "Connection count per backend", "gauge",
+				b.ConnCount.Load(), "pool", poolName, "backend", b.Address(), "role", b.Role)
+		}
+
 		totalClientConns += stats.ClientConnections
 		totalServerConns += int64(stats.ServerConnections)
 		totalQueries += stats.TotalQueries
 		totalTransactions += stats.TotalTransactions
+		totalCacheHits += stats.QueryCacheHits
+		totalCacheMisses += stats.QueryCacheMisses
+		totalCacheEvictions += stats.QueryCacheEvictions
+		totalCacheMemory += stats.QueryCacheMemoryUsed
+		totalCacheEntries += stats.QueryCacheEntries
 	}
 
 	// Global metrics
@@ -1174,6 +1271,13 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writeMetric("geryon_server_connections_total", "Total server connections", "gauge", totalServerConns)
 	writeMetric("geryon_queries_total", "Total queries processed", "counter", totalQueries)
 	writeMetric("geryon_transactions_total", "Total transactions processed", "counter", totalTransactions)
+
+	// Aggregate cache metrics
+	writeMetric("geryon_cache_hits_total", "Total cache hits", "counter", totalCacheHits)
+	writeMetric("geryon_cache_misses_total", "Total cache misses", "counter", totalCacheMisses)
+	writeMetric("geryon_cache_evictions_total", "Total cache evictions", "counter", totalCacheEvictions)
+	writeMetric("geryon_cache_memory_bytes", "Total cache memory usage", "gauge", totalCacheMemory)
+	writeMetric("geryon_cache_entries", "Total cached entries", "gauge", totalCacheEntries)
 
 	// Query log metrics
 	var totalSlowQueries int64
@@ -1200,6 +1304,27 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	writeMetric("geryon_transactions_active", "Active transactions", "gauge", activeTransactions)
 	writeMetric("geryon_transactions_aborted_total", "Total aborted transactions", "counter", abortedTransactions)
+
+	// Cluster metrics (spec §9.1 cluster metrics)
+	if s.cluster != nil {
+		state := s.cluster.StateString()
+		nodeCount := s.cluster.GetNodeCount()
+		term := s.cluster.GetTerm()
+
+		stateValue := 0.0
+		switch state {
+		case "leader":
+			stateValue = 1.0
+		case "follower":
+			stateValue = 2.0
+		case "candidate":
+			stateValue = 3.0
+		}
+
+		writeMetric("geryon_cluster_nodes", "Number of known nodes", "gauge", nodeCount)
+		writeMetric("geryon_cluster_raft_state", "Raft state: 1=leader, 2=follower, 3=candidate", "gauge", stateValue)
+		writeMetric("geryon_cluster_raft_term", "Current Raft term", "gauge", term)
+	}
 
 	w.Write([]byte(output.String()))
 }
@@ -1333,4 +1458,15 @@ func (s *Server) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
 		"tls_status": tlsStatus,
 		"timestamp":  time.Now().UTC(),
 	})
+}
+
+func parseDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }

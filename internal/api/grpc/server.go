@@ -1,3 +1,6 @@
+// Package grpc provides the HTTP/2 admin API for programmatic management
+// of the Geryon proxy. It uses JSON-over-HTTP/2 with server-sent events
+// for streaming stats, pool CRUD, backend management, and config reload.
 package grpc
 
 import (
@@ -19,9 +22,10 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
-// Server implements an HTTP/2 API for streaming stats.
+// Server implements an HTTP/2 Admin API for streaming stats.
 // Uses HTTP/2 with JSON serialization for zero-dependency operation.
-// Note: This is NOT actual protobuf-based gRPC, but provides similar streaming semantics.
+// Note: This provides streaming semantics similar to gRPC, but uses JSON over HTTP/2
+// rather than actual protobuf-based gRPC wire protocol.
 type Server struct {
 	mu          sync.RWMutex
 	poolMgr     *pool.Manager
@@ -36,11 +40,13 @@ type Server struct {
 	reloadFn    func() error
 }
 
-// Config holds gRPC server configuration.
+// Config holds HTTP/2 Admin API server configuration.
 type Config struct {
-	Listen     string
-	Auth       config.RESTAuthConfig
-	MaxStreams int // Max concurrent streaming connections (0 = unlimited)
+	Listen       string
+	ReadTimeout  string
+	WriteTimeout string
+	Auth         config.RESTAuthConfig
+	MaxStreams   int // Max concurrent streaming connections (0 = unlimited)
 }
 
 // Stream represents an active streaming connection.
@@ -52,7 +58,7 @@ type Stream struct {
 	Cancel  context.CancelFunc
 }
 
-// NewServer creates a new HTTP/2 API server for streaming stats.
+// NewServer creates a new HTTP/2 Admin API server.
 func NewServer(cfg *Config, poolMgr *pool.Manager, log *logger.Logger, reloadFn func() error) *Server {
 	s := &Server{
 		config:      cfg,
@@ -70,7 +76,7 @@ func NewServer(cfg *Config, poolMgr *pool.Manager, log *logger.Logger, reloadFn 
 	return s
 }
 
-// Start starts the gRPC server.
+// Start starts the HTTP/2 Admin API server.
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
@@ -90,24 +96,26 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/geryon.v1.Admin/DrainBackend", s.handleDrainBackend)
 	mux.HandleFunc("/geryon.v1.Admin/ReloadConfig", s.handleReloadConfig)
 
+	readTimeout := parseDuration(s.config.ReadTimeout, 30*time.Second)
+	writeTimeout := parseDuration(s.config.WriteTimeout, 30*time.Second)
 	s.server = &http.Server{
 		Addr:         s.config.Listen,
-		Handler:      s.withLogging(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux)))),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Handler:      s.withLogging(s.withPanicRecovery(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux))))),
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
 	}
 
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.log.Error("gRPC server error", "error", err)
+			s.log.Error("HTTP/2 Admin API server error", "error", err)
 		}
 	}()
 
-	s.log.Info("gRPC server started", "address", s.config.Listen)
+	s.log.Info("HTTP/2 Admin API server started", "address", s.config.Listen)
 	return nil
 }
 
-// Stop stops the gRPC server.
+// Stop stops the HTTP/2 Admin API server.
 func (s *Server) Stop(ctx context.Context) error {
 	// Cancel all active streams
 	s.mu.Lock()
@@ -127,11 +135,24 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		s.log.Debug("gRPC request",
+		s.log.Debug("HTTP/2 Admin API request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"duration", time.Since(start),
 		)
+	})
+}
+
+// withPanicRecovery recovers from panics in handlers and returns 500.
+func (s *Server) withPanicRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				s.log.Error("Panic recovered in HTTP/2 Admin API handler", "error", err, "path", r.URL.Path)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -190,8 +211,8 @@ func (s *Server) releaseStream() {
 	s.streamCount.Add(-1)
 }
 
-// rateLimiter implements a simple token bucket rate limiter per IP.
-type grpcRateLimiter struct {
+// apiRateLimiter implements a simple token bucket rate limiter per IP.
+type apiRateLimiter struct {
 	mu         sync.Mutex
 	limiters   map[string]*rate.Limiter
 	lastSeen   map[string]time.Time
@@ -201,8 +222,8 @@ type grpcRateLimiter struct {
 	cleanupTTL time.Duration
 }
 
-func newGRPCRateLimiter(r rate.Limit, burst int) *grpcRateLimiter {
-	rl := &grpcRateLimiter{
+func newAPIRateLimiter(r rate.Limit, burst int) *apiRateLimiter {
+	rl := &apiRateLimiter{
 		limiters:   make(map[string]*rate.Limiter),
 		lastSeen:   make(map[string]time.Time),
 		rate:       r,
@@ -214,7 +235,7 @@ func newGRPCRateLimiter(r rate.Limit, burst int) *grpcRateLimiter {
 	return rl
 }
 
-func (rl *grpcRateLimiter) periodicCleanup() {
+func (rl *apiRateLimiter) periodicCleanup() {
 	ticker := time.NewTicker(rl.cleanupTTL)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -230,7 +251,7 @@ func (rl *grpcRateLimiter) periodicCleanup() {
 	}
 }
 
-func (rl *grpcRateLimiter) GetLimiter(ip string) *rate.Limiter {
+func (rl *apiRateLimiter) GetLimiter(ip string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -260,7 +281,7 @@ func (rl *grpcRateLimiter) GetLimiter(ip string) *rate.Limiter {
 
 // withRateLimit adds rate limiting middleware per client IP.
 func (s *Server) withRateLimit(next http.Handler) http.Handler {
-	rl := newGRPCRateLimiter(5, 10) // 5 req/s, burst 10
+	rl := newAPIRateLimiter(5, 10) // 5 req/s, burst 10
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 		if ip == "" {
@@ -571,7 +592,7 @@ func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("Configuration reload requested via gRPC")
+	s.log.Info("Configuration reload requested via HTTP/2 Admin API")
 	if s.reloadFn != nil {
 		if err := s.reloadFn(); err != nil {
 			s.writeProtoResponse(w, map[string]interface{}{"success": false, "error": "Config reload failed"})
@@ -626,4 +647,15 @@ func (s *Server) GetStreamCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.streams)
+}
+
+func parseDuration(s string, defaultVal time.Duration) time.Duration {
+	if s == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }

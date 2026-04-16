@@ -1,3 +1,6 @@
+// Package stmt provides a prepared statement cache with LRU eviction and
+// configurable TTL for the Geryon proxy. It stores prepared statement
+// metadata and re-prepares statements on new server connections.
 package stmt
 
 import (

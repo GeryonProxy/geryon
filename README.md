@@ -10,17 +10,17 @@
   <a href="https://geryonproxy.com"><img src="https://img.shields.io/badge/docs-geryonproxy.com-brightgreen?style=flat-square" alt="Docs"></a>
   <a href="https://github.com/GeryonProxy/geryon/actions"><img src="https://img.shields.io/github/actions/workflow/status/GeryonProxy/geryon/CI?style=flat-square" alt="CI"></a>
   <br/>
-  <img src="https://img.shields.io/badge/Go-stdlib%20only-00ADD8?style=flat-square&logo=go" alt="Go">
-  <img src="https://img.shields.io/badge/deps-zero-success?style=flat-square" alt="Zero Dependencies">
+  <img src="https://img.shields.io/badge/Go-pure%20Go-00ADD8?style=flat-square&logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/prod%20deps-3-blue?style=flat-square" alt="3 Production Dependencies">
   <img src="https://img.shields.io/badge/CGo-disabled-inactive?style=flat-square" alt="No CGo">
-  <img src="https://img.shields.io/badge/Production%20Ready-100%2F100-success?style=flat-square" alt="Production Ready">
+  <img src="https://img.shields.io/badge/Production%20Ready-85%2F100-orange?style=flat-square" alt="Production Readiness">
 </p>
 
 ---
 
 # Geryon
 
-A high-performance, multi-database connection pooler and proxy built in **pure Go** with **zero external dependencies**. Named after the three-bodied giant of Greek mythology, Geryon speaks PostgreSQL, MySQL, and MSSQL wire protocols — all from a single static binary.
+A high-performance, multi-database connection pooler and proxy built in **pure Go**. Named after the three-bodied giant of Greek mythology, Geryon speaks PostgreSQL, MySQL, and MSSQL wire protocols — all from a single static binary.
 
 ## Why Geryon?
 
@@ -58,6 +58,7 @@ Three tools. Three configs. Three monitoring setups. Three failure modes.
 
 - **Prepared Statement Cache** — Transparent re-preparation across pooled connections with LRU eviction
 - **Query Result Cache** — In-memory LRU cache with TTL, write invalidation, and per-pattern rules
+- **Connection Prefetching** — Proactively maintains `min_server_connections` idle connections for low-latency startup
 - **Read/Write Splitting** — Route SELECTs to replicas, writes to primary, transaction-aware
 - **Auth Interception** — Manage proxy users, map N clients to M backend credentials
 - **TLS/mTLS** — Full TLS termination with mutual TLS client certificate validation
@@ -70,7 +71,7 @@ Three tools. Three configs. Three monitoring setups. Three failure modes.
 | **REST API** | Full CRUD for pools, connections, backends, users, cache | `:8080` |
 | **Web Dashboard** | Real-time monitoring with SSE streaming, config editor | `:8080` |
 | **MCP Server** | LLM-native management (Claude Code / Claude Desktop) | `:8081` |
-| **gRPC API** | Programmatic integration with streaming stats | `:9090` |
+| **HTTP/2 Admin API** | Programmatic integration with streaming stats (JSON over HTTP/2) | `:9090` |
 
 ### Clustering
 
@@ -440,12 +441,12 @@ Geryon includes a built-in [MCP](https://modelcontextprotocol.io) server for AI-
 
 ## Philosophy
 
-**#NOFORKANYMORE** — Geryon is built with a strict zero-dependency philosophy:
+**#NOFORKANYMORE** — Geryon is built with a minimal-dependency philosophy:
 
-- **Pure Go** — stdlib only, `go.sum` is empty
+- **Pure Go** — no C code, zero CGo for releases
 - **Single Binary** — one file, runs anywhere Go compiles
-- **Zero CGo** — fully static, cross-compile to any platform
-- **No Vendor** — no dependency management, no supply chain risk
+- **Minimal Dependencies** — 3 production deps (yaml.v3, x/term, x/time), 2 test-only deps (lib/pq, go-sql-driver/mysql)
+- **No Vendor** — no supply chain risk, no bloated dependency tree
 
 ## Contributing
 

@@ -1,3 +1,7 @@
+// Package mysql implements the MySQL Client/Server wire protocol codec
+// (handshake v10). It handles capability negotiation, authentication
+// (mysql_native_password, caching_sha2_password), COM_QUERY, prepared
+// statement binary protocol, and COM_CHANGE_USER.
 package mysql
 
 import (

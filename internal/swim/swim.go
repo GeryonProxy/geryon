@@ -1,3 +1,6 @@
+// Package swim implements the SWIM gossip protocol for failure detection
+// and node discovery in the Geryon proxy cluster. It provides decentralized
+// membership management and metadata dissemination across cluster nodes.
 package swim
 
 import (
@@ -29,8 +32,10 @@ type Protocol struct {
 	syncInterval   time.Duration
 
 	// Channels
-	stopCh  chan struct{}
-	eventCh chan Event
+	stopCh      chan struct{}
+	eventCh     chan Event
+	readyCh     chan struct{} // closed when protocol is fully started
+	readyOnce   sync.Once     // ensures readyCh is closed only once
 
 	// Networking
 	listener net.PacketConn
@@ -129,6 +134,7 @@ func NewProtocol(id, addr string, log *logger.Logger) *Protocol {
 		syncInterval:   10 * time.Second,
 		stopCh:         make(chan struct{}),
 		eventCh:        make(chan Event, 100),
+		readyCh:        make(chan struct{}),
 		logger:         log,
 	}
 }
@@ -158,8 +164,12 @@ func (p *Protocol) Start() error {
 	go p.suspectLoop()
 	go p.syncLoop()
 
+	p.readyOnce.Do(func() { close(p.readyCh) })
 	return nil
 }
+
+// WaitReady blocks until the protocol is fully started.
+func (p *Protocol) WaitReady() { <-p.readyCh }
 
 // Stop stops the SWIM protocol.
 func (p *Protocol) Stop() error {

@@ -1,14 +1,7 @@
-FROM golang:1.26-alpine AS builder
-WORKDIR /build
-COPY go.mod ./
-COPY . .
-RUN CGO_ENABLED=0 go build -ldflags "-s -w" -o geryon ./cmd/geryon
-
 FROM alpine:3.19
 RUN addgroup -S geryon && adduser -S -G geryon -u 65534 geryon
-COPY --from=builder /build/geryon /geryon
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
+COPY geryon /geryon
+COPY --from=alpine:3.19 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 USER geryon
 EXPOSE 5432 3306 1433 8080 9090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

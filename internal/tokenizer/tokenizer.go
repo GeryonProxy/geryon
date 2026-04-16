@@ -1,3 +1,6 @@
+// Package tokenizer provides a lightweight SQL tokenizer for query
+// classification (SELECT/INSERT/UPDATE/DELETE) and table name extraction
+// in the Geryon proxy's read/write splitting and cache invalidation logic.
 package tokenizer
 
 import (
