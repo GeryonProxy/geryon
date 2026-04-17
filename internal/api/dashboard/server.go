@@ -309,19 +309,24 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	var totalTransactions int64
 	var totalCacheHits uint64
 	var totalCacheMisses uint64
+	var totalActiveConnections int
+	var totalIdleConnections int
+	var totalWaitingClients int
+	var totalCacheEntries int
 
 	for _, p := range s.poolMgr.ListPools() {
 		stats := p.Stats()
 		totalQueries += stats.TotalQueries
 		totalTransactions += stats.TotalTransactions
-		// Estimate hits/misses from hit rate
-		if stats.QueryCacheHitRate > 0 {
-			totalCacheHits += uint64(float64(stats.QueryCacheEntries) * stats.QueryCacheHitRate / 100)
-			totalCacheMisses += uint64(float64(stats.QueryCacheEntries) * (100 - stats.QueryCacheHitRate) / 100)
-		}
+		totalCacheHits += stats.QueryCacheHits
+		totalCacheMisses += stats.QueryCacheMisses
+		totalActiveConnections += stats.ActiveConnections
+		totalIdleConnections += stats.IdleConnections
+		totalWaitingClients += stats.WaitingClients
+		totalCacheEntries += stats.QueryCacheEntries
 	}
 
-	// Calculate hit rate
+	// Calculate cache hit rate from actual counters
 	cacheHitRate := 0.0
 	totalCacheRequests := totalCacheHits + totalCacheMisses
 	if totalCacheRequests > 0 {
@@ -329,10 +334,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, map[string]any{
-		"queries_per_sec":    0, // Requires time-series tracking
-		"cache_hit_rate":     cacheHitRate,
-		"total_queries":      totalQueries,
+		"total_connections": totalActiveConnections + totalIdleConnections,
+		"active_pools":      len(s.poolMgr.ListPools()),
+		"queries_per_sec":   totalQueries,
+		"cache_hit_rate":    cacheHitRate,
+		"total_queries":     totalQueries,
 		"total_transactions": totalTransactions,
+		"cached_queries":    totalCacheEntries,
+		"active_transactions": totalActiveConnections,
 	})
 }
 
@@ -420,8 +429,23 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return minimal config for now
+	pools := s.poolMgr.ListPools()
+	poolConfigs := make([]map[string]any, 0, len(pools))
+	for _, p := range pools {
+		stats := p.Stats()
+		poolConfigs = append(poolConfigs, map[string]any{
+			"name":               stats.Name,
+			"mode":               stats.Mode,
+			"client_connections":  stats.ClientConnections,
+			"server_connections":  stats.ServerConnections,
+			"backend_count":       stats.BackendCount,
+			"total_queries":       stats.TotalQueries,
+			"cache_hit_rate":      stats.QueryCacheHitRate,
+		})
+	}
+
 	s.writeJSON(w, map[string]any{
+		"pools":     poolConfigs,
 		"dashboard": s.config.Enabled,
 	})
 }

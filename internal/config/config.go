@@ -35,7 +35,7 @@ type BackendHost struct {
 type BackendAuth struct {
 	Method       string `yaml:"method"`
 	Username     string `yaml:"username"`
-	PasswordFile string `yaml:"password_file"` // M-12: planned - read password from file for backend auth in interception mode
+	PasswordFile string `yaml:"password_file"` // Read password from file for backend auth in interception mode
 }
 
 // BackendConfig contains backend connection settings.

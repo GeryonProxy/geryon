@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"strings"
@@ -383,9 +384,9 @@ func CertificateFingerprint(cert *x509.Certificate) string {
 
 // PeerCertificate extracts the peer certificate from a TLS connection state.
 func PeerCertificate(state interface{}) *x509.Certificate {
-	// This is a type-safe wrapper that works with *tls.ConnectionState
-	// The actual implementation would import crypto/tls
-	// For now, return nil - this will be called from the proxy layer
+	if tlsState, ok := state.(*tls.ConnectionState); ok && len(tlsState.PeerCertificates) > 0 {
+		return tlsState.PeerCertificates[0]
+	}
 	return nil
 }
 

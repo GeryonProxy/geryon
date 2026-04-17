@@ -649,11 +649,59 @@
         card.appendChild(content);
 
         container.appendChild(card);
+        fetchConnections();
+    }
 
-        // Placeholder - would fetch from API
-        setTimeout(() => {
-            content.textContent = 'Connection tracking coming soon';
-        }, 500);
+    // Fetch connections from API
+    async function fetchConnections() {
+        try {
+            const response = await fetch('/api/v1/connections');
+            if (!response.ok) throw new Error('Failed to fetch connections');
+            const data = await response.json();
+            updateConnectionsContent(data);
+        } catch (err) {
+            const content = document.getElementById('connections-content');
+            if (content) content.textContent = 'Error loading connections: ' + err.message;
+        }
+    }
+
+    // Update connections content
+    function updateConnectionsContent(data) {
+        const container = document.getElementById('connections-content');
+        if (!container) return;
+        container.textContent = '';
+
+        if (!data.connections || data.connections.length === 0) {
+            container.textContent = 'No active connections';
+            return;
+        }
+
+        const table = document.createElement('table');
+        table.className = 'data-table';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['Pool', 'Client Conns', 'Server Conns', 'Idle', 'Active', 'Waiting'].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        data.connections.forEach(conn => {
+            if (!conn.pool_name) return;
+            const row = document.createElement('tr');
+            [conn.pool_name, conn.client_connections || 0, conn.server_connections || 0, conn.idle_connections || 0, conn.active_connections || 0, conn.waiting_clients || 0].forEach(val => {
+                const td = document.createElement('td');
+                td.textContent = val;
+                row.appendChild(td);
+            });
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
     }
 
     // Load queries page

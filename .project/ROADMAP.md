@@ -114,7 +114,15 @@ Geryon is a feature-rich multi-database proxy with all three protocol bodies, th
 - [ ] Automated backup/restore for Raft state
 - [ ] Multi-tenant support (isolated pool groups per tenant)
 - [ ] Connection encryption at rest for cached results
-- [ ] Dashboard: implement remaining pages (Users, full Config editor)
+- [ ] Dashboard: Users page, full config editor, time-series QPS tracking
+
+### Completed TODOs (v1.0.1)
+- [x] **PeerCertificate stub** — Implemented: casts `interface{}` to `*tls.ConnectionState`, returns first peer cert. `internal/auth/cert.go:385`
+- [x] **Dashboard Connections page** — Wired to `/api/v1/connections` API with table display. `cmd/geryon/static/app.js:635`
+- [x] **Dashboard QPS hardcoded to 0** — Returns `total_queries` instead of 0; added `total_connections`, `active_pools`, `cached_queries` to stats. `internal/api/dashboard/server.go:307`
+- [x] **Dashboard cache metrics wrong calculation** — Uses actual `QueryCacheHits`/`QueryCacheMisses` counters instead of estimating from hit rate. `internal/api/dashboard/server.go:307`
+- [x] **Dashboard config API returns minimal data** — Now returns pool configs (name, mode, connections, backends, queries, cache). `internal/api/dashboard/server.go:416`
+- [x] **PasswordFile TODO comment** — Cleaned stale "M-12: planned" comment; field is already implemented in `internal/proxy/listener.go`.
 
 ## Effort Summary
 
