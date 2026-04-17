@@ -109,19 +109,19 @@ type TransactionConfig struct {
 
 // PoolConfig represents a single pool configuration.
 type PoolConfig struct {
-	Name        string            `yaml:"name"`
-	Body        string            `yaml:"body"`
-	Mode        string            `yaml:"mode"`
-	Listen      ListenConfig      `yaml:"listen"`
-	Backend     BackendConfig     `yaml:"backend"`
-	Limits      LimitConfig       `yaml:"limits"`
-	Health      HealthConfig      `yaml:"health"`
-	TLS         TLSConfig         `yaml:"tls"`
-	Cache       CacheConfig          `yaml:"cache"`
-	PreparedStmt PreparedStmtConfig  `yaml:"prepared_stmt"`
-	Routing     RoutingConfig        `yaml:"routing"`
-	Transaction TransactionConfig `yaml:"transaction"`
-	AuthMode    string            `yaml:"auth_mode"` // "passthrough" or "interception"
+	Name         string             `yaml:"name"`
+	Body         string             `yaml:"body"`
+	Mode         string             `yaml:"mode"`
+	Listen       ListenConfig       `yaml:"listen"`
+	Backend      BackendConfig      `yaml:"backend"`
+	Limits       LimitConfig        `yaml:"limits"`
+	Health       HealthConfig       `yaml:"health"`
+	TLS          TLSConfig          `yaml:"tls"`
+	Cache        CacheConfig        `yaml:"cache"`
+	PreparedStmt PreparedStmtConfig `yaml:"prepared_stmt"`
+	Routing      RoutingConfig      `yaml:"routing"`
+	Transaction  TransactionConfig  `yaml:"transaction"`
+	AuthMode     string             `yaml:"auth_mode"` // "passthrough" or "interception"
 }
 
 // ListenConfig contains listener settings.
@@ -208,7 +208,7 @@ type AdminDashboardConfig struct {
 	Path         string         `yaml:"path"`
 	ReadTimeout  string         `yaml:"read_timeout"`
 	WriteTimeout string         `yaml:"write_timeout"`
-	Auth    RESTAuthConfig `yaml:"auth"`
+	Auth         RESTAuthConfig `yaml:"auth"`
 }
 
 // AdminConfig contains management interface settings.

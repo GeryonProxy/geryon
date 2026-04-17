@@ -32,10 +32,10 @@ type Protocol struct {
 	syncInterval   time.Duration
 
 	// Channels
-	stopCh      chan struct{}
-	eventCh     chan Event
-	readyCh     chan struct{} // closed when protocol is fully started
-	readyOnce   sync.Once     // ensures readyCh is closed only once
+	stopCh    chan struct{}
+	eventCh   chan Event
+	readyCh   chan struct{} // closed when protocol is fully started
+	readyOnce sync.Once     // ensures readyCh is closed only once
 
 	// Networking
 	listener net.PacketConn

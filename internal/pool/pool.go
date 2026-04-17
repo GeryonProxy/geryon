@@ -116,9 +116,9 @@ type ServerConn struct {
 	lastUsedAt    atomic.Value // time.Time
 	txnActive     atomic.Bool
 	mu            sync.Mutex
-	preparedStmts map[string]bool // stmt name -> exists, lazy-allocated
+	preparedStmts map[string]bool   // stmt name -> exists, lazy-allocated
 	paramStatus   map[string]string // PostgreSQL parameter status, lazy-allocated
-	capabilities  uint32 // MySQL capability flags
+	capabilities  uint32            // MySQL capability flags
 	inUse         atomic.Bool
 	resetPending  atomic.Bool
 }

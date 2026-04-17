@@ -486,7 +486,7 @@ func TestSSPI_TokenStream(t *testing.T) {
 	// SSPI token: type + 2-byte length (LE) + length bytes of data
 	sspiData := []byte{TokenTypeSSPI}
 	sspiData = binary.LittleEndian.AppendUint16(sspiData, 8) // 8 bytes of SSPI data
-	sspiData = append(sspiData, make([]byte, 8)...)           // actual SSPI payload
+	sspiData = append(sspiData, make([]byte, 8)...)          // actual SSPI payload
 
 	// ENV_CHANGE token: type + 2-byte length + length bytes
 	envData := []byte{TokenTypeEnvChange}

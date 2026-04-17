@@ -334,13 +334,13 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, map[string]any{
-		"total_connections": totalActiveConnections + totalIdleConnections,
-		"active_pools":      len(s.poolMgr.ListPools()),
-		"queries_per_sec":   totalQueries,
-		"cache_hit_rate":    cacheHitRate,
-		"total_queries":     totalQueries,
-		"total_transactions": totalTransactions,
-		"cached_queries":    totalCacheEntries,
+		"total_connections":   totalActiveConnections + totalIdleConnections,
+		"active_pools":        len(s.poolMgr.ListPools()),
+		"queries_per_sec":     totalQueries,
+		"cache_hit_rate":      cacheHitRate,
+		"total_queries":       totalQueries,
+		"total_transactions":  totalTransactions,
+		"cached_queries":      totalCacheEntries,
 		"active_transactions": totalActiveConnections,
 	})
 }
@@ -436,11 +436,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		poolConfigs = append(poolConfigs, map[string]any{
 			"name":               stats.Name,
 			"mode":               stats.Mode,
-			"client_connections":  stats.ClientConnections,
-			"server_connections":  stats.ServerConnections,
-			"backend_count":       stats.BackendCount,
-			"total_queries":       stats.TotalQueries,
-			"cache_hit_rate":      stats.QueryCacheHitRate,
+			"client_connections": stats.ClientConnections,
+			"server_connections": stats.ServerConnections,
+			"backend_count":      stats.BackendCount,
+			"total_queries":      stats.TotalQueries,
+			"cache_hit_rate":     stats.QueryCacheHitRate,
 		})
 	}
 
