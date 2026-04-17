@@ -49,7 +49,7 @@ func TestDashboard_WithAuth_WrongToken(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: "secret"}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -74,7 +74,7 @@ func TestDashboard_WithAuth_InvalidFormat(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: "secret"}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -115,7 +115,7 @@ func TestDashboard_HandleStats_WithPools(t *testing.T) {
 		},
 	}
 	pm.CreatePool(poolCfg)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -154,7 +154,7 @@ func TestDashboard_HandleBackends_WithPools(t *testing.T) {
 		},
 	}
 	pm.CreatePool(poolCfg)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -193,7 +193,7 @@ func TestDashboard_HandlePools_WithPools(t *testing.T) {
 		},
 	}
 	pm.CreatePool(poolCfg)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -232,7 +232,7 @@ func TestDashboard_HandleQueries_WithPools(t *testing.T) {
 		},
 	}
 	pm.CreatePool(poolCfg)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -257,7 +257,7 @@ func TestDashboard_HandleConfigReload_Error(t *testing.T) {
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, func() error {
 		return fmt.Errorf("reload failed")
-	})
+	}, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -287,7 +287,7 @@ func TestDashboard_Stop_NilServer(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: false, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	err := s.Start()
 	if err != nil {
@@ -321,7 +321,7 @@ func TestDashboard_HandleConnections_WithPoolsData(t *testing.T) {
 		},
 	}
 	pm.CreatePool(poolCfg)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -349,7 +349,7 @@ func TestDashboard_ConfigReload_NoReloadFn(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -441,7 +441,7 @@ func TestDashboard_HandleConnections_ActiveTxns(t *testing.T) {
 		p.TransactionManager().Register(1, 1, nil)
 	}
 
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -507,7 +507,7 @@ func TestDashboard_HandleStats_WithCacheHitRate(t *testing.T) {
 		p.IncrementQueryCount()
 	}
 
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -543,7 +543,7 @@ func TestDashboard_HandleIndex_NonRootPath(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	req := httptest.NewRequest("GET", "/some/random/path", nil)
 	rr := httptest.NewRecorder()
@@ -561,7 +561,7 @@ func TestDashboard_WithRateLimit_NonHostPort(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	// Create a handler that records whether it was called
 	called := false
@@ -589,7 +589,7 @@ func TestDashboard_ConfigReload_NilReloadFn_Direct(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/config", nil)
 	rr := httptest.NewRecorder()

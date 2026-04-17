@@ -62,7 +62,7 @@ func TestHandleConnections_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestHandleStats_WithListenersAndQPS(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestHandleStats_WithCacheHitRate(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, pm, nil, log, "", nil)
+	s, _ := NewServer(cfg, pm, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/stats", nil)
 	rr := httptest.NewRecorder()
@@ -184,7 +184,7 @@ func TestHandleQueries_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestHandleTransactions_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestHandleActiveTransactions_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestHandleSlowQueries_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestHandleRecentQueries_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestHandleTLSStatus_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestHandleMetrics_WithListeners(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestHandleStatsStream_WithListeners(t *testing.T) {
 		AllowedOrigins: []string{"http://example.com"},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestHandleReady_OverloadedPool(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, pm, nil, log, "", nil)
+	s, _ := NewServer(cfg, pm, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/ready", nil)
 	rr := httptest.NewRecorder()
@@ -582,7 +582,7 @@ func TestHandleStats_WithQueryLoggerStats(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -624,7 +624,7 @@ func TestHandleStatsStream_WithListeners_LongRun(t *testing.T) {
 		AllowedOrigins: []string{"http://example.com"},
 	}
 	log, _ := logger.New("error", "json")
-	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil)
+	s, err := NewServer(cfg, pm, []*proxy.Listener{l}, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}

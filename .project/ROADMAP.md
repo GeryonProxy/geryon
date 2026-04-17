@@ -114,7 +114,11 @@ Geryon is a feature-rich multi-database proxy with all three protocol bodies, th
 - [ ] Automated backup/restore for Raft state
 - [ ] Multi-tenant support (isolated pool groups per tenant)
 - [ ] Connection encryption at rest for cached results
-- [ ] Dashboard: Users page, full config editor, time-series QPS tracking
+- [ ] Dashboard: time-series QPS tracking
+
+### Completed Beyond v1.0
+- [x] **Dashboard: Users page** — Full CRUD with safe DOM-based modal form. `cmd/geryon/static/app.js:1235`. Dashboard server wired with `userDB`. REST + Dashboard APIs for list/create/delete.
+- [x] **Dashboard: Full config editor** — YAML editor with save/validate via `PUT /api/v1/config/file`. Atomic file writes with pre-save validation. `internal/api/rest/server.go:961`, `cmd/geryon/static/app.js:1074`.
 
 ### Completed TODOs (v1.0.1)
 - [x] **PeerCertificate stub** — Implemented: casts `interface{}` to `*tls.ConnectionState`, returns first peer cert. `internal/auth/cert.go:385`
@@ -123,6 +127,8 @@ Geryon is a feature-rich multi-database proxy with all three protocol bodies, th
 - [x] **Dashboard cache metrics wrong calculation** — Uses actual `QueryCacheHits`/`QueryCacheMisses` counters instead of estimating from hit rate. `internal/api/dashboard/server.go:307`
 - [x] **Dashboard config API returns minimal data** — Now returns pool configs (name, mode, connections, backends, queries, cache). `internal/api/dashboard/server.go:416`
 - [x] **PasswordFile TODO comment** — Cleaned stale "M-12: planned" comment; field is already implemented in `internal/proxy/listener.go`.
+- [x] **Users management (REST + Dashboard)** — Full CRUD via REST API and dashboard UI with safe DOM modal. `internal/api/rest/server.go:1442`, `internal/api/dashboard/server.go:478`, `cmd/geryon/static/app.js:1235`.
+- [x] **Config file API (read/write/validate)** — `GET/PUT /api/v1/config/file` with atomic writes and YAML validation. `internal/api/rest/server.go:961`. Dashboard YAML editor with save/validate buttons. `cmd/geryon/static/app.js:1074`.
 
 ## Effort Summary
 

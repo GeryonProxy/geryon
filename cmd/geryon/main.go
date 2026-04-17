@@ -226,7 +226,7 @@ func main() {
 	}
 
 	// Create and start REST API server
-	restServer, err := rest.NewServer(&cfg.Admin.REST, poolMgr, listeners, log, *configPath, reloadFn)
+	restServer, err := rest.NewServer(&cfg.Admin.REST, poolMgr, listeners, log, *configPath, reloadFn, userDB)
 	if err != nil {
 		log.Error("Failed to create REST server", "error", err)
 		os.Exit(1)
@@ -250,7 +250,7 @@ func main() {
 		Listen:  cfg.Admin.Dashboard.Listen,
 		Path:    cfg.Admin.Dashboard.Path,
 		Auth:    cfg.Admin.Dashboard.Auth,
-	}, poolMgr, log, reloadFn)
+	}, poolMgr, log, reloadFn, userDB)
 	if err := dashboardServer.Start(); err != nil {
 		log.Error("Failed to start dashboard server", "error", err)
 		os.Exit(1)

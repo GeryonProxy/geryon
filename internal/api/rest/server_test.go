@@ -95,7 +95,7 @@ func TestNewServer(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, err := NewServer(cfg, nil, nil, log, "", nil)
+	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestServer_StartStop(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, err := NewServer(cfg, nil, nil, log, "", nil)
+	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestServer_ReadyEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestServer_PoolsEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestServer_StatsEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestServer_BackendsEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestServer_TransactionsEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestServer_MetricsEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false, Token: "test-token"},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestServer_ConfigReloadEndpoint(t *testing.T) {
 	s, err := NewServer(cfg, pm, nil, log, "", func() error {
 		reloaded = true
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestServer_ConfigEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestServer_TLSStatusEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestServer_ConnectionsEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestServer_QueriesEndpoint(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestServer_AuthEnabled_RejectsWithoutToken(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "secret"},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestServer_isAllowedOrigin(t *testing.T) {
 				Auth:           config.RESTAuthConfig{Enabled: false},
 				AllowedOrigins: tt.origins,
 			}
-			s, err := NewServer(cfg, nil, nil, log, "", nil)
+			s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 			if err != nil {
 				t.Fatalf("NewServer failed: %v", err)
 			}
@@ -589,7 +589,7 @@ func TestServer_Start_AlreadyStarted(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, err := NewServer(cfg, nil, nil, log, "", nil)
+	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, err := NewServer(cfg, nil, nil, log, "", nil)
+	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -776,7 +776,7 @@ func TestHandlePoolDetail_NotFound(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	// Create a pool manager with no pools
 	pm := pool.NewManager(log)
@@ -801,7 +801,7 @@ func TestHandleSlowQueries(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/queries/slow", nil)
 	rr := httptest.NewRecorder()
@@ -829,7 +829,7 @@ func TestHandleRecentQueries(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/queries/recent", nil)
 	rr := httptest.NewRecorder()
@@ -857,7 +857,7 @@ func TestHandleActiveTransactions(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/transactions/active", nil)
 	rr := httptest.NewRecorder()
@@ -885,7 +885,7 @@ func TestHandleBackendDrain_NotFound(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	// Create a pool manager with no pools
 	pm := pool.NewManager(log)
@@ -909,7 +909,7 @@ func TestHandleBackendCancelDrain_NotFound(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	// Create a pool manager with no pools
 	pm := pool.NewManager(log)
@@ -933,7 +933,7 @@ func TestHandleBackendAction_InvalidMethod(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	// Test with PUT (not POST)
 	req := httptest.NewRequest("PUT", "/api/v1/backends/action", nil)
@@ -953,7 +953,7 @@ func TestHandleConnections_InvalidMethod(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	// Test with POST (not GET)
 	req := httptest.NewRequest("POST", "/api/v1/connections", nil)
@@ -973,7 +973,7 @@ func TestHandleConfig_InvalidMethod(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	// Test with DELETE (not GET or POST)
 	req := httptest.NewRequest("DELETE", "/api/v1/config", nil)
@@ -992,7 +992,7 @@ func TestHandleSlowQueries_Limit(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/queries/slow?limit=10", nil)
 	rr := httptest.NewRecorder()
@@ -1019,7 +1019,7 @@ func TestHandleSlowQueries_InvalidLimit(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/queries/slow?limit=abc", nil)
 	rr := httptest.NewRecorder()
@@ -1037,7 +1037,7 @@ func TestHandleSlowQueries_InvalidMethod(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/queries/slow", nil)
 	rr := httptest.NewRecorder()
@@ -1055,7 +1055,7 @@ func TestHandleRecentQueries_Limit(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/queries/recent?limit=25", nil)
 	rr := httptest.NewRecorder()
@@ -1082,7 +1082,7 @@ func TestHandleRecentQueries_InvalidMethod(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/queries/recent", nil)
 	rr := httptest.NewRecorder()
@@ -1100,7 +1100,7 @@ func TestHandleActiveTransactions_InvalidMethod(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/transactions", nil)
 	rr := httptest.NewRecorder()
@@ -1118,7 +1118,7 @@ func TestHandleActiveTransactions_Response(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/transactions", nil)
 	rr := httptest.NewRecorder()
@@ -1166,7 +1166,7 @@ func TestHandlePoolDetail_WithPool(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, pm, nil, log, "", nil)
+	s, _ := NewServer(cfg, pm, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/pools/detail-pool", nil)
 	rr := httptest.NewRecorder()
@@ -1211,7 +1211,7 @@ func TestHandlePoolDetail_NotFound_InvalidName(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
-	s, _ := NewServer(cfg, pm, nil, log, "", nil)
+	s, _ := NewServer(cfg, pm, nil, log, "", nil, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/pools/nonexistent", nil)
 	rr := httptest.NewRecorder()

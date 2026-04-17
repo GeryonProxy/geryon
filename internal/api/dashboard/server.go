@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/GeryonProxy/geryon/internal/auth"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -28,6 +29,7 @@ var staticFS embed.FS
 // Server serves the web dashboard.
 type Server struct {
 	poolMgr     *pool.Manager
+	userDB      *auth.UserDatabase
 	log         *logger.Logger
 	server      *http.Server
 	config      *Config
@@ -47,10 +49,11 @@ type Config struct {
 }
 
 // NewServer creates a new dashboard server.
-func NewServer(cfg *Config, poolMgr *pool.Manager, log *logger.Logger, reloadFn func() error) *Server {
+func NewServer(cfg *Config, poolMgr *pool.Manager, log *logger.Logger, reloadFn func() error, userDB *auth.UserDatabase) *Server {
 	return &Server{
 		config:      cfg,
 		poolMgr:     poolMgr,
+		userDB:      userDB,
 		log:         log,
 		authEnabled: cfg.Auth.Enabled,
 		authToken:   cfg.Auth.Token,
@@ -84,7 +87,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/backends", s.handleBackends)
 	mux.HandleFunc("/api/v1/connections", s.handleConnections)
 	mux.HandleFunc("/api/v1/queries", s.handleQueries)
+	mux.HandleFunc("/api/v1/transactions", s.handleTransactions)
 	mux.HandleFunc("/api/v1/config", s.handleConfig)
+	mux.HandleFunc("/api/v1/users", s.handleUsers)
+	mux.HandleFunc("/api/v1/users/", s.handleUserDetail)
 
 	readTimeout := parseDuration(s.config.ReadTimeout, 30*time.Second)
 	writeTimeout := parseDuration(s.config.WriteTimeout, 30*time.Second)
@@ -460,6 +466,166 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.writeJSON(w, map[string]any{"status": "reloaded"})
+}
+
+// handleTransactions returns transaction statistics.
+func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
+	var totalTransactions int64
+	var activeTransactions int
+
+	for _, p := range s.poolMgr.ListPools() {
+		stats := p.Stats()
+		totalTransactions += stats.TotalTransactions
+		activeTransactions += stats.ActiveTransactions
+	}
+
+	s.writeJSON(w, map[string]any{
+		"total_transactions":  totalTransactions,
+		"active_transactions": activeTransactions,
+		"aborted_count":       0,
+	})
+}
+
+// handleUsers lists users (GET) or creates a new user (POST).
+func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListUsers(w, r)
+	case http.MethodPost:
+		s.handleCreateUser(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleListUsers returns all users.
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	if s.userDB == nil {
+		s.writeJSON(w, map[string]any{"users": []any{}})
+		return
+	}
+
+	users := s.userDB.ListUsers()
+	result := make([]map[string]any, 0, len(users))
+	for _, u := range users {
+		result = append(result, map[string]any{
+			"username":        u.Username,
+			"max_connections": u.MaxConnections,
+			"default_pool":    u.DefaultPool,
+			"allowed_pools":   u.AllowedPools,
+		})
+	}
+	s.writeJSON(w, map[string]any{"users": result})
+}
+
+// handleCreateUser creates a new user.
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	if s.userDB == nil {
+		s.writeJSON(w, map[string]any{"error": "user database not available"})
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var req struct {
+		Username       string   `json:"username"`
+		PasswordHash   string   `json:"password_hash"`
+		MaxConnections int      `json:"max_connections"`
+		DefaultPool    string   `json:"default_pool"`
+		AllowedPools   []string `json:"allowed_pools"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeJSON(w, map[string]any{"error": "invalid request body"})
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if req.Username == "" {
+		s.writeJSON(w, map[string]any{"error": "username is required"})
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if req.PasswordHash == "" {
+		s.writeJSON(w, map[string]any{"error": "password_hash is required"})
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Check if user already exists
+	if s.userDB.GetUser(req.Username) != nil {
+		s.writeJSON(w, map[string]any{"error": "user already exists"})
+		w.WriteHeader(http.StatusConflict)
+		return
+	}
+
+	// Generate SCRAM-SHA-256 hash from plaintext password
+	hash, err := auth.GenerateSCRAMHash(req.PasswordHash)
+	if err != nil {
+		s.writeJSON(w, map[string]any{"error": "failed to hash password: " + err.Error()})
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	user := &auth.User{
+		Username:       req.Username,
+		PasswordHash:   hash,
+		MaxConnections: req.MaxConnections,
+		DefaultPool:    req.DefaultPool,
+		AllowedPools:   req.AllowedPools,
+	}
+
+	if err := s.userDB.AddUser(user); err != nil {
+		s.writeJSON(w, map[string]any{"error": err.Error()})
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	s.log.Info("User created via dashboard", "username", req.Username)
+	w.WriteHeader(http.StatusCreated)
+	s.writeJSON(w, map[string]any{"status": "created", "username": req.Username})
+}
+
+// handleUserDetail returns or deletes a single user.
+func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
+	if s.userDB == nil {
+		s.writeJSON(w, map[string]any{"error": "user database not available"})
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	username := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
+	if username == "" {
+		s.writeJSON(w, map[string]any{"error": "username required"})
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		user := s.userDB.GetUser(username)
+		if user == nil {
+			s.writeJSON(w, map[string]any{"error": "user not found"})
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, map[string]any{
+			"username":        user.Username,
+			"max_connections": user.MaxConnections,
+			"default_pool":    user.DefaultPool,
+			"allowed_pools":   user.AllowedPools,
+		})
+	case http.MethodDelete:
+		if err := s.userDB.RemoveUser(username); err != nil {
+			s.writeJSON(w, map[string]any{"error": err.Error()})
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		s.log.Info("User deleted via dashboard", "username", username)
+		s.writeJSON(w, map[string]any{"status": "deleted", "username": username})
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // writeJSON writes JSON response.

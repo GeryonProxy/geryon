@@ -112,6 +112,9 @@
             case 'config':
                 loadConfig(content);
                 break;
+            case 'users':
+                loadUsers(content);
+                break;
             default:
                 loading.textContent = 'Page not found';
         }
@@ -1075,20 +1078,149 @@
         const card = document.createElement('div');
         card.className = 'card';
 
-        const title = document.createElement('h3');
-        title.textContent = 'Configuration';
-        card.appendChild(title);
+        const header = document.createElement('div');
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;';
 
-        const content = document.createElement('div');
-        content.id = 'config-content';
-        content.textContent = 'Loading configuration...';
-        card.appendChild(content);
+        const title = document.createElement('h3');
+        title.textContent = 'Configuration Editor';
+        header.appendChild(title);
+
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display: flex; gap: 8px;';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn btn-primary';
+        saveBtn.textContent = 'Save Config';
+        saveBtn.id = 'save-config-btn';
+        saveBtn.onclick = () => saveConfig();
+        actions.appendChild(saveBtn);
+
+        const validateBtn = document.createElement('button');
+        validateBtn.className = 'btn btn-secondary';
+        validateBtn.textContent = 'Validate';
+        validateBtn.onclick = () => validateConfig();
+        actions.appendChild(validateBtn);
+
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        const editorWrapper = document.createElement('div');
+        editorWrapper.style.cssText = 'position: relative;';
+
+        const editor = document.createElement('textarea');
+        editor.id = 'config-editor';
+        editor.style.cssText = 'width: 100%; min-height: 500px; font-family: "Cascadia Code", "Fira Code", monospace; font-size: 13px; line-height: 1.5; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); color: var(--text-primary); resize: vertical; tab-size: 2;';
+        editor.spellcheck = false;
+        editor.placeholder = 'Loading configuration...';
+        editorWrapper.appendChild(editor);
+
+        card.appendChild(editorWrapper);
+
+        // Status bar
+        const statusBar = document.createElement('div');
+        statusBar.id = 'config-status';
+        statusBar.style.cssText = 'margin-top: 12px; padding: 8px 12px; border-radius: 6px; font-size: 13px; display: none;';
+        card.appendChild(statusBar);
 
         container.appendChild(card);
-        fetchConfig();
+        fetchConfigFile();
     }
 
-    // Fetch configuration
+    // Fetch config file from API
+    async function fetchConfigFile() {
+        try {
+            const response = await fetch('/api/v1/config/file');
+            if (!response.ok) throw new Error('Failed to fetch config file');
+            const text = await response.text();
+            const editor = document.getElementById('config-editor');
+            if (editor) editor.value = text;
+        } catch (err) {
+            const editor = document.getElementById('config-editor');
+            if (editor) {
+                editor.value = '# Error loading config: ' + err.message + '\n# Falling back to JSON view...\n';
+            }
+            // Fallback to JSON config
+            fetchConfigFallback();
+        }
+    }
+
+    // Fallback: fetch JSON config if YAML endpoint fails
+    async function fetchConfigFallback() {
+        try {
+            const response = await fetch('/api/v1/config');
+            if (!response.ok) throw new Error('Failed to fetch config');
+            const data = await response.json();
+            const editor = document.getElementById('config-editor');
+            if (editor) editor.value += '\n' + JSON.stringify(data, null, 2);
+        } catch (err) {
+            console.error('Config fallback also failed:', err);
+        }
+    }
+
+    // Save config file
+    async function saveConfig() {
+        const editor = document.getElementById('config-editor');
+        const saveBtn = document.getElementById('save-config-btn');
+        if (!editor || !saveBtn) return;
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+
+        try {
+            const response = await fetch('/api/v1/config/file', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'text/yaml' },
+                body: editor.value
+            });
+
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || 'Save failed');
+
+            showConfigStatus('Configuration saved successfully. Click "Reload Config" to apply changes.', 'success');
+        } catch (err) {
+            showConfigStatus('Failed to save: ' + err.message, 'error');
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Config';
+        }
+    }
+
+    // Validate config without saving
+    async function validateConfig() {
+        const editor = document.getElementById('config-editor');
+        if (!editor) return;
+
+        try {
+            const response = await fetch('/api/v1/config/file', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'text/yaml' },
+                body: editor.value
+            });
+
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                showConfigStatus('Validation failed: ' + (data.error || 'Unknown error'), 'error');
+                return;
+            }
+            showConfigStatus('Configuration is valid', 'success');
+        } catch (err) {
+            showConfigStatus('Validation failed: ' + err.message, 'error');
+        }
+    }
+
+    // Show config status message
+    function showConfigStatus(message, type) {
+        const statusBar = document.getElementById('config-status');
+        if (!statusBar) return;
+        statusBar.style.display = 'block';
+        statusBar.style.background = type === 'success' ? 'rgba(52, 211, 153, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+        statusBar.style.color = type === 'success' ? 'var(--success)' : 'var(--error)';
+        statusBar.style.border = '1px solid ' + (type === 'success' ? 'var(--success)' : 'var(--error)');
+        statusBar.textContent = message;
+        setTimeout(() => { statusBar.style.display = 'none'; }, 5000);
+    }
+
+    // Fetch configuration (legacy)
     async function fetchConfig() {
         try {
             const response = await fetch('/api/v1/config');
@@ -1226,6 +1358,242 @@
         }
         if (elements.statusIndicator) {
             elements.statusIndicator.className = 'status-indicator ' + (connected ? 'online' : 'offline');
+        }
+    }
+
+    // Load users page
+    function loadUsers(container) {
+        container.textContent = '';
+
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const header = document.createElement('div');
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;';
+
+        const title = document.createElement('h3');
+        title.textContent = 'Users';
+        header.appendChild(title);
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'btn btn-primary';
+        addBtn.textContent = 'Add User';
+        addBtn.onclick = () => showAddUserModal();
+        header.appendChild(addBtn);
+
+        card.appendChild(header);
+
+        const content = document.createElement('div');
+        content.id = 'users-content';
+        content.textContent = 'Loading users...';
+        card.appendChild(content);
+
+        container.appendChild(card);
+        fetchUsers();
+    }
+
+    // Fetch users from API
+    async function fetchUsers() {
+        try {
+            const response = await fetch('/api/v1/users');
+            if (!response.ok) throw new Error('Failed to fetch users');
+            const data = await response.json();
+            updateUsersContent(data);
+        } catch (err) {
+            const content = document.getElementById('users-content');
+            if (content) content.textContent = 'Error loading users: ' + err.message;
+        }
+    }
+
+    // Update users content
+    function updateUsersContent(data) {
+        const container = document.getElementById('users-content');
+        if (!container) return;
+        container.textContent = '';
+
+        if (!data.users || data.users.length === 0) {
+            container.textContent = 'No users configured';
+            return;
+        }
+
+        const table = document.createElement('table');
+        table.className = 'data-table';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['Username', 'Max Connections', 'Default Pool', 'Allowed Pools', 'Actions'].forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        data.users.forEach(user => {
+            const row = document.createElement('tr');
+
+            const nameCell = document.createElement('td');
+            nameCell.textContent = user.username || '-';
+
+            const maxConnCell = document.createElement('td');
+            maxConnCell.textContent = user.max_connections || 0;
+
+            const defaultPoolCell = document.createElement('td');
+            defaultPoolCell.textContent = user.default_pool || '-';
+
+            const allowedPoolsCell = document.createElement('td');
+            allowedPoolsCell.textContent = (user.allowed_pools && user.allowed_pools.length > 0) ? user.allowed_pools.join(', ') : '*';
+
+            const actionsCell = document.createElement('td');
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-secondary';
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.addEventListener('click', () => deleteUser(user.username));
+            actionsCell.appendChild(deleteBtn);
+
+            row.appendChild(nameCell);
+            row.appendChild(maxConnCell);
+            row.appendChild(defaultPoolCell);
+            row.appendChild(allowedPoolsCell);
+            row.appendChild(actionsCell);
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+
+    // Delete user
+    async function deleteUser(username) {
+        if (!confirm('Delete user "' + username + '"?')) return;
+        try {
+            const response = await fetch('/api/v1/users/' + encodeURIComponent(username), {
+                method: 'DELETE'
+            });
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Delete failed');
+            }
+            showNotification('User "' + username + '" deleted', 'success');
+            fetchUsers();
+        } catch (err) {
+            showNotification('Failed to delete user: ' + err.message, 'error');
+        }
+    }
+
+    // Show add user modal using safe DOM methods
+    function showAddUserModal() {
+        // Create modal overlay
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+
+        // Create modal content
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background: var(--bg-secondary); border-radius: 12px; padding: 24px; max-width: 500px; width: 90%;';
+
+        // Header
+        const header = document.createElement('div');
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;';
+
+        const modalTitle = document.createElement('h2');
+        modalTitle.textContent = 'Add User';
+        modalTitle.style.margin = '0';
+        header.appendChild(modalTitle);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '\u2715';
+        closeBtn.style.cssText = 'background: none; border: none; color: var(--text-primary); font-size: 20px; cursor: pointer;';
+        closeBtn.onclick = () => overlay.remove();
+        header.appendChild(closeBtn);
+        modal.appendChild(header);
+
+        // Form fields
+        const fields = [
+            { id: 'new-username', label: 'Username', type: 'text', placeholder: 'Enter username' },
+            { id: 'new-password', label: 'Password', type: 'password', placeholder: 'Enter password' },
+            { id: 'new-max-connections', label: 'Max Connections', type: 'number', placeholder: '0 = unlimited', value: '0' },
+            { id: 'new-default-pool', label: 'Default Pool', type: 'text', placeholder: 'Optional' },
+            { id: 'new-allowed-pools', label: 'Allowed Pools (comma-separated)', type: 'text', placeholder: 'Empty = all pools' }
+        ];
+
+        fields.forEach(field => {
+            const group = document.createElement('div');
+            group.style.cssText = 'margin-bottom: 16px;';
+
+            const label = document.createElement('label');
+            label.textContent = field.label;
+            label.style.cssText = 'display: block; margin-bottom: 4px; color: var(--text-secondary); font-size: 14px;';
+            group.appendChild(label);
+
+            const input = document.createElement('input');
+            input.type = field.type;
+            input.id = field.id;
+            input.className = 'form-input';
+            input.placeholder = field.placeholder || '';
+            if (field.value !== undefined) input.value = field.value;
+            input.style.cssText = 'width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-primary);';
+            group.appendChild(input);
+
+            modal.appendChild(group);
+        });
+
+        // Submit button
+        const submitBtn = document.createElement('button');
+        submitBtn.className = 'btn btn-primary';
+        submitBtn.textContent = 'Create User';
+        submitBtn.style.cssText = 'width: 100%; margin-top: 8px;';
+        submitBtn.onclick = () => createUser(overlay);
+        modal.appendChild(submitBtn);
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        // Close on overlay click
+        overlay.onclick = (e) => {
+            if (e.target === overlay) overlay.remove();
+        };
+    }
+
+    // Create user from modal form
+    async function createUser(overlay) {
+        const username = document.getElementById('new-username').value.trim();
+        const password = document.getElementById('new-password').value.trim();
+        const maxConnections = parseInt(document.getElementById('new-max-connections').value) || 0;
+        const defaultPool = document.getElementById('new-default-pool').value.trim() || null;
+        const allowedPoolsStr = document.getElementById('new-allowed-pools').value.trim();
+
+        if (!username) {
+            showNotification('Username is required', 'error');
+            return;
+        }
+        if (!password) {
+            showNotification('Password is required', 'error');
+            return;
+        }
+
+        const body = {
+            username: username,
+            password_hash: password,
+            max_connections: maxConnections
+        };
+        if (defaultPool) body.default_pool = defaultPool;
+        if (allowedPoolsStr) body.allowed_pools = allowedPoolsStr.split(',').map(s => s.trim()).filter(s => s);
+
+        try {
+            const response = await fetch('/api/v1/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || 'Create failed');
+            }
+            showNotification('User "' + username + '" created', 'success');
+            overlay.remove();
+            fetchUsers();
+        } catch (err) {
+            showNotification('Failed to create user: ' + err.message, 'error');
         }
     }
 

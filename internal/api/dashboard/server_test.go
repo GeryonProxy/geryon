@@ -43,7 +43,7 @@ func TestNewServer(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 	if s == nil {
 		t.Fatal("NewServer returned nil")
 	}
@@ -53,7 +53,7 @@ func TestServer_Disabled(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: false, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	// Start should succeed but do nothing
 	err := s.Start()
@@ -66,7 +66,7 @@ func TestServer_StartStop(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	err := s.Start()
 	if err != nil {
@@ -84,7 +84,7 @@ func TestDashboard_HealthEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -115,7 +115,7 @@ func TestDashboard_StatsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -138,7 +138,7 @@ func TestDashboard_PoolsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -161,7 +161,7 @@ func TestDashboard_BackendsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -184,7 +184,7 @@ func TestDashboard_ConnectionsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -207,7 +207,7 @@ func TestDashboard_QueriesEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -230,7 +230,7 @@ func TestDashboard_ConfigEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -265,7 +265,7 @@ func TestDashboard_ConfigReload(t *testing.T) {
 	s := NewServer(cfg, pm, log, func() error {
 		reloaded = true
 		return nil
-	})
+	}, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -291,7 +291,7 @@ func TestDashboard_Auth_RejectsWithoutToken(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: "dashboard-secret"}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -328,7 +328,7 @@ func TestDashboard_SecurityHeaders(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -353,7 +353,7 @@ func TestWriteJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	rr := httptest.NewRecorder()
 	s.writeJSON(rr, map[string]string{"key": "value"})
@@ -406,7 +406,7 @@ func TestHandleConnections(t *testing.T) {
 
 	t.Run("no_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil)
 
 		req := httptest.NewRequest("GET", "/api/connections", nil)
 		rr := httptest.NewRecorder()
@@ -452,7 +452,7 @@ func TestHandleConnections(t *testing.T) {
 		}
 		pm.CreatePool(poolCfg)
 
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil)
 
 		req := httptest.NewRequest("GET", "/api/connections", nil)
 		rr := httptest.NewRecorder()
@@ -494,7 +494,7 @@ func TestDashboard_HandleIndex(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)

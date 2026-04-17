@@ -24,7 +24,7 @@ func newTestServer(t *testing.T) (*Server, *pool.Manager) {
 		Auth:   config.RESTAuthConfig{Enabled: false},
 	}
 	pm := pool.NewManager(log)
-	s, err := NewServer(cfg, pm, nil, log, "", nil)
+	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestWithAuth_Enabled_ValidBearer(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "mysecret"},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	called := false
 	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +131,7 @@ func TestWithAuth_Enabled_NoHeader(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "mysecret"},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not call next handler")
@@ -152,7 +152,7 @@ func TestWithAuth_LowercaseBearer(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "mysecret"},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	called := false
 	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +176,7 @@ func TestWithAuth_BearerWithSpaces(t *testing.T) {
 		Listen: "127.0.0.1:0",
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "mysecret"},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("Should not call next handler")
@@ -246,7 +246,7 @@ func TestIsAllowedOrigin_Wildcard(t *testing.T) {
 		Auth:           config.RESTAuthConfig{Enabled: false},
 		AllowedOrigins: []string{"*"},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	if !s.isAllowedOrigin("http://anything.com") {
 		t.Error("Wildcard should allow any origin")
@@ -260,7 +260,7 @@ func TestIsAllowedOrigin_ExactMatch(t *testing.T) {
 		Auth:           config.RESTAuthConfig{Enabled: false},
 		AllowedOrigins: []string{"http://localhost:3000"},
 	}
-	s, _ := NewServer(cfg, nil, nil, log, "", nil)
+	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
 	if !s.isAllowedOrigin("http://localhost:3000") {
 		t.Error("Exact origin match should be allowed")
@@ -403,7 +403,7 @@ func TestHandleConfigReload_SuccessPath(t *testing.T) {
 	s, _ := NewServer(cfg, nil, nil, log, "", func() error {
 		reloadCalled = true
 		return nil
-	})
+	}, nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/config/reload", nil)
 	rr := httptest.NewRecorder()
@@ -447,7 +447,7 @@ func TestHandleConfigReload_ErrorPath(t *testing.T) {
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", func() error {
 		return fmt.Errorf("reload error")
-	})
+	}, nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/config/reload", nil)
 	rr := httptest.NewRecorder()
