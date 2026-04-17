@@ -671,16 +671,13 @@ func TestWriteProtoResponse(t *testing.T) {
 	s := NewServer(cfg, nil, log, nil)
 
 	rr := httptest.NewRecorder()
-	s.writeProtoResponse(rr, map[string]string{"key": "value"})
+	s.writeJSONResponse(rr, map[string]string{"key": "value"})
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("Status = %d, want 200", rr.Code)
 	}
-	if rr.Header().Get("Content-Type") != "application/grpc+proto" {
-		t.Errorf("Content-Type = %q, want application/grpc+proto", rr.Header().Get("Content-Type"))
-	}
-	if rr.Header().Get("grpc-status") != "0" {
-		t.Errorf("grpc-status = %q, want 0", rr.Header().Get("grpc-status"))
+	if rr.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", rr.Header().Get("Content-Type"))
 	}
 }
 

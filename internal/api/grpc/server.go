@@ -1,6 +1,7 @@
-// Package grpc provides the HTTP/2 admin API for programmatic management
-// of the Geryon proxy. It uses JSON-over-HTTP/2 with server-sent events
-// for streaming stats, pool CRUD, backend management, and config reload.
+// Package grpc provides a JSON-over-HTTP admin API for programmatic management
+// of the Geryon proxy. Despite the package name, this uses JSON encoding rather
+// than protobuf/gRPC to maintain zero-dependency operation. The package name is
+// retained for import compatibility.
 package grpc
 
 import (
@@ -22,10 +23,10 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
-// Server implements an HTTP/2 Admin API for streaming stats.
-// Uses HTTP/2 with JSON serialization for zero-dependency operation.
-// Note: This provides streaming semantics similar to gRPC, but uses JSON over HTTP/2
-// rather than actual protobuf-based gRPC wire protocol.
+// Server implements an HTTP Admin API for streaming stats.
+// Uses JSON encoding with HTTP server-sent events for streaming.
+// Note: Despite the grpc package name, this is JSON-over-HTTP, not gRPC.
+// gRPC-compatible route names are retained for import compatibility.
 type Server struct {
 	mu          sync.RWMutex
 	poolMgr     *pool.Manager
@@ -107,15 +108,15 @@ func (s *Server) Start() error {
 
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.log.Error("HTTP/2 Admin API server error", "error", err)
+			s.log.Error("Admin API server error", "error", err)
 		}
 	}()
 
-	s.log.Info("HTTP/2 Admin API server started", "address", s.config.Listen)
+	s.log.Info("Admin API server started", "address", s.config.Listen)
 	return nil
 }
 
-// Stop stops the HTTP/2 Admin API server.
+// Stop stops the Admin API server.
 func (s *Server) Stop(ctx context.Context) error {
 	// Cancel all active streams
 	s.mu.Lock()
@@ -298,13 +299,9 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 	})
 }
 
-// writeProtoResponse writes a protobuf-style response.
-func (s *Server) writeProtoResponse(w http.ResponseWriter, data interface{}) {
-	w.Header().Set("Content-Type", "application/grpc+proto")
-	w.Header().Set("grpc-status", "0")
-
-	// For zero dependencies, we use JSON encoding
-	// In production with protobuf, this would use proper protobuf encoding
+// writeJSONResponse writes a JSON response.
+func (s *Server) writeJSONResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
 }
 
@@ -315,7 +312,7 @@ func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeProtoResponse(w, map[string]interface{}{
+	s.writeJSONResponse(w, map[string]interface{}{
 		"status": "SERVING",
 	})
 }
@@ -338,7 +335,7 @@ func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
 		Interval int `json:"interval"` // seconds
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		s.writeProtoResponse(w, map[string]interface{}{"error": "Invalid request body"})
+		s.writeJSONResponse(w, map[string]interface{}{"error": "Invalid request body"})
 		return
 	}
 
@@ -419,7 +416,7 @@ func (s *Server) handleGetPools(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	s.writeProtoResponse(w, map[string]interface{}{"pools": result})
+	s.writeJSONResponse(w, map[string]interface{}{"pools": result})
 }
 
 // handleGetBackends returns backend information.
@@ -453,7 +450,7 @@ func (s *Server) handleGetBackends(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeProtoResponse(w, map[string]interface{}{"backends": result})
+	s.writeJSONResponse(w, map[string]interface{}{"backends": result})
 }
 
 // handleGetConnections returns active connections.
@@ -472,7 +469,7 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 		totalServers += int64(stats.ServerConnections)
 	}
 
-	s.writeProtoResponse(w, map[string]interface{}{
+	s.writeJSONResponse(w, map[string]interface{}{
 		"total_clients": totalClients,
 		"total_servers": totalServers,
 	})
@@ -557,7 +554,7 @@ func (s *Server) handleDrainBackend(w http.ResponseWriter, r *http.Request) {
 		Address string `json:"address"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		s.writeProtoResponse(w, map[string]interface{}{"error": "Invalid request body"})
+		s.writeJSONResponse(w, map[string]interface{}{"error": "Invalid request body"})
 		return
 	}
 
@@ -567,10 +564,10 @@ func (s *Server) handleDrainBackend(w http.ResponseWriter, r *http.Request) {
 			if b.Address() == req.Address {
 				activeConns, err := p.DrainBackend(req.Address)
 				if err != nil {
-					s.writeProtoResponse(w, map[string]interface{}{"error": "Failed to drain backend"})
+					s.writeJSONResponse(w, map[string]interface{}{"error": "Failed to drain backend"})
 					return
 				}
-				s.writeProtoResponse(w, map[string]interface{}{
+				s.writeJSONResponse(w, map[string]interface{}{
 					"success":            true,
 					"active_connections": activeConns,
 					"address":            req.Address,
@@ -580,7 +577,7 @@ func (s *Server) handleDrainBackend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeProtoResponse(w, map[string]interface{}{
+	s.writeJSONResponse(w, map[string]interface{}{
 		"error": fmt.Sprintf("backend '%s' not found", req.Address),
 	})
 }
@@ -595,11 +592,11 @@ func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("Configuration reload requested via HTTP/2 Admin API")
 	if s.reloadFn != nil {
 		if err := s.reloadFn(); err != nil {
-			s.writeProtoResponse(w, map[string]interface{}{"success": false, "error": "Config reload failed"})
+			s.writeJSONResponse(w, map[string]interface{}{"success": false, "error": "Config reload failed"})
 			return
 		}
 	}
-	s.writeProtoResponse(w, map[string]interface{}{
+	s.writeJSONResponse(w, map[string]interface{}{
 		"success": true,
 		"message": "Configuration reloaded",
 	})

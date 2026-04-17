@@ -454,7 +454,12 @@ LLM-native management for AI-assisted database operations:
 - `geryon://stats/overview` — Global stats snapshot
 - `geryon://cluster/topology` — Cluster node map
 
-### 8.3 gRPC API
+### 8.3 gRPC API [PLANNED — Not Implemented]
+
+> **Note:** The current implementation provides a JSON-over-HTTP admin API at `internal/api/grpc/`.
+> This package serves the same management endpoints using JSON encoding for zero-dependency operation.
+> The protobuf/gRPC service definition below is a **future target**, not an implemented interface.
+> See ADR-003 for the rationale.
 
 Protocol buffer service for programmatic integration:
 
