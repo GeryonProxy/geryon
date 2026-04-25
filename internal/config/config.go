@@ -165,6 +165,7 @@ type GossipConfig struct {
 type ClusterConfig struct {
 	Enabled bool         `yaml:"enabled"`
 	NodeID  string       `yaml:"node_id"`
+	Secret  string       `yaml:"secret"` // C-2 fix: shared secret for inter-node auth
 	Raft    RaftConfig   `yaml:"raft"`
 	Gossip  GossipConfig `yaml:"gossip"`
 }

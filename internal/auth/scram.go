@@ -220,10 +220,6 @@ func (c *SCRAMClient) BuildClientFinal(serverFirst string) string {
 	return fmt.Sprintf("c=biws,r=%s,p=%s", combinedNonce, proofB64)
 }
 
-// authMessage holds the full SCRAM authentication exchange for server signature verification.
-// Stored during BuildClientFinal and used in VerifyServerFinal.
-var authMessage string
-
 // VerifyServerFinal verifies the server's final message.
 // Per RFC 5802, ServerSignature = HMAC(ServerKey, AuthMessage)
 // where AuthMessage = client-first-message-bare + "," + server-first-message + "," + client-final-message-without-proof

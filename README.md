@@ -285,14 +285,16 @@ Access the web dashboard at `http://localhost:8080` after starting Geryon:
 
 | Page | Description |
 |---|---|
-| **Overview** | Total connections, queries/sec, cache hit rate, cluster health |
+| **Overview** | Total connections, QPS time-series chart, cache hit rate, cluster health |
 | **Pools** | Per-pool connection counts, wait queue, avg query time |
-| **Backends** | Server status (up/down/degraded), latency, connection count |
+| **Backends** | Per-pool backend list, add/remove backends, drain, health status |
 | **Connections** | Live table: client IP, pool, state, duration, current query |
 | **Query Stats** | Top queries by time/frequency, slow query log |
-| **Cache** | Hit/miss rate graph, memory usage, top cached queries |
-| **Cluster** | Node map, Raft state, leader indicator, gossip health |
+| **Cache** | Hit/miss rate, cache entries count, per-pool cache stats |
+| **Cluster** | Node status, leader election, gossip health (disabled when standalone) |
 | **Config** | Live editor with validation + hot-reload |
+| **Users** | Proxy user management, create/delete with SCRAM-SHA-256 |
+| **Transactions** | Active transactions, commit/rollback statistics |
 
 Built with vanilla HTML/CSS/JS — no npm, no bundler, embedded in the binary via `embed.FS`.
 
@@ -319,7 +321,7 @@ The REST API provides full management capabilities. Default endpoint: `http://lo
 | `GET` | `/api/v1/pools` | List all pools |
 | `POST` | `/api/v1/pools` | Create new pool |
 | `GET` | `/api/v1/pools/{name}` | Get pool details |
-| `PUT` | `/api/v1/pools/{name}` | Update pool (TODO) |
+| `PUT` | `/api/v1/pools/{name}` | Update pool config |
 | `DELETE` | `/api/v1/pools/{name}` | Delete pool |
 
 **Create Pool Example:**
@@ -355,6 +357,32 @@ curl -X POST http://localhost:8080/api/v1/pools \
 curl -X POST http://localhost:8080/api/v1/backends/db.internal:5432/drain
 ```
 
+### Pool Backends (Dynamic Management)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/pools/{poolName}/backends` | List backends for a pool |
+| `POST` | `/api/v1/pools/{poolName}/backends` | Add backend to a pool |
+| `DELETE` | `/api/v1/pools/{poolName}/backends` | Remove backend from a pool |
+
+**Add Backend Example:**
+```bash
+curl -X POST http://localhost:8080/api/v1/pools/my-postgres/backends \
+  -H "Content-Type: application/json" \
+  -d '{
+    "host": "db-replica.internal",
+    "port": 5432,
+    "role": "replica",
+    "weight": 1,
+    "database": "myapp"
+  }'
+```
+
+**Remove Backend Example:**
+```bash
+curl -X DELETE "http://localhost:8080/api/v1/pools/my-postgres/backends?address=db.internal:5432"
+```
+
 ### Connections
 
 | Method | Endpoint | Description |
@@ -382,6 +410,8 @@ curl -X POST http://localhost:8080/api/v1/backends/db.internal:5432/drain
 |--------|----------|-------------|
 | `GET` | `/api/v1/stats` | Global statistics |
 | `GET` | `/api/v1/stats/stream` | SSE streaming stats |
+| `GET` | `/api/v1/stats/users` | Per-user query statistics |
+| `GET` | `/api/v1/stats/clients` | Per-client query statistics |
 | `GET` | `/metrics` | Prometheus metrics |
 
 **SSE Stats Stream:**
@@ -396,6 +426,17 @@ curl -N http://localhost:8080/api/v1/stats/stream
 |--------|----------|-------------|
 | `GET` | `/api/v1/config` | View current config |
 | `POST` | `/api/v1/config/reload` | Reload configuration |
+| `GET` | `/api/v1/config/file` | Read config file (YAML) |
+| `PUT` | `/api/v1/config/file` | Update config file (YAML) |
+
+### Users
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/users` | List all users |
+| `POST` | `/api/v1/users` | Create new user |
+| `GET` | `/api/v1/users/{name}` | Get user details |
+| `DELETE` | `/api/v1/users/{name}` | Delete user |
 
 ### TLS
 
@@ -410,13 +451,19 @@ curl -N http://localhost:8080/api/v1/stats/stream
 | `GET` | `/api/v1/health` | Health check |
 | `GET` | `/api/v1/ready` | Readiness probe |
 
+### Cluster
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/cluster` | Cluster status and node list |
+
 ## MCP Integration
 
 Geryon includes a built-in [MCP](https://modelcontextprotocol.io) server for AI-assisted database management, compatible with Claude Code, Claude Desktop, and other MCP clients.
 
-**Tools:** `geryon_pool_list`, `geryon_pool_stats`, `geryon_connection_list`, `geryon_connection_kill`, `geryon_backend_status`, `geryon_backend_detach`, `geryon_backend_attach`, `geryon_cache_stats`, `geryon_cache_invalidate`, `geryon_cluster_status`, `geryon_config_reload`, `geryon_query_stats`, `geryon_user_manage`
+**Tools:** `geryon_pool_list`, `geryon_pool_stats`, `geryon_connection_list`, `geryon_backend_list`, `geryon_backend_drain`, `geryon_backend_detach`, `geryon_cache_stats`, `geryon_config_reload`, `geryon_query_stats`, `geryon_cluster_status`, `geryon_user_list`
 
-**Resources:** `geryon://config`, `geryon://pools/{name}`, `geryon://stats/overview`, `geryon://cluster/topology`
+**Resources:** `geryon://config`, `geryon://pools`, `geryon://pools/{name}`, `geryon://stats/overview`
 
 ## Performance Targets
 

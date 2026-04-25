@@ -14,6 +14,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
+// testToken is defined in server_test.go
+
 // Helper function
 func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
@@ -24,10 +26,10 @@ func TestToolPoolStats(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	t.Run("pool_not_found", func(t *testing.T) {
 		result := s.toolPoolStats("nonexistent")
@@ -75,12 +77,12 @@ func TestToolConnectionList(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.toolConnectionList()
 		if !contains(result, "No pools") {
 			t.Errorf("result should contain 'No pools', got: %s", result)
@@ -89,7 +91,7 @@ func TestToolConnectionList(t *testing.T) {
 
 	t.Run("with_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 
 		// Create pools
 		poolCfg := &config.PoolConfig{
@@ -123,12 +125,12 @@ func TestToolBackendList(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.toolBackendList()
 		if !contains(result, "No pools") {
 			t.Errorf("result should contain 'No pools', got: %s", result)
@@ -137,7 +139,7 @@ func TestToolBackendList(t *testing.T) {
 
 	t.Run("with_backends", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 
 		// Create pool with backend
 		poolCfg := &config.PoolConfig{
@@ -174,10 +176,10 @@ func TestToolBackendDrain(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	t.Run("invalid_address_format", func(t *testing.T) {
 		result := s.toolBackendDrain("invalid")
@@ -223,12 +225,12 @@ func TestToolCacheStats(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.toolCacheStats()
 		// Function returns formatted stats even with 0 pools
 		if !contains(result, "Cache Statistics") {
@@ -241,7 +243,7 @@ func TestToolCacheStats(t *testing.T) {
 
 	t.Run("with_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 
 		// Create pool
 		poolCfg := &config.PoolConfig{
@@ -272,12 +274,12 @@ func TestToolConfigReload(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_reload_fn", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.toolConfigReload()
 		if !contains(result, "not configured") {
 			t.Errorf("result should indicate reload not configured, got: %s", result)
@@ -287,7 +289,7 @@ func TestToolConfigReload(t *testing.T) {
 	t.Run("reload_success", func(t *testing.T) {
 		pm := pool.NewManager(log)
 		reloadFn := func() error { return nil }
-		s := NewServer(cfg, pm, log, reloadFn)
+		s := NewServer(cfg, pm, log, reloadFn, nil, nil)
 		result := s.toolConfigReload()
 		if !contains(result, "successful") {
 			t.Errorf("result should indicate success, got: %s", result)
@@ -297,7 +299,7 @@ func TestToolConfigReload(t *testing.T) {
 	t.Run("reload_error", func(t *testing.T) {
 		pm := pool.NewManager(log)
 		reloadFn := func() error { return fmt.Errorf("reload failed") }
-		s := NewServer(cfg, pm, log, reloadFn)
+		s := NewServer(cfg, pm, log, reloadFn, nil, nil)
 		result := s.toolConfigReload()
 		if !contains(result, "failed") {
 			t.Errorf("result should indicate failure, got: %s", result)
@@ -310,12 +312,12 @@ func TestToolQueryStats(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.toolQueryStats()
 		// Function returns formatted stats even with 0 pools
 		if !contains(result, "Query Statistics") {
@@ -328,7 +330,7 @@ func TestToolQueryStats(t *testing.T) {
 
 	t.Run("with_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 
 		// Create pool
 		poolCfg := &config.PoolConfig{
@@ -359,12 +361,12 @@ func TestToolPoolList(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.toolPoolList()
 		if !contains(result, "No pools configured") {
 			t.Errorf("result should contain 'No pools configured', got: %s", result)
@@ -373,7 +375,7 @@ func TestToolPoolList(t *testing.T) {
 
 	t.Run("with_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 
 		poolCfg := &config.PoolConfig{
 			Name: "test-pool",
@@ -415,12 +417,12 @@ func TestResourcePool(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("pool_not_found", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.resourcePool("nonexistent")
 		if !contains(result, "not found") {
 			t.Errorf("result should contain 'not found', got: %s", result)
@@ -437,7 +439,7 @@ func TestResourcePool(t *testing.T) {
 
 	t.Run("existing_pool_with_backends", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 
 		poolCfg := &config.PoolConfig{
 			Name: "my-pool",
@@ -491,12 +493,12 @@ func TestResourceStatsOverview(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 		result := s.resourceStatsOverview()
 		var parsed map[string]interface{}
 		if err := json.Unmarshal([]byte(result), &parsed); err != nil {
@@ -512,7 +514,7 @@ func TestResourceStatsOverview(t *testing.T) {
 
 	t.Run("with_pools", func(t *testing.T) {
 		pm := pool.NewManager(log)
-		s := NewServer(cfg, pm, log, nil)
+		s := NewServer(cfg, pm, log, nil, nil, nil)
 
 		poolCfg := &config.PoolConfig{
 			Name: "stats-pool",
@@ -555,10 +557,10 @@ func TestToolBackendDrain_Success(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	poolCfg := &config.PoolConfig{
 		Name: "drain-pool",
@@ -593,10 +595,10 @@ func TestToolBackendDrain_AlreadyDraining(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	poolCfg := &config.PoolConfig{
 		Name: "drain-pool2",
@@ -677,7 +679,7 @@ func TestHandleToolsCall_AllTools(t *testing.T) {
 		addr := bindRandomPort(t)
 		cfg := &config.AdminMCPConfig{
 			Listen: addr,
-			Auth:   config.RESTAuthConfig{Enabled: false},
+			Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 		}
 		pm := pool.NewManager(log)
 
@@ -698,7 +700,7 @@ func TestHandleToolsCall_AllTools(t *testing.T) {
 		pm.CreatePool(poolCfg)
 
 		reloadFn := func() error { return nil }
-		s := NewServer(cfg, pm, log, reloadFn)
+		s := NewServer(cfg, pm, log, reloadFn, nil, nil)
 		if err := s.Start(); err != nil {
 			t.Fatalf("Start failed: %v", err)
 		}
@@ -728,7 +730,10 @@ func TestHandleToolsCall_AllTools(t *testing.T) {
 				s.Stop(ctx)
 			}()
 
-			resp, err := http.Post("http://"+addr+"/mcp/v1/tools/call", "application/json", strings.NewReader(tt.body))
+			req, _ := http.NewRequest("POST", "http://"+addr+"/mcp/v1/tools/call", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+testToken)
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatalf("ToolCall failed: %v", err)
 			}
@@ -766,7 +771,7 @@ func TestHandleToolsCall_BackendDrain(t *testing.T) {
 	addr := bindRandomPort(t)
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 
@@ -786,7 +791,7 @@ func TestHandleToolsCall_BackendDrain(t *testing.T) {
 	}
 	pm.CreatePool(poolCfg)
 
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -798,7 +803,10 @@ func TestHandleToolsCall_BackendDrain(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	body := `{"name":"geryon_backend_drain","arguments":{"address":"127.0.0.1:5432"}}`
-	resp, err := http.Post("http://"+addr+"/mcp/v1/tools/call", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+addr+"/mcp/v1/tools/call", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ToolCall failed: %v", err)
 	}
@@ -826,7 +834,7 @@ func TestResourcePoolViaHTTP(t *testing.T) {
 	addr := bindRandomPort(t)
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 
@@ -846,7 +854,7 @@ func TestResourcePoolViaHTTP(t *testing.T) {
 	}
 	pm.CreatePool(poolCfg)
 
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -855,11 +863,14 @@ func TestResourcePoolViaHTTP(t *testing.T) {
 		defer cancel()
 		s.Stop(ctx)
 	}()
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Read the pool-specific resource
 	body := `{"uri":"geryon://pools/res-pool"}`
-	resp, err := http.Post("http://"+addr+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+addr+"/mcp/v1/resources/read", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesRead failed: %v", err)
 	}

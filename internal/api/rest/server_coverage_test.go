@@ -15,13 +15,15 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
+const testToken = "test-token"
+
 // newTestServer creates a REST server with a real pool manager for testing.
 func newTestServer(t *testing.T) (*Server, *pool.Manager) {
 	t.Helper()
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -78,23 +80,6 @@ func TestWithLogging(t *testing.T) {
 	}
 	if rr.Code != http.StatusOK {
 		t.Errorf("Status = %d, want 200", rr.Code)
-	}
-}
-
-func TestWithAuth_Disabled(t *testing.T) {
-	s, _ := newTestServer(t)
-	called := false
-	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-	handler.ServeHTTP(rr, req)
-
-	if !called {
-		t.Error("Next handler should be called when auth is disabled")
 	}
 }
 
@@ -397,7 +382,7 @@ func TestHandleConfigReload_SuccessPath(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	reloadCalled := false
 	s, _ := NewServer(cfg, nil, nil, log, "", func() error {
@@ -443,7 +428,7 @@ func TestHandleConfigReload_ErrorPath(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", func() error {
 		return fmt.Errorf("reload error")

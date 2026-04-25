@@ -181,6 +181,7 @@ func (c *Coordinator) Start() error {
 		c.config.Raft.Listen,
 		c.config.Raft.Peers,
 		c.dataDir+"/raft",
+		c.config.Secret, // C-2 fix
 		c.fsm,
 		c.logger,
 	)
@@ -195,6 +196,7 @@ func (c *Coordinator) Start() error {
 
 	// Start SWIM protocol
 	swimProto := swim.NewProtocol(c.nodeID, c.config.Gossip.Listen, c.logger)
+	swimProto.SetSecret(c.config.Secret) // C-2 fix
 	c.swimProto = swimProto
 
 	if err := swimProto.Start(); err != nil {

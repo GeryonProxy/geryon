@@ -4,6 +4,11 @@
 package swim
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -22,6 +27,7 @@ type Protocol struct {
 	mu      sync.RWMutex
 	id      string
 	addr    string
+	secret  string // C-2 fix: shared secret for HMAC
 	members map[string]*Member
 	seqNum  atomic.Uint64
 
@@ -99,6 +105,7 @@ type Message struct {
 	Incarnation uint64       `json:"incarnation"`
 	Payload     []byte       `json:"payload"`
 	Members     []MemberInfo `json:"members,omitempty"`
+	Signature   string       `json:"signature,omitempty"` // C-2 fix: HMAC-SHA256
 }
 
 // MessageType represents the type of SWIM message.
@@ -137,6 +144,33 @@ func NewProtocol(id, addr string, log *logger.Logger) *Protocol {
 		readyCh:        make(chan struct{}),
 		logger:         log,
 	}
+}
+
+// SetSecret sets the shared secret for HMAC authentication (C-2 fix).
+func (p *Protocol) SetSecret(secret string) {
+	p.secret = secret
+}
+
+// computeHMAC computes an HMAC-SHA256 signature for a SWIM message.
+func (p *Protocol) computeHMAC(msg Message) string {
+	mac := hmac.New(sha256.New, []byte(p.secret))
+	mac.Write([]byte{byte(msg.Type)})
+	mac.Write([]byte(msg.Source))
+	mac.Write([]byte(msg.Target))
+	binary.Write(mac, binary.LittleEndian, msg.Incarnation)
+	mac.Write(msg.Payload)
+	// Include Members in HMAC to protect gossip membership updates
+	if len(msg.Members) > 0 {
+		membersData, _ := json.Marshal(msg.Members)
+		mac.Write(membersData)
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// verifyHMAC verifies an HMAC-SHA256 signature on a SWIM message.
+func (p *Protocol) verifyHMAC(msg Message) bool {
+	expected := p.computeHMAC(msg)
+	return hmac.Equal([]byte(msg.Signature), []byte(expected))
 }
 
 // Start starts the SWIM protocol.
@@ -276,6 +310,12 @@ func (p *Protocol) receiveLoop() {
 		var msg Message
 		if err := json.Unmarshal(buf[:n], &msg); err != nil {
 			p.logger.Debug("Failed to unmarshal message", "error", err)
+			continue
+		}
+
+		// C-2 fix: Verify HMAC signature if secret is configured
+		if p.secret != "" && !p.verifyHMAC(msg) {
+			p.logger.Debug("Invalid HMAC signature on gossip message", "from", addr)
 			continue
 		}
 
@@ -674,6 +714,11 @@ func (p *Protocol) incarnation() uint64 {
 
 // sendMessage sends a message to an address.
 func (p *Protocol) sendMessage(addr string, msg Message) error {
+	// C-2 fix: Sign message with HMAC if secret is configured
+	if p.secret != "" {
+		msg.Signature = p.computeHMAC(msg)
+	}
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -703,7 +748,11 @@ func randomInt(n int) int {
 	if n <= 0 {
 		return 0
 	}
-	return int(time.Now().UnixNano() % int64(n))
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return int(time.Now().UnixNano()) % n // Fallback to time-based
+	}
+	return int(binary.LittleEndian.Uint32(b)) % n
 }
 
 // isValidAddress checks if an address is a valid host:port.

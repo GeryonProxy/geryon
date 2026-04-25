@@ -12,6 +12,9 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
+// Test token used for all authenticated test requests
+const testToken = "test-token"
+
 // bindRandomPort returns a free TCP port address.
 func bindRandomPort(t *testing.T) string {
 	t.Helper()
@@ -29,7 +32,7 @@ func TestConfig(t *testing.T) {
 		Enabled: true,
 		Listen:  "127.0.0.1:8082",
 		Path:    "/",
-		Auth:    config.RESTAuthConfig{Enabled: false},
+		Auth:    config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	if !cfg.Enabled {
 		t.Error("Should be enabled")
@@ -41,7 +44,7 @@ func TestConfig(t *testing.T) {
 
 func TestNewServer(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 	if s == nil {
@@ -51,7 +54,7 @@ func TestNewServer(t *testing.T) {
 
 func TestServer_Disabled(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: false, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: false, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -64,7 +67,7 @@ func TestServer_Disabled(t *testing.T) {
 
 func TestServer_StartStop(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -82,7 +85,7 @@ func TestServer_StartStop(t *testing.T) {
 func TestDashboard_HealthEndpoint(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -91,7 +94,9 @@ func TestDashboard_HealthEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/health")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/health", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /health failed: %v", err)
 	}
@@ -113,7 +118,7 @@ func TestDashboard_HealthEndpoint(t *testing.T) {
 func TestDashboard_StatsEndpoint(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -122,7 +127,9 @@ func TestDashboard_StatsEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/stats")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /stats failed: %v", err)
 	}
@@ -136,7 +143,7 @@ func TestDashboard_StatsEndpoint(t *testing.T) {
 func TestDashboard_PoolsEndpoint(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -145,7 +152,9 @@ func TestDashboard_PoolsEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/pools")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /pools failed: %v", err)
 	}
@@ -159,7 +168,7 @@ func TestDashboard_PoolsEndpoint(t *testing.T) {
 func TestDashboard_BackendsEndpoint(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -168,7 +177,9 @@ func TestDashboard_BackendsEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/backends")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/backends", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /backends failed: %v", err)
 	}
@@ -182,7 +193,7 @@ func TestDashboard_BackendsEndpoint(t *testing.T) {
 func TestDashboard_ConnectionsEndpoint(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -191,7 +202,9 @@ func TestDashboard_ConnectionsEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/connections")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /connections failed: %v", err)
 	}
@@ -205,7 +218,7 @@ func TestDashboard_ConnectionsEndpoint(t *testing.T) {
 func TestDashboard_QueriesEndpoint(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -214,7 +227,9 @@ func TestDashboard_QueriesEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/queries")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/queries", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /queries failed: %v", err)
 	}
@@ -228,7 +243,7 @@ func TestDashboard_QueriesEndpoint(t *testing.T) {
 func TestDashboard_ConfigEndpoint(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -237,7 +252,9 @@ func TestDashboard_ConfigEndpoint(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/config")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /config failed: %v", err)
 	}
@@ -256,10 +273,43 @@ func TestDashboard_ConfigEndpoint(t *testing.T) {
 	}
 }
 
+func TestDashboard_ClusterEndpoint(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/cluster", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /cluster failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Status = %d, want 200", resp.StatusCode)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	if data["status"] != "disabled" {
+		t.Errorf("status = %v, want 'disabled'", data["status"])
+	}
+}
+
 func TestDashboard_ConfigReload(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	reloaded := false
 	s := NewServer(cfg, pm, log, func() error {
@@ -272,7 +322,10 @@ func TestDashboard_ConfigReload(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Post("http://"+cfg.Listen+"/api/v1/config", "application/json", nil)
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /config failed: %v", err)
 	}
@@ -326,7 +379,7 @@ func TestDashboard_Auth_RejectsWithoutToken(t *testing.T) {
 func TestDashboard_SecurityHeaders(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -335,7 +388,9 @@ func TestDashboard_SecurityHeaders(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/health")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/health", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /health failed: %v", err)
 	}
@@ -351,7 +406,7 @@ func TestDashboard_SecurityHeaders(t *testing.T) {
 
 func TestWriteJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -401,7 +456,7 @@ func TestHandleConnections(t *testing.T) {
 	cfg := &Config{
 		Enabled: true,
 		Listen:  "127.0.0.1:0",
-		Auth:    config.RESTAuthConfig{Enabled: false},
+		Auth:    config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	t.Run("no_pools", func(t *testing.T) {
@@ -409,6 +464,7 @@ func TestHandleConnections(t *testing.T) {
 		s := NewServer(cfg, pm, log, nil, nil)
 
 		req := httptest.NewRequest("GET", "/api/connections", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
 		rr := httptest.NewRecorder()
 
 		s.handleConnections(rr, req)
@@ -455,6 +511,7 @@ func TestHandleConnections(t *testing.T) {
 		s := NewServer(cfg, pm, log, nil, nil)
 
 		req := httptest.NewRequest("GET", "/api/connections", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
 		rr := httptest.NewRecorder()
 
 		s.handleConnections(rr, req)
@@ -492,7 +549,7 @@ func TestHandleConnections(t *testing.T) {
 func TestDashboard_HandleIndex(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -502,7 +559,9 @@ func TestDashboard_HandleIndex(t *testing.T) {
 	defer s.Stop()
 
 	t.Run("root path returns HTML", func(t *testing.T) {
-		resp, err := http.Get("http://" + cfg.Listen + "/")
+		req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("GET / failed: %v", err)
 		}
@@ -519,7 +578,9 @@ func TestDashboard_HandleIndex(t *testing.T) {
 	})
 
 	t.Run("index.html returns HTML", func(t *testing.T) {
-		resp, err := http.Get("http://" + cfg.Listen + "/index.html")
+		req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/index.html", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("GET /index.html failed: %v", err)
 		}
@@ -531,7 +592,9 @@ func TestDashboard_HandleIndex(t *testing.T) {
 	})
 
 	t.Run("unknown path returns 404", func(t *testing.T) {
-		resp, err := http.Get("http://" + cfg.Listen + "/nonexistent")
+		req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/nonexistent", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("GET /nonexistent failed: %v", err)
 		}

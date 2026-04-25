@@ -177,6 +177,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **gosec audit: 0 issues** — Fresh scan across 43 files and 24,399 lines reports no findings.
 
+---
+
+## [1.0.1] - 2026-04-18
+
+### Added
+
+#### User Management
+- **REST API user CRUD** — `GET/POST /api/v1/users`, `GET/DELETE /api/v1/users/{name}` with SCRAM-SHA-256 password hashing.
+- **Dashboard Users page** — Full user management UI with safe DOM-based modal form for creating users (no innerHTML/XSS risk).
+
+#### Configuration Management
+- **Config file API** — `GET/PUT /api/v1/config/file` with atomic writes (temp file + rename) and pre-save YAML validation.
+- **Dashboard config editor** — YAML editor with save and validate buttons, status feedback.
+
+#### Dynamic Backend Management
+- **Pool backends REST API** — `GET/POST/DELETE /api/v1/pools/{poolName}/backends` for runtime backend addition/removal without full config reload. Integrates with health checker.
+- **Dashboard Backends page** — Per-pool backend listing with add/remove modal, role selector, and health status indicators.
+
+#### Observability
+- **Per-client and per-user query statistics** — `GET /api/v1/stats/users` and `GET /api/v1/stats/clients` endpoints. Tracks total queries, slow queries, avg/max duration, last query time per user and per client address+pool combination. Decaying average for duration to avoid overflow.
+- **QPS time-series chart** — Canvas-based line chart on Overview page showing last 5 minutes of queries/sec. Updates via SSE stream. No external dependencies (pure vanilla JS).
+- **Cache page** — Global cache stats (hit rate, entries, hits/misses) with per-pool breakdown.
+- **Cluster page** — Node status, leader/follower indicators, and health display. Falls back gracefully when clustering is disabled.
+- **Cache stats endpoint** — Added `cache_hits` and `cache_misses` to `/api/v1/stats`.
+
+#### MCP Server Enhancements
+- **3 new tools** — `geryon_backend_detach`, `geryon_cluster_status`, `geryon_user_list`. Total: 10 tools.
+- **User database integration** — MCP server now has access to user database for user listing.
+
+#### Documentation
+- **Users and Config pages added to README** — Dashboard table updated with Users, Transactions, and enhanced Backends descriptions.
+- **Pool Backends API documented in README** — New section with add/remove examples.
+- **Cluster API documented in README** — New Health section with `/api/v1/cluster` endpoint.
+- **OpenAPI spec updated to v1.0.1** — Added pool backends CRUD, config file API, users CRUD, cluster status endpoints with full schema definitions.
+
+#### Testing
+- **Cluster endpoint tests** — Added `TestHandleCluster_Direct` (REST) and `TestDashboard_ClusterEndpoint` (dashboard).
+
+### Changed
+
+- **Dashboard server signature** — Added `userDB *auth.UserDatabase` parameter to `NewServer`.
+- **REST Stop() method** — Added nil context guard to prevent panic in test scenarios.
+
+---
+
 ## [0.1.0] - 2026-04-10
 
 ### Initial Release
@@ -191,6 +236,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Roadmap
 
 ### Completed
+
+#### v1.0.1 - Management & UX Improvements
+- User management (REST API + Dashboard UI)
+- Config file editor with validation
+- Dynamic backend management (REST API + Dashboard UI)
+- Dashboard Backends page with per-pool listing
+- REST API endpoint documentation updates
 
 #### v1.0.0 - Production Ready
 - Full production hardening (score: 85/100)

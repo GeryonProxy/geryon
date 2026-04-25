@@ -3,6 +3,7 @@ package logger
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,6 +32,11 @@ type QueryLogger struct {
 	queryMu          sync.RWMutex
 	maxRecentQueries int
 	maxSlowQueries   int
+	maxClientStats   int // cap for clientStats map to prevent unbounded growth
+
+	// Per-user and per-client statistics
+	userStats   map[string]*UserStats
+	clientStats map[string]*ClientStats
 
 	// Query statistics
 	stats     QueryStats
@@ -113,6 +119,28 @@ type QueryDigest struct {
 	MaxDuration  time.Duration `json:"max_duration"`
 }
 
+// UserStats represents per-user query statistics.
+type UserStats struct {
+	Username     string        `json:"username"`
+	TotalQueries uint64        `json:"total_queries"`
+	SlowQueries  uint64        `json:"slow_queries"`
+	AvgDuration  time.Duration `json:"avg_duration"`
+	MaxDuration  time.Duration `json:"max_duration"`
+	LastQuery    time.Time     `json:"last_query"`
+}
+
+// ClientStats represents per-client query statistics.
+type ClientStats struct {
+	ClientAddr   string        `json:"client_addr"`
+	Username     string        `json:"username"`
+	Pool         string        `json:"pool"`
+	TotalQueries uint64        `json:"total_queries"`
+	SlowQueries  uint64        `json:"slow_queries"`
+	AvgDuration  time.Duration `json:"avg_duration"`
+	MaxDuration  time.Duration `json:"max_duration"`
+	LastQuery    time.Time     `json:"last_query"`
+}
+
 // NewQueryLogger creates a new query logger.
 func NewQueryLogger(config QueryLogConfig) (*QueryLogger, error) {
 	ql := &QueryLogger{
@@ -122,8 +150,11 @@ func NewQueryLogger(config QueryLogConfig) (*QueryLogger, error) {
 		slowQueries:      make([]QueryLogEntry, 0, 100),
 		maxRecentQueries: 1000,
 		maxSlowQueries:   100,
+		maxClientStats:   10000, // cap per-client stats to bound memory
 		lastReset:        time.Now(),
 		stats:            QueryStats{TopQueries: make([]QueryDigest, 0)},
+		userStats:        make(map[string]*UserStats),
+		clientStats:      make(map[string]*ClientStats),
 	}
 
 	if !config.Enabled {
@@ -515,6 +546,71 @@ func (ql *QueryLogger) updateStats(entry QueryLogEntry) {
 			MaxDuration:  duration,
 		})
 	}
+
+	// Update per-user stats
+	if entry.Username != "" {
+		us, ok := ql.userStats[entry.Username]
+		if !ok {
+			us = &UserStats{Username: entry.Username}
+			ql.userStats[entry.Username] = us
+		}
+		us.TotalQueries++
+		if entry.IsSlow {
+			us.SlowQueries++
+		}
+		if us.TotalQueries == 1 {
+			us.AvgDuration = duration
+			us.MaxDuration = duration
+		} else {
+			if duration > us.MaxDuration {
+				us.MaxDuration = duration
+			}
+			const avgAlpha = 0.001
+			avgNs := float64(us.AvgDuration)
+			durationNs := float64(duration)
+			us.AvgDuration = time.Duration(avgNs*(1-avgAlpha) + durationNs*avgAlpha)
+		}
+		us.LastQuery = entry.Timestamp
+	}
+
+	// Update per-client stats
+	// Normalize ClientAddr to IP only (strip ephemeral port to avoid cardinality explosion)
+	clientIP := entry.ClientAddr
+	if host, _, err := net.SplitHostPort(entry.ClientAddr); err == nil {
+		clientIP = host
+	}
+	// Key by IP + username + pool to avoid merging stats for different users behind same IP
+	clientKey := clientIP + "|" + entry.Username + "|" + entry.Pool
+	if entry.ClientAddr != "" {
+		cs, ok := ql.clientStats[clientKey]
+		if !ok {
+			// Cap clientStats map to bound memory growth under high client cardinality.
+			if len(ql.clientStats) >= ql.maxClientStats {
+				return // skip per-client stats; global stats already updated above
+			}
+			cs = &ClientStats{ClientAddr: clientIP, Username: entry.Username, Pool: entry.Pool}
+			ql.clientStats[clientKey] = cs
+		}
+		cs.TotalQueries++
+		if entry.IsSlow {
+			cs.SlowQueries++
+		}
+		if cs.TotalQueries == 1 {
+			cs.AvgDuration = duration
+			cs.MaxDuration = duration
+		} else {
+			if duration > cs.MaxDuration {
+				cs.MaxDuration = duration
+			}
+			const avgAlpha = 0.001
+			avgNs := float64(cs.AvgDuration)
+			durationNs := float64(duration)
+			cs.AvgDuration = time.Duration(avgNs*(1-avgAlpha) + durationNs*avgAlpha)
+		}
+		cs.Username = entry.Username // Keep latest username
+		cs.Pool = entry.Pool         // Keep latest pool
+		cs.LastQuery = entry.Timestamp
+	}
 }
 
 // addRecentQuery adds a query to recent queries list.
@@ -585,6 +681,40 @@ func (ql *QueryLogger) GetTopQueries(limit int) []QueryDigest {
 	// Return copy
 	result := make([]QueryDigest, limit)
 	copy(result, ql.stats.TopQueries[:limit])
+	return result
+}
+
+// GetPerUserStats returns per-user query statistics.
+func (ql *QueryLogger) GetPerUserStats() []UserStats {
+	ql.statsMu.RLock()
+	defer ql.statsMu.RUnlock()
+
+	result := make([]UserStats, 0, len(ql.userStats))
+	for _, us := range ql.userStats {
+		result = append(result, *us)
+	}
+
+	// Sort by total queries descending
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].TotalQueries > result[j].TotalQueries
+	})
+	return result
+}
+
+// GetPerClientStats returns per-client query statistics.
+func (ql *QueryLogger) GetPerClientStats() []ClientStats {
+	ql.statsMu.RLock()
+	defer ql.statsMu.RUnlock()
+
+	result := make([]ClientStats, 0, len(ql.clientStats))
+	for _, cs := range ql.clientStats {
+		result = append(result, *cs)
+	}
+
+	// Sort by total queries descending
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].TotalQueries > result[j].TotalQueries
+	})
 	return result
 }
 

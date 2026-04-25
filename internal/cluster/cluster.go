@@ -5,6 +5,9 @@
 package cluster
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,6 +42,7 @@ type Config struct {
 	NodeID            string
 	ListenAddr        string
 	Peers             []string
+	Secret            string // C-2 fix: shared secret for inter-node auth
 	ElectionTimeout   time.Duration
 	HeartbeatInterval time.Duration
 	Logger            *logger.Logger
@@ -69,15 +73,17 @@ type Cluster struct {
 	rpcCh      chan RPC
 	shutdownCh chan struct{}
 	doneCh     chan struct{}
+	rpcSem     chan struct{} // H-4 fix: bounded goroutine semaphore
 
 	log *logger.Logger
 }
 
 // RPC represents a cluster RPC message.
 type RPC struct {
-	From    string
-	Type    string
-	Payload []byte
+	From      string
+	Type      string
+	Payload   []byte
+	Signature string // C-2 fix: HMAC-SHA256 signature
 }
 
 // Maximum RPC payload size (1MB)
@@ -91,6 +97,15 @@ const (
 	RPCHeartbeat       = "Heartbeat"
 	RPCInstallSnapshot = "InstallSnapshot"
 )
+
+// C-2 fix: computeHMAC computes an HMAC-SHA256 signature for cluster messages.
+func computeHMAC(secret, rpcType, from string, payload []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(rpcType))
+	mac.Write([]byte(from))
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 // SwimGossip implements the SWIM protocol for failure detection.
 type SwimGossip struct {
@@ -126,6 +141,7 @@ func New(config Config) *Cluster {
 		rpcCh:         make(chan RPC, 100),
 		shutdownCh:    make(chan struct{}),
 		doneCh:        make(chan struct{}),
+		rpcSem:        make(chan struct{}, 100), // H-4 fix: bounded goroutine limit
 		log:           config.Logger,
 	}
 
@@ -209,7 +225,17 @@ func (c *Cluster) serveRPC() {
 			continue
 		}
 
-		go c.handleRPC(conn)
+		// H-4 fix: bounded goroutine creation
+		select {
+		case c.rpcSem <- struct{}{}:
+		default:
+			conn.Close() // Reject if at limit
+			continue
+		}
+		go func() {
+			defer func() { <-c.rpcSem }()
+			c.handleRPC(conn)
+		}()
 	}
 }
 
@@ -226,6 +252,15 @@ func (c *Cluster) handleRPC(conn net.Conn) {
 	if err := decoder.Decode(&rpc); err != nil {
 		c.log.Error("Failed to decode RPC", "error", err)
 		return
+	}
+
+	// C-2 fix: Verify HMAC signature if secret is configured
+	if c.config.Secret != "" {
+		expected := computeHMAC(c.config.Secret, rpc.Type, rpc.From, rpc.Payload)
+		if !hmac.Equal([]byte(rpc.Signature), []byte(expected)) {
+			c.log.Warn("Invalid HMAC signature on RPC", "from", rpc.From, "type", rpc.Type)
+			return
+		}
 	}
 
 	// Validate RPC type to prevent unknown type processing
@@ -524,6 +559,11 @@ func (c *Cluster) sendRPC(to string, rpcType string, payload interface{}) {
 		From:    c.nodeID,
 		Type:    rpcType,
 		Payload: data,
+	}
+
+	// C-2 fix: Sign RPC with HMAC-SHA256
+	if c.config.Secret != "" {
+		rpc.Signature = computeHMAC(c.config.Secret, rpcType, c.nodeID, data)
 	}
 
 	encoder := json.NewEncoder(conn)

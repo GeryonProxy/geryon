@@ -329,9 +329,7 @@ func (l *Listener) handleConnection(conn net.Conn) {
 	// Handle session
 	session.Handle(l.ctx)
 
-	// Cleanup
-	l.pool.DecrementClientCount()
-
+	// Cleanup (DecrementClientCount handled by defer at line 300)
 	l.mu.Lock()
 	delete(l.sessions, session.ID())
 	l.mu.Unlock()
@@ -348,9 +346,8 @@ func (l *Listener) handleConnection(conn net.Conn) {
 // Stop stops the listener.
 func (l *Listener) Stop() error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if !l.active.Load() {
+		l.mu.Unlock()
 		return nil
 	}
 
@@ -360,15 +357,20 @@ func (l *Listener) Stop() error {
 	if l.listener != nil {
 		l.listener.Close()
 	}
+	l.mu.Unlock()
 
-	// Wait for in-flight handleConnection goroutines to complete (M-4 fix)
+	// Wait for in-flight handleConnection goroutines to complete.
+	// Must be done without holding l.mu to avoid deadlock: goroutines
+	// exiting may need to acquire l.mu to delete from sessions.
 	l.connWG.Wait()
 
 	// Close all active sessions
+	l.mu.Lock()
 	for _, session := range l.sessions {
 		session.Close()
 	}
 	l.sessions = make(map[uint64]*ProxySession)
+	l.mu.Unlock()
 
 	// Stop query logger
 	if l.queryLogger != nil {
@@ -409,6 +411,11 @@ func (l *Listener) QueryLogger() *logger.QueryLogger {
 	return l.queryLogger
 }
 
+// AuthMode returns the authentication mode of this listener.
+func (l *Listener) AuthMode() string {
+	return l.authMode
+}
+
 // TransactionManager returns the transaction manager.
 func (l *Listener) TransactionManager() *pool.TransactionManager {
 	return l.transactionMgr
@@ -417,6 +424,32 @@ func (l *Listener) TransactionManager() *pool.TransactionManager {
 // Pool returns the connection pool.
 func (l *Listener) Pool() *pool.Pool {
 	return l.pool
+}
+
+// RefreshRouter rebuilds the query router from the current backend list.
+func (l *Listener) RefreshRouter() {
+	if !l.config.Routing.ReadWriteSplit {
+		return
+	}
+	backends := l.pool.GetBackends()
+	if len(backends) == 0 {
+		return
+	}
+	router, err := pool.NewRouter(&l.config.Routing, backends)
+	if err != nil {
+		l.log.Warn("Failed to refresh query router, clearing stale router", "error", err)
+		l.mu.Lock()
+		l.router = nil
+		l.mu.Unlock()
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.router = router
+	// Update router on all active sessions
+	for _, ps := range l.sessions {
+		ps.router = router
+	}
 }
 
 // Config returns the pool config.
@@ -1347,9 +1380,15 @@ func (ps *ProxySession) handleMySQLPassthrough(ctx context.Context) error {
 	ps.username = username
 	ps.database = database
 
-	// Check pool access authorization for MySQL (H-1 fix)
-	if ps.userDB != nil {
-		if user := ps.userDB.GetUser(ps.username); user != nil && !user.CanAccessPool(ps.pool.Name()) {
+	// Check pool access authorization for MySQL (H-2 fix)
+	// Only enforce proxy userDB in interception mode; passthrough relies on backend auth
+	if ps.authMode == "interception" && ps.userDB != nil {
+		user := ps.userDB.GetUser(ps.username)
+		if user == nil {
+			ps.log.Warn("Pool access denied: user not found in proxy database", "user", ps.username)
+			return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
+		}
+		if !user.CanAccessPool(ps.pool.Name()) {
 			ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
 			return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
 		}
@@ -3185,11 +3224,19 @@ func (ps *ProxySession) authenticateWithCertificate() error {
 		return fmt.Errorf("client certificate is not valid (expired or not yet valid)")
 	}
 
-	// Check if user exists in database
-	user := ps.userDB.GetUser(username)
-	if user == nil {
-		ps.log.Debug("Certificate authenticated user not found in database", "username", username)
-		return nil // Allow through, backend will handle auth
+	// Check if user exists in database (M-1 fix: only in interception mode)
+	if ps.authMode == "interception" && ps.userDB != nil {
+		user := ps.userDB.GetUser(username)
+		if user == nil {
+			ps.log.Warn("Certificate authenticated user not found in database", "username", username)
+			return fmt.Errorf("access denied for certificate user %s: not in proxy user database", username)
+		}
+
+		// Enforce pool access control for certificate-authenticated users
+		if !user.CanAccessPool(ps.pool.Name()) {
+			ps.log.Warn("Pool access denied for certificate user", "user", username, "pool", ps.pool.Name())
+			return fmt.Errorf("access denied for certificate user %s to pool %s", username, ps.pool.Name())
+		}
 	}
 
 	// Set authenticated username

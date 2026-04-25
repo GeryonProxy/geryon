@@ -5,6 +5,11 @@
 package raft
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
@@ -17,6 +22,17 @@ import (
 
 	"github.com/GeryonProxy/geryon/internal/logger"
 )
+
+// Global random number generator, seeded with crypto/rand on init.
+var globalRand = newGlobalRand()
+
+func newGlobalRand() *simpleRand {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		b = []byte{0, 0, 0, 0, 0, 0, 0, 1} // Fallback
+	}
+	return &simpleRand{seed: binary.LittleEndian.Uint64(b)}
+}
 
 // NodeState represents the state of a Raft node.
 type NodeState int
@@ -72,6 +88,8 @@ type Node struct {
 	peers      []string
 	listenAddr string
 	listener   net.Listener
+	connSem    chan struct{} // Bounded goroutine semaphore (H-4 fix)
+	secret     string        // C-2 fix: shared secret for inter-node auth
 	dataDir    string
 
 	// Timing
@@ -98,11 +116,12 @@ type Node struct {
 
 // Message represents a Raft message.
 type Message struct {
-	Type MessageType `json:"type"`
-	From string      `json:"from"`
-	To   string      `json:"to"`
-	Term uint64      `json:"term"`
-	Data []byte      `json:"data"`
+	Type      MessageType `json:"type"`
+	From      string      `json:"from"`
+	To        string      `json:"to"`
+	Term      uint64      `json:"term"`
+	Data      []byte      `json:"data"`
+	Signature string      `json:"signature"` // C-2 fix: HMAC-SHA256 signature
 }
 
 // MessageType represents the type of Raft message.
@@ -169,11 +188,12 @@ type InstallSnapshotResponse struct {
 }
 
 // NewNode creates a new Raft node.
-func NewNode(id, listenAddr string, peers []string, dataDir string, fsm FSM, log *logger.Logger) (*Node, error) {
+func NewNode(id, listenAddr string, peers []string, dataDir string, secret string, fsm FSM, log *logger.Logger) (*Node, error) {
 	n := &Node{
 		id:                id,
 		listenAddr:        listenAddr,
 		peers:             peers,
+		secret:            secret, // C-2 fix
 		dataDir:           dataDir,
 		electionTimeout:   1 * time.Second,
 		heartbeatInterval: 100 * time.Millisecond,
@@ -276,6 +296,7 @@ func (n *Node) Start() error {
 		return fmt.Errorf("failed to start listener: %w", err)
 	}
 	n.listener = listener
+	n.connSem = make(chan struct{}, 100) // H-4 fix: bounded goroutine limit
 
 	n.logger.Info("Raft node starting",
 		"id", n.id,
@@ -333,7 +354,17 @@ func (n *Node) acceptLoop() {
 			continue
 		}
 
-		go n.handleConnection(conn)
+		// H-4 fix: bounded goroutine creation
+		select {
+		case n.connSem <- struct{}{}:
+		default:
+			conn.Close() // Reject if at limit
+			continue
+		}
+		go func() {
+			defer func() { <-n.connSem }()
+			n.handleConnection(conn)
+		}()
 	}
 }
 
@@ -349,6 +380,22 @@ func (n *Node) handleConnection(conn net.Conn) {
 		var msg Message
 		if err := decoder.Decode(&msg); err != nil {
 			return
+		}
+
+		// C-2 fix: verify HMAC signature if secret is configured
+		// Must reconstruct the same JSON envelope that sendMessage signed
+		if n.secret != "" {
+			envelope, _ := json.Marshal(map[string]interface{}{
+				"type": msg.Type,
+				"from": msg.From,
+				"to":   msg.To,
+				"term": msg.Term,
+				"data": string(msg.Data),
+			})
+			if !verifyHMAC(msg.Signature, n.secret, envelope) {
+				n.logger.Warn("Rejected Raft message: invalid HMAC signature")
+				return
+			}
 		}
 
 		// Reset deadline for next read
@@ -705,12 +752,26 @@ func (n *Node) sendMessage(to string, msgType MessageType, data interface{}) {
 		return
 	}
 
+	// C-2 fix: Sign message with HMAC-SHA256
+	// Capture term once to avoid mismatch between msg.Term and HMAC payload
+	term := n.currentTerm.Load()
 	msg := Message{
 		Type: msgType,
 		From: n.id,
 		To:   to,
-		Term: n.currentTerm.Load(),
+		Term: term,
 		Data: jsonData,
+	}
+
+	if n.secret != "" {
+		msgData, _ := json.Marshal(map[string]interface{}{
+			"type": msgType,
+			"from": n.id,
+			"to":   to,
+			"term": term,
+			"data": string(jsonData),
+		})
+		msg.Signature = computeHMAC(n.secret, msgData)
 	}
 
 	// Connect and send
@@ -1082,9 +1143,6 @@ func (n *Node) handleInstallSnapshot(msg Message) {
 	n.sendMessage(msg.From, MsgInstallSnapshotResponse, resp)
 }
 
-// Global random number generator
-var globalRand = &simpleRand{}
-
 type simpleRand struct {
 	mu   sync.Mutex
 	seed uint64
@@ -1100,4 +1158,17 @@ func (r *simpleRand) Int63n(n int64) int64 {
 	// Simple LCG
 	r.seed = r.seed*6364136223846793005 + 1
 	return int64(uint64(r.seed) % uint64(n))
+}
+
+// computeHMAC computes HMAC-SHA256 of data using the given secret.
+func computeHMAC(secret string, data []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(data)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// verifyHMAC verifies an HMAC-SHA256 signature.
+func verifyHMAC(signature, secret string, data []byte) bool {
+	expected := computeHMAC(secret, data)
+	return hmac.Equal([]byte(signature), []byte(expected))
 }

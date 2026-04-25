@@ -110,11 +110,11 @@ Geryon is a feature-rich multi-database proxy with all three protocol bodies, th
 - [ ] Cross-database query federation
 - [ ] Kubernetes operator for automated deployment and management
 - [ ] Plugin/extension system for custom auth, routing, and caching logic
-- [ ] Connection-level query statistics aggregation (per-client, per-user)
+- [x] **Connection-level query statistics aggregation (per-client, per-user)** — `UserStats` and `ClientStats` structs added to query logger. `updateStats()` tracks per-user (by username) and per-client (by client_addr+pool) with decaying averages. `GetPerUserStats()` and `GetPerClientStats()` return sorted results. REST endpoints: `GET /api/v1/stats/users` and `GET /api/v1/stats/clients`. Aggregates across all listeners. **Files:** `internal/logger/querylog.go`, `internal/api/rest/server.go`.
 - [ ] Automated backup/restore for Raft state
 - [ ] Multi-tenant support (isolated pool groups per tenant)
 - [ ] Connection encryption at rest for cached results
-- [ ] Dashboard: time-series QPS tracking
+- [x] **Dashboard: time-series QPS tracking** — Canvas-based line chart on Overview page showing last 5 minutes of queries/sec. Pure vanilla JS, no external libs. `cmd/geryon/static/app.js:1450`.
 
 ### Completed Beyond v1.0
 - [x] **Dashboard: Users page** — Full CRUD with safe DOM-based modal form. `cmd/geryon/static/app.js:1235`. Dashboard server wired with `userDB`. REST + Dashboard APIs for list/create/delete.
@@ -129,6 +129,13 @@ Geryon is a feature-rich multi-database proxy with all three protocol bodies, th
 - [x] **PasswordFile TODO comment** — Cleaned stale "M-12: planned" comment; field is already implemented in `internal/proxy/listener.go`.
 - [x] **Users management (REST + Dashboard)** — Full CRUD via REST API and dashboard UI with safe DOM modal. `internal/api/rest/server.go:1442`, `internal/api/dashboard/server.go:478`, `cmd/geryon/static/app.js:1235`.
 - [x] **Config file API (read/write/validate)** — `GET/PUT /api/v1/config/file` with atomic writes and YAML validation. `internal/api/rest/server.go:961`. Dashboard YAML editor with save/validate buttons. `cmd/geryon/static/app.js:1074`.
+- [x] **Dashboard: Backends management page** — Per-pool backend listing with add/remove via modal form. Uses `GET/POST/DELETE /api/v1/pools/{poolName}/backends` API. Safe DOM methods throughout. `cmd/geryon/static/app.js:545`.
+- [x] **Dashboard: Cache page** — Global cache stats (hit rate, hits/misses counters) with per-pool cache breakdown. `cmd/geryon/static/app.js:1199`.
+- [x] **Dashboard: Cluster page** — Node status display with leader/follower indicators. Graceful fallback when clustering disabled. `cmd/geryon/static/app.js:1300`.
+- [x] **REST/Cluster API** — `GET /api/v1/cluster` endpoint added to both REST and dashboard servers. `internal/api/rest/server.go:1735`, `internal/api/dashboard/server.go:492`.
+- [x] **OpenAPI spec updated to v1.0.1** — Added pool backends CRUD, config file API, users CRUD, cluster status endpoints with full schema definitions. `docs/openapi.yaml`.
+- [x] **MCP server tools expanded** — Added `geryon_backend_detach`, `geryon_cluster_status`, `geryon_user_list` (11 total tools). User database integration wired. `internal/api/mcp/tools.go:275`.
+- [x] **Cluster endpoint tests** — `TestHandleCluster_Direct` (REST) and `TestDashboard_ClusterEndpoint` (dashboard).
 
 ## Effort Summary
 
@@ -141,6 +148,7 @@ Geryon is a feature-rich multi-database proxy with all three protocol bodies, th
 | Phase 5: Performance | 0h | DONE | Phase 2 |
 | Phase 6: Documentation | 0h | DONE | Phase 2 |
 | Phase 7: Release Prep | 0h | DONE | Phase 3-5 |
+| Phase 1.0.1: Management UI & Dashboard | 0h | DONE | — |
 | **Total** | **41-101h** | | |
 
 ## Risk Assessment

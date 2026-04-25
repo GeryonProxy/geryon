@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -310,4 +311,84 @@ func (s *Server) resourcePool(poolName string) string {
 
 	data, _ := json.MarshalIndent(result, "", "  ")
 	return string(data)
+}
+
+// toolBackendDetach removes a backend from its pool.
+func (s *Server) toolBackendDetach(poolName, address string) string {
+	if poolName == "" {
+		return "Error: pool name is required"
+	}
+
+	p := s.poolMgr.GetPool(poolName)
+	if p == nil {
+		return fmt.Sprintf("Pool '%s' not found", poolName)
+	}
+
+	if err := p.RemoveBackend(address); err != nil {
+		return fmt.Sprintf("Error removing backend: %v", err)
+	}
+
+	// Refresh the query router for this pool
+	if s.refreshRouterFn != nil {
+		s.refreshRouterFn(poolName)
+	}
+
+	return fmt.Sprintf("Backend %s removed from pool %s", address, poolName)
+}
+
+// toolClusterStatus returns cluster status.
+func (s *Server) toolClusterStatus() string {
+	s.mu.RLock()
+	c := s.cluster
+	s.mu.RUnlock()
+
+	if c == nil {
+		return "Clustering is not enabled for this node. Start with --cluster-enabled to use cluster features."
+	}
+
+	nodes := c.GetNodes()
+	result := fmt.Sprintf(`Cluster Status:
+
+State: %s
+Leader: %s
+Term: %d
+Nodes: %d
+
+`, c.StateString(), c.GetLeader(), c.GetTerm(), c.GetNodeCount())
+
+	for _, n := range nodes {
+		health := "dead"
+		if n.State != "dead" {
+			health = string(n.State)
+		}
+		result += fmt.Sprintf("  • %s (%s) - last seen: %s\n", n.ID, health, n.LastSeen.Format(time.RFC3339))
+	}
+
+	return result
+}
+
+// toolUserList returns list of proxy users.
+func (s *Server) toolUserList() string {
+	if s.userDB == nil {
+		return "User database not available"
+	}
+
+	users := s.userDB.ListUsers()
+	if len(users) == 0 {
+		return "No users configured"
+	}
+
+	result := "Proxy Users:\n\n"
+	for _, u := range users {
+		result += fmt.Sprintf("• %s\n", u.Username)
+		result += fmt.Sprintf("  Max Connections: %d\n", u.MaxConnections)
+		if u.DefaultPool != "" {
+			result += fmt.Sprintf("  Default Pool: %s\n", u.DefaultPool)
+		}
+		if len(u.AllowedPools) > 0 {
+			result += fmt.Sprintf("  Allowed Pools: %s\n", strings.Join(u.AllowedPools, ", "))
+		}
+		result += "\n"
+	}
+	return result
 }

@@ -238,10 +238,25 @@ func main() {
 	}
 
 	// Create and start MCP server
-	mcpServer := mcp.NewServer(&cfg.Admin.MCP, poolMgr, log, reloadFn)
+	refreshRouterFn := func(poolName string) {
+		for _, l := range listeners {
+			if l.Pool().Name() == poolName {
+				l.RefreshRouter()
+				break
+			}
+		}
+	}
+	mcpServer := mcp.NewServer(&cfg.Admin.MCP, poolMgr, log, reloadFn, userDB, refreshRouterFn)
 	if err := mcpServer.Start(); err != nil {
 		log.Error("Failed to start MCP server", "error", err)
 		os.Exit(1)
+	}
+
+	// Dashboard router refresh function (refreshes all listeners)
+	refreshAllRouters := func() {
+		for _, l := range listeners {
+			l.RefreshRouter()
+		}
 	}
 
 	// Create and start Dashboard server
@@ -251,6 +266,8 @@ func main() {
 		Path:    cfg.Admin.Dashboard.Path,
 		Auth:    cfg.Admin.Dashboard.Auth,
 	}, poolMgr, log, reloadFn, userDB)
+	dashboardServer.SetConfigPath(safeConfigPath)
+	dashboardServer.SetRefreshRouterFn(refreshAllRouters)
 	if err := dashboardServer.Start(); err != nil {
 		log.Error("Failed to start dashboard server", "error", err)
 		os.Exit(1)
@@ -273,6 +290,7 @@ func main() {
 			NodeID:            cfg.Cluster.NodeID,
 			ListenAddr:        cfg.Cluster.Raft.Listen,
 			Peers:             cfg.Cluster.Raft.Peers,
+			Secret:            cfg.Cluster.Secret, // C-2 fix
 			ElectionTimeout:   parseDuration(cfg.Cluster.Raft.ElectionTimeout),
 			HeartbeatInterval: parseDuration(cfg.Cluster.Raft.HeartbeatInterval),
 			Logger:            log,
@@ -286,6 +304,8 @@ func main() {
 
 		// Wire cluster to REST API for metrics export
 		restServer.SetCluster(clusterNode)
+		dashboardServer.SetCluster(clusterNode)
+		mcpServer.SetCluster(clusterNode)
 	}
 
 	// Create config watcher for hot reload

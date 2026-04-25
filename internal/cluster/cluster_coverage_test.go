@@ -35,7 +35,7 @@ func newCoordinatorWithRaft(t *testing.T) (*Coordinator, func()) {
 	}
 
 	// Create a real raft node
-	raftNode, err := raft.NewNode("node-1", "127.0.0.1:0", []string{}, dir+"/raft", coord.fsm, log)
+	raftNode, err := raft.NewNode("node-1", "127.0.0.1:0", []string{}, dir+"/raft", "test-secret", coord.fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}

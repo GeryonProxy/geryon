@@ -269,7 +269,7 @@ func TestNodeWithFSM(t *testing.T) {
 	fsm := NewGeryonFSM(FSMConfig{})
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}

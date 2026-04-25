@@ -97,7 +97,7 @@ func TestDashboard_WithAuth_InvalidFormat(t *testing.T) {
 func TestDashboard_HandleStats_WithPools(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 
 	poolCfg := &config.PoolConfig{
@@ -122,7 +122,9 @@ func TestDashboard_HandleStats_WithPools(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/stats")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /stats failed: %v", err)
 	}
@@ -136,7 +138,7 @@ func TestDashboard_HandleStats_WithPools(t *testing.T) {
 func TestDashboard_HandleBackends_WithPools(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 
 	poolCfg := &config.PoolConfig{
@@ -161,7 +163,9 @@ func TestDashboard_HandleBackends_WithPools(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/backends")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/backends", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /backends failed: %v", err)
 	}
@@ -175,7 +179,7 @@ func TestDashboard_HandleBackends_WithPools(t *testing.T) {
 func TestDashboard_HandlePools_WithPools(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 
 	poolCfg := &config.PoolConfig{
@@ -200,7 +204,9 @@ func TestDashboard_HandlePools_WithPools(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/pools")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /pools failed: %v", err)
 	}
@@ -214,7 +220,7 @@ func TestDashboard_HandlePools_WithPools(t *testing.T) {
 func TestDashboard_HandleQueries_WithPools(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 
 	poolCfg := &config.PoolConfig{
@@ -239,7 +245,9 @@ func TestDashboard_HandleQueries_WithPools(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/queries")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/queries", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /queries failed: %v", err)
 	}
@@ -253,7 +261,7 @@ func TestDashboard_HandleQueries_WithPools(t *testing.T) {
 func TestDashboard_HandleConfigReload_Error(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, func() error {
 		return fmt.Errorf("reload failed")
@@ -264,7 +272,10 @@ func TestDashboard_HandleConfigReload_Error(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Post("http://"+cfg.Listen+"/api/v1/config", "application/json", nil)
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /config failed: %v", err)
 	}
@@ -285,7 +296,7 @@ func TestDashboard_HandleConfigReload_Error(t *testing.T) {
 
 func TestDashboard_Stop_NilServer(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: false, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: false, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -303,7 +314,7 @@ func TestDashboard_Stop_NilServer(t *testing.T) {
 func TestDashboard_HandleConnections_WithPoolsData(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 
 	poolCfg := &config.PoolConfig{
@@ -328,7 +339,9 @@ func TestDashboard_HandleConnections_WithPoolsData(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/connections")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /connections failed: %v", err)
 	}
@@ -347,7 +360,7 @@ func TestDashboard_HandleConnections_WithPoolsData(t *testing.T) {
 func TestDashboard_ConfigReload_NoReloadFn(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -356,7 +369,10 @@ func TestDashboard_ConfigReload_NoReloadFn(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Post("http://"+cfg.Listen+"/api/v1/config", "application/json", nil)
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /config failed: %v", err)
 	}
@@ -416,7 +432,7 @@ func TestDashboard_GetLimiter_MaxSizeEviction(t *testing.T) {
 func TestDashboard_HandleConnections_ActiveTxns(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 
 	poolCfg := &config.PoolConfig{
@@ -447,7 +463,9 @@ func TestDashboard_HandleConnections_ActiveTxns(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/connections")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /connections failed: %v", err)
 	}
@@ -477,7 +495,7 @@ func TestDashboard_HandleConnections_ActiveTxns(t *testing.T) {
 func TestDashboard_HandleStats_WithCacheHitRate(t *testing.T) {
 	addr := bindRandomPort(t)
 	log, _ := logger.New("debug", "text")
-	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 
 	poolCfg := &config.PoolConfig{
@@ -513,7 +531,9 @@ func TestDashboard_HandleStats_WithCacheHitRate(t *testing.T) {
 	}
 	defer s.Stop()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/api/v1/stats")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/api/v1/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /stats failed: %v", err)
 	}
@@ -541,11 +561,12 @@ func TestDashboard_HandleStats_WithCacheHitRate(t *testing.T) {
 
 func TestDashboard_HandleIndex_NonRootPath(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
 	req := httptest.NewRequest("GET", "/some/random/path", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	rr := httptest.NewRecorder()
 
 	s.handleIndex(rr, req)
@@ -559,7 +580,7 @@ func TestDashboard_HandleIndex_NonRootPath(t *testing.T) {
 
 func TestDashboard_WithRateLimit_NonHostPort(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
@@ -573,6 +594,7 @@ func TestDashboard_WithRateLimit_NonHostPort(t *testing.T) {
 	wrapped := s.withRateLimit(handler)
 
 	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	req.RemoteAddr = "no-colon-or-port"
 	rr := httptest.NewRecorder()
 
@@ -587,11 +609,12 @@ func TestDashboard_WithRateLimit_NonHostPort(t *testing.T) {
 
 func TestDashboard_ConfigReload_NilReloadFn_Direct(t *testing.T) {
 	log, _ := logger.New("error", "json")
-	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: false}}
+	cfg := &Config{Enabled: true, Listen: "127.0.0.1:0", Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
 	pm := pool.NewManager(log)
 	s := NewServer(cfg, pm, log, nil, nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	rr := httptest.NewRecorder()
 
 	s.handleConfigReload(rr, req)

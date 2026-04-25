@@ -7,7 +7,9 @@
         currentPage: 'overview',
         stats: null,
         eventSource: null,
-        refreshInterval: null
+        refreshInterval: null,
+        qpsHistory: [],        // Time-series QPS data points
+        qpsMaxPoints: 60       // Keep last 60 data points (5 min at 5s intervals)
     };
 
     // DOM element cache
@@ -106,6 +108,12 @@
             case 'queries':
                 loadQueries(content);
                 break;
+            case 'cache':
+                loadCache(content);
+                break;
+            case 'cluster':
+                loadCluster(content);
+                break;
             case 'transactions':
                 loadTransactions(content);
                 break;
@@ -190,6 +198,22 @@
         dashboardGrid.appendChild(poolCard);
 
         container.appendChild(dashboardGrid);
+
+        // QPS time-series chart
+        const chartCard = document.createElement('div');
+        chartCard.className = 'card';
+
+        const chartTitle = document.createElement('h3');
+        chartTitle.textContent = 'Queries/sec (Last 5 Minutes)';
+        chartCard.appendChild(chartTitle);
+
+        const canvas = document.createElement('canvas');
+        canvas.id = 'qps-chart';
+        canvas.style.cssText = 'width: 100%; height: 200px; display: block;';
+        canvas.setAttribute('height', '200');
+        chartCard.appendChild(canvas);
+
+        container.appendChild(chartCard);
 
         fetchOverviewData();
     }
@@ -548,9 +572,20 @@
         const card = document.createElement('div');
         card.className = 'card';
 
+        const header = document.createElement('div');
+        header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;';
+
         const title = document.createElement('h3');
         title.textContent = 'Backend Servers';
-        card.appendChild(title);
+        header.appendChild(title);
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'btn btn-primary';
+        addBtn.textContent = '+ Add Backend';
+        addBtn.addEventListener('click', showAddBackendModal);
+        header.appendChild(addBtn);
+
+        card.appendChild(header);
 
         const content = document.createElement('div');
         content.id = 'backends-content';
@@ -564,75 +599,283 @@
     // Fetch backends from API
     async function fetchBackends() {
         try {
-            const response = await fetch('/api/v1/health');
-            if (!response.ok) throw new Error('Failed to fetch backends');
-            const data = await response.json();
-            updateBackendsContent(data);
+            // Fetch all pools first to get per-pool backends
+            const poolsResp = await fetch('/api/v1/pools');
+            if (!poolsResp.ok) throw new Error('Failed to fetch pools');
+            const poolsData = await poolsResp.json();
+
+            const result = { pools: poolsData.pools || [], perPoolBackends: {} };
+
+            // Fetch backends for each pool
+            for (const pool of result.pools) {
+                try {
+                    const resp = await fetch('/api/v1/pools/' + encodeURIComponent(pool.name) + '/backends');
+                    if (resp.ok) {
+                        result.perPoolBackends[pool.name] = await resp.json();
+                    }
+                } catch (e) {
+                    // Pool may not support the backends endpoint
+                }
+            }
+
+            updateBackendsContent(result);
         } catch (err) {
             const content = document.getElementById('backends-content');
             if (content) content.textContent = 'Error loading backends: ' + err.message;
         }
     }
 
-    // Update backends content
+    // Update backends content showing per-pool backends
     function updateBackendsContent(data) {
         const container = document.getElementById('backends-content');
         if (!container) return;
         container.textContent = '';
 
-        if (!data.backends || data.backends.length === 0) {
-            container.textContent = 'No backends configured';
+        if (!data.pools || data.pools.length === 0) {
+            container.textContent = 'No pools configured';
             return;
         }
 
-        const table = document.createElement('table');
-        table.className = 'data-table';
+        data.pools.forEach(pool => {
+            // Pool header
+            const poolHeader = document.createElement('h4');
+            poolHeader.style.cssText = 'margin: 16px 0 8px 0; color: var(--text-primary);';
+            poolHeader.textContent = pool.name + ' (' + (pool.body || 'N/A') + ')';
+            container.appendChild(poolHeader);
 
-        const thead = document.createElement('thead');
-        const headerRow = document.createElement('tr');
-        ['Address', 'Status', 'Latency', 'Last Check', 'Actions'].forEach(text => {
-            const th = document.createElement('th');
-            th.textContent = text;
-            headerRow.appendChild(th);
+            const backends = (data.perPoolBackends[pool.name] && data.perPoolBackends[pool.name].backends) || [];
+
+            if (backends.length === 0) {
+                const empty = document.createElement('div');
+                empty.style.cssText = 'color: var(--text-muted); font-size: 14px; margin-bottom: 12px;';
+                empty.textContent = 'No backends for this pool';
+                container.appendChild(empty);
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'data-table';
+            table.style.cssText = 'margin-bottom: 16px;';
+
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            ['Address', 'Role', 'Weight', 'Status', 'Connections', 'Actions'].forEach(text => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            backends.forEach(backend => {
+                const row = document.createElement('tr');
+
+                const addrCell = document.createElement('td');
+                addrCell.textContent = backend.address || '-';
+                row.appendChild(addrCell);
+
+                const roleCell = document.createElement('td');
+                const role = document.createElement('span');
+                role.className = 'badge badge-' + (backend.role === 'primary' ? 'primary' : 'secondary');
+                role.textContent = backend.role || 'unknown';
+                roleCell.appendChild(role);
+                row.appendChild(roleCell);
+
+                const weightCell = document.createElement('td');
+                weightCell.textContent = backend.weight || 1;
+                row.appendChild(weightCell);
+
+                const statusCell = document.createElement('td');
+                const status = document.createElement('span');
+                status.className = 'status ' + (backend.healthy ? 'up' : 'down');
+                status.textContent = backend.healthy ? 'up' : 'down';
+                statusCell.appendChild(status);
+                row.appendChild(statusCell);
+
+                const connCell = document.createElement('td');
+                connCell.textContent = backend.connections || 0;
+                row.appendChild(connCell);
+
+                const actionsCell = document.createElement('td');
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'btn btn-secondary';
+                removeBtn.textContent = 'Remove';
+                removeBtn.style.cssText = 'font-size: 12px; padding: 4px 8px;';
+                removeBtn.addEventListener('click', () => removeBackend(pool.name, backend.address));
+                actionsCell.appendChild(removeBtn);
+                row.appendChild(actionsCell);
+
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+            container.appendChild(table);
         });
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
+    }
 
-        const tbody = document.createElement('tbody');
-        data.backends.forEach(backend => {
-            const row = document.createElement('tr');
+    // Show add backend modal
+    function showAddBackendModal() {
+        // Fetch pools for dropdown
+        fetch('/api/v1/pools')
+            .then(r => r.json())
+            .then(data => {
+                const pools = data.pools || [];
+                if (pools.length === 0) {
+                    showNotification('No pools configured', 'error');
+                    return;
+                }
+                buildBackendModal(pools);
+            })
+            .catch(() => showNotification('Failed to load pools', 'error'));
+    }
 
-            const addressCell = document.createElement('td');
-            addressCell.textContent = backend.address || '-';
+    function buildBackendModal(pools) {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; ' +
+            'background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;';
 
-            const statusCell = document.createElement('td');
-            const status = document.createElement('span');
-            status.className = 'status ' + (backend.status || 'unknown');
-            status.textContent = backend.status || 'unknown';
-            statusCell.appendChild(status);
+        const modal = document.createElement('div');
+        modal.style.cssText = 'background: var(--card-bg); border-radius: 12px; padding: 24px; ' +
+            'width: 400px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.3);';
 
-            const latencyCell = document.createElement('td');
-            latencyCell.textContent = backend.latency || 'N/A';
+        const title = document.createElement('h3');
+        title.textContent = 'Add Backend';
+        title.style.cssText = 'margin: 0 0 20px 0;';
+        modal.appendChild(title);
 
-            const lastCheckCell = document.createElement('td');
-            lastCheckCell.textContent = backend.last_check || 'N/A';
+        // Pool selector
+        const poolLabel = document.createElement('label');
+        poolLabel.textContent = 'Pool';
+        poolLabel.style.cssText = 'display: block; margin-bottom: 4px; font-weight: 500; font-size: 14px;';
+        modal.appendChild(poolLabel);
 
-            const actionsCell = document.createElement('td');
-            const drainBtn = document.createElement('button');
-            drainBtn.className = 'btn btn-secondary';
-            drainBtn.textContent = 'Drain';
-            drainBtn.addEventListener('click', () => drainBackend(backend.address));
-            actionsCell.appendChild(drainBtn);
-
-            row.appendChild(addressCell);
-            row.appendChild(statusCell);
-            row.appendChild(latencyCell);
-            row.appendChild(lastCheckCell);
-            row.appendChild(actionsCell);
-            tbody.appendChild(row);
+        const poolSelect = document.createElement('select');
+        poolSelect.style.cssText = 'width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border); ' +
+            'background: var(--input-bg); color: var(--text); margin-bottom: 12px;';
+        pools.forEach(pool => {
+            const opt = document.createElement('option');
+            opt.value = pool.name;
+            opt.textContent = pool.name + ' (' + pool.body + ')';
+            poolSelect.appendChild(opt);
         });
-        table.appendChild(tbody);
-        container.appendChild(table);
+        modal.appendChild(poolSelect);
+
+        const fields = [
+            { id: 'backend-host', label: 'Host', placeholder: 'db.internal' },
+            { id: 'backend-port', label: 'Port', placeholder: '5432', type: 'number' },
+            { id: 'backend-database', label: 'Database', placeholder: 'myapp' },
+        ];
+
+        fields.forEach(f => {
+            const label = document.createElement('label');
+            label.textContent = f.label;
+            label.style.cssText = 'display: block; margin-bottom: 4px; font-weight: 500; font-size: 14px;';
+            modal.appendChild(label);
+
+            const input = document.createElement('input');
+            input.id = f.id;
+            input.placeholder = f.placeholder;
+            input.type = f.type || 'text';
+            input.style.cssText = 'width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border); ' +
+                'background: var(--input-bg); color: var(--text); margin-bottom: 12px;';
+            modal.appendChild(input);
+        });
+
+        // Role selector
+        const roleLabel = document.createElement('label');
+        roleLabel.textContent = 'Role';
+        roleLabel.style.cssText = 'display: block; margin-bottom: 4px; font-weight: 500; font-size: 14px;';
+        modal.appendChild(roleLabel);
+
+        const roleSelect = document.createElement('select');
+        roleSelect.id = 'backend-role';
+        roleSelect.style.cssText = 'width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--border); ' +
+            'background: var(--input-bg); color: var(--text); margin-bottom: 12px;';
+        ['primary', 'replica'].forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r;
+            opt.textContent = r;
+            roleSelect.appendChild(opt);
+        });
+        modal.appendChild(roleSelect);
+
+        const buttons = document.createElement('div');
+        buttons.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'btn btn-secondary';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => overlay.remove());
+        buttons.appendChild(cancelBtn);
+
+        const submitBtn = document.createElement('button');
+        submitBtn.className = 'btn btn-primary';
+        submitBtn.textContent = 'Add Backend';
+        submitBtn.addEventListener('click', () => createBackend(overlay));
+        buttons.appendChild(submitBtn);
+
+        modal.appendChild(buttons);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+    }
+
+    // Create new backend
+    async function createBackend(overlay) {
+        const poolName = document.getElementById('backend-host').closest('div, form')
+            ? overlay.querySelector('select').value
+            : '';
+        // Re-get the pool name from the select
+        const selects = overlay.querySelectorAll('select');
+        const poolSelect = selects[0];
+        const hostInput = document.getElementById('backend-host');
+        const portInput = document.getElementById('backend-port');
+        const dbInput = document.getElementById('backend-database');
+        const roleSelect = document.getElementById('backend-role');
+
+        if (!hostInput.value || !portInput.value) {
+            showNotification('Host and port are required', 'error');
+            return;
+        }
+
+        const body = {
+            host: hostInput.value,
+            port: parseInt(portInput.value),
+            role: roleSelect.value,
+            weight: 1,
+            database: dbInput.value
+        };
+
+        try {
+            const resp = await fetch('/api/v1/pools/' + encodeURIComponent(poolSelect.value) + '/backends', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+                throw new Error(err.error || 'Add backend failed');
+            }
+            showNotification('Backend added', 'success');
+            overlay.remove();
+            fetchBackends();
+        } catch (err) {
+            showNotification('Failed to add backend: ' + err.message, 'error');
+        }
+    }
+
+    // Remove backend from pool
+    async function removeBackend(poolName, address) {
+        if (!confirm('Remove backend ' + address + ' from pool ' + poolName + '?')) return;
+        try {
+            const resp = await fetch('/api/v1/pools/' + encodeURIComponent(poolName) + '/backends?address=' + encodeURIComponent(address), {
+                method: 'DELETE'
+            });
+            if (!resp.ok) throw new Error('Remove backend failed');
+            showNotification('Backend removed', 'success');
+            fetchBackends();
+        } catch (err) {
+            showNotification('Failed to remove backend: ' + err.message, 'error');
+        }
     }
 
     // Load connections page
@@ -971,6 +1214,329 @@
         container.appendChild(table);
     }
 
+    // Load cache page
+    function loadCache(container) {
+        container.textContent = '';
+
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const title = document.createElement('h3');
+        title.textContent = 'Query Cache';
+        card.appendChild(title);
+
+        const content = document.createElement('div');
+        content.id = 'cache-content';
+        content.textContent = 'Loading cache stats...';
+        card.appendChild(content);
+
+        container.appendChild(card);
+        fetchCache();
+    }
+
+    async function fetchCache() {
+        try {
+            const resp = await fetch('/api/v1/stats');
+            if (!resp.ok) throw new Error('Failed to fetch cache stats');
+            const data = await resp.json();
+            updateCacheContent(data);
+        } catch (err) {
+            const content = document.getElementById('cache-content');
+            if (content) content.textContent = 'Error: ' + err.message;
+        }
+    }
+
+    function updateCacheContent(data) {
+        const container = document.getElementById('cache-content');
+        if (!container) return;
+        container.textContent = '';
+
+        const grid = document.createElement('div');
+        grid.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px;';
+
+        const stats = [
+            { label: 'Cache Hit Rate', value: data.cache_hit_rate ? data.cache_hit_rate.toFixed(1) + '%' : '0%' },
+            { label: 'Cached Entries', value: data.cached_queries || 0 },
+            { label: 'Cache Hits', value: formatNumber(data.cache_hits || 0) },
+            { label: 'Cache Misses', value: formatNumber(data.cache_misses || 0) },
+        ];
+
+        stats.forEach(s => {
+            const item = document.createElement('div');
+            item.style.cssText = 'background: var(--bg); border-radius: 8px; padding: 16px; text-align: center;';
+
+            const val = document.createElement('div');
+            val.style.cssText = 'font-size: 24px; font-weight: bold; color: var(--success);';
+            val.textContent = s.value;
+            item.appendChild(val);
+
+            const lbl = document.createElement('div');
+            lbl.style.cssText = 'font-size: 12px; color: var(--text-muted); margin-top: 4px;';
+            lbl.textContent = s.label;
+            item.appendChild(lbl);
+
+            grid.appendChild(item);
+        });
+
+        container.appendChild(grid);
+
+        // Per-pool cache info
+        const poolsCard = document.createElement('div');
+        poolsCard.className = 'card';
+
+        const poolsTitle = document.createElement('h4');
+        poolsTitle.textContent = 'Per-Pool Cache Stats';
+        poolsTitle.style.cssText = 'margin: 0 0 12px 0;';
+        poolsCard.appendChild(poolsTitle);
+
+        const poolsContent = document.createElement('div');
+        poolsContent.id = 'cache-pools-content';
+        poolsContent.textContent = 'Loading...';
+        poolsCard.appendChild(poolsContent);
+        container.appendChild(poolsCard);
+
+        fetch('/api/v1/pools')
+            .then(r => r.json())
+            .then(poolsData => {
+                poolsContent.textContent = '';
+                const pools = poolsData.pools || [];
+                if (pools.length === 0) {
+                    poolsContent.textContent = 'No pools configured';
+                    return;
+                }
+                pools.forEach(pool => {
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);';
+
+                    const name = document.createElement('span');
+                    name.textContent = pool.name;
+                    row.appendChild(name);
+
+                    const meta = document.createElement('span');
+                    meta.style.cssText = 'color: var(--text-muted);';
+                    meta.textContent = 'Entries: ' + (pool.query_cache_entries || 0) + ' | Hit Rate: ' + ((pool.query_cache_hit_rate || 0) * 100).toFixed(1) + '%';
+                    row.appendChild(meta);
+
+                    poolsContent.appendChild(row);
+                });
+            });
+    }
+
+    // Load cluster page
+    function loadCluster(container) {
+        container.textContent = '';
+
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const title = document.createElement('h3');
+        title.textContent = 'Cluster Status';
+        card.appendChild(title);
+
+        const content = document.createElement('div');
+        content.id = 'cluster-content';
+        content.textContent = 'Loading cluster info...';
+        card.appendChild(content);
+
+        container.appendChild(card);
+        fetchCluster();
+    }
+
+    async function fetchCluster() {
+        try {
+            // Try cluster stats endpoint; fall back to info message
+            const resp = await fetch('/api/v1/cluster');
+            if (!resp.ok) {
+                updateClusterInfo({ status: 'disabled', message: 'Clustering is not enabled for this node.' });
+                return;
+            }
+            const data = await resp.json();
+            updateClusterInfo(data);
+        } catch (err) {
+            updateClusterInfo({ status: 'disabled', message: 'Cluster status unavailable: ' + err.message });
+        }
+    }
+
+    function updateClusterInfo(data) {
+        const container = document.getElementById('cluster-content');
+        if (!container) return;
+        container.textContent = '';
+
+        if (data.status === 'disabled' || data.status === 'unavailable') {
+            const info = document.createElement('div');
+            info.style.cssText = 'padding: 20px; text-align: center; color: var(--text-muted);';
+            info.textContent = data.message || 'Clustering is not enabled.';
+            container.appendChild(info);
+            return;
+        }
+
+        // Leader info
+        const leader = document.createElement('div');
+        leader.style.cssText = 'display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border);';
+
+        const leaderLabel = document.createElement('span');
+        leaderLabel.textContent = 'Leader';
+        leader.appendChild(leaderLabel);
+
+        const leaderVal = document.createElement('span');
+        leaderVal.style.cssText = 'color: var(--success); font-weight: bold;';
+        leaderVal.textContent = data.leader || 'unknown';
+        leader.appendChild(leaderVal);
+        container.appendChild(leader);
+
+        // Node count
+        const nodes = document.createElement('div');
+        nodes.style.cssText = 'display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border);';
+
+        const nodesLabel = document.createElement('span');
+        nodesLabel.textContent = 'Nodes';
+        nodes.appendChild(nodesLabel);
+
+        const nodesVal = document.createElement('span');
+        nodesVal.textContent = (data.nodes || []).length + ' total';
+        nodes.appendChild(nodesVal);
+        container.appendChild(nodes);
+
+        // Node list
+        if (data.nodes && data.nodes.length > 0) {
+            const table = document.createElement('table');
+            table.className = 'data-table';
+            table.style.cssText = 'margin-top: 16px;';
+
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            ['Node ID', 'Role', 'Status', 'Last Seen'].forEach(text => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            data.nodes.forEach(node => {
+                const row = document.createElement('tr');
+
+                const idCell = document.createElement('td');
+                idCell.textContent = node.id || '-';
+                row.appendChild(idCell);
+
+                const roleCell = document.createElement('td');
+                const isLeader = node.id === data.leader;
+                const badge = document.createElement('span');
+                badge.className = 'badge badge-' + (isLeader ? 'primary' : 'secondary');
+                badge.textContent = isLeader ? 'leader' : 'follower';
+                roleCell.appendChild(badge);
+                row.appendChild(roleCell);
+
+                const statusCell = document.createElement('td');
+                const status = document.createElement('span');
+                status.className = 'status ' + (node.healthy ? 'up' : 'down');
+                status.textContent = node.healthy ? 'healthy' : 'unreachable';
+                statusCell.appendChild(status);
+                row.appendChild(statusCell);
+
+                const lastSeen = document.createElement('td');
+                lastSeen.textContent = node.last_seen || '-';
+                row.appendChild(lastSeen);
+
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+            container.appendChild(table);
+        }
+    }
+
+    // Draw QPS time-series chart using canvas
+    function drawQPSChart() {
+        const canvas = document.getElementById('qps-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * 2;
+        canvas.height = 400;
+        ctx.scale(2, 2);
+
+        const w = rect.width;
+        const h = 200;
+        const pad = { top: 20, right: 16, bottom: 28, left: 48 };
+        const plotW = w - pad.left - pad.right;
+        const plotH = h - pad.top - pad.bottom;
+
+        const data = state.qpsHistory;
+        if (data.length < 2) return;
+
+        const maxVal = Math.max(...data.map(d => d.value), 1);
+
+        // Background
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, w, h);
+
+        // Grid lines
+        ctx.strokeStyle = '#2a2a4a';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= 4; i++) {
+            const y = pad.top + (plotH / 4) * i;
+            ctx.beginPath();
+            ctx.moveTo(pad.left, y);
+            ctx.lineTo(w - pad.right, y);
+            ctx.stroke();
+
+            ctx.fillStyle = '#666';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(Math.round(maxVal - (maxVal / 4) * i), pad.left - 6, y + 3);
+        }
+
+        // Time labels
+        const first = data[0].time;
+        const last = data[data.length - 1].time;
+        ctx.fillStyle = '#666';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        ['now', '-1m', '-2m', '-3m', '-4m', '-5m'].forEach((label, i) => {
+            const x = pad.left + (plotW / 5) * i;
+            ctx.fillText(label, x, h - 6);
+        });
+
+        // Line
+        ctx.beginPath();
+        ctx.strokeStyle = '#00d4ff';
+        ctx.lineWidth = 1.5;
+        ctx.lineJoin = 'round';
+        data.forEach((d, i) => {
+            const x = pad.left + (i / (data.length - 1)) * plotW;
+            const y = pad.top + plotH - (d.value / maxVal) * plotH;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // Fill under line
+        const lastX = pad.left + plotW;
+        const lastY = pad.top + plotH - (data[data.length - 1].value / maxVal) * plotH;
+        ctx.lineTo(lastX, pad.top + plotH);
+        ctx.lineTo(pad.left, pad.top + plotH);
+        ctx.closePath();
+        const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+        grad.addColorStop(0, 'rgba(0, 212, 255, 0.25)');
+        grad.addColorStop(1, 'rgba(0, 212, 255, 0.02)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        // Current value indicator
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#00d4ff';
+        ctx.fill();
+    }
+
+    // Format large numbers with commas
+    function formatNumber(n) {
+        if (typeof n === 'number') return n.toLocaleString();
+        return String(n);
+    }
+
     // Load transactions page
     function loadTransactions(container) {
         container.textContent = '';
@@ -1191,8 +1757,8 @@
         if (!editor) return;
 
         try {
-            const response = await fetch('/api/v1/config/file', {
-                method: 'PUT',
+            const response = await fetch('/api/v1/config/validate', {
+                method: 'POST',
                 headers: { 'Content-Type': 'text/yaml' },
                 body: editor.value
             });
@@ -1303,6 +1869,17 @@
             state.eventSource.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
+                    // Track QPS time-series
+                    const qps = data.queries_per_sec || 0;
+                    state.qpsHistory.push({ time: Date.now(), value: qps });
+                    if (state.qpsHistory.length > state.qpsMaxPoints) {
+                        state.qpsHistory.shift();
+                    }
+                    // Draw QPS chart if on overview page
+                    if (state.currentPage === 'overview' && state.qpsHistory.length > 1) {
+                        drawQPSChart();
+                    }
+
                     // Update overview page stats
                     if (state.currentPage === 'overview') {
                         updateStatElement('stat-connections', data.total_connections);

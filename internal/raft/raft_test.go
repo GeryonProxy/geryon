@@ -40,7 +40,7 @@ func TestMessageTypeConstants(t *testing.T) {
 
 func TestNewNode(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", "", nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestNewNode(t *testing.T) {
 
 func TestNode_ID(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", "", nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestNode_ID(t *testing.T) {
 
 func TestNode_State(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", "", nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestNode_State(t *testing.T) {
 
 func TestNode_CurrentTerm(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", "", nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestNode_CurrentTerm(t *testing.T) {
 
 func TestNode_StartStop(t *testing.T) {
 	log, _ := logger.New("debug", "text")
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, "", "", nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}

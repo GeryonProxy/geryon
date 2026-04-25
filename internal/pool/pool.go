@@ -353,6 +353,51 @@ func (p *serverConnPool) closeAll() {
 	}
 }
 
+// countActive returns the number of active connections for a backend without
+// closing any idle connections.
+func (p *serverConnPool) countActive(backendAddr string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	count := 0
+	for _, conn := range p.active {
+		if conn.backend != nil && conn.backend.Address() == backendAddr {
+			count++
+		}
+	}
+	return count
+}
+
+// closeBackend closes all idle connections for a specific backend address.
+// Active connections are NOT closed — the caller must drain first.
+// Returns the number of active connections that would be affected.
+func (p *serverConnPool) closeBackend(backendAddr string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Count active connections for this backend
+	activeCount := 0
+	for _, conn := range p.active {
+		if conn.backend != nil && conn.backend.Address() == backendAddr {
+			activeCount++
+		}
+	}
+
+	// Close idle connections for this backend
+	newIdle := p.idle[:0]
+	for _, conn := range p.idle {
+		if conn.backend != nil && conn.backend.Address() == backendAddr {
+			conn.Close()
+			delete(p.idleIndex, conn.id)
+		} else {
+			p.idleIndex[conn.id] = len(newIdle)
+			newIdle = append(newIdle, conn)
+		}
+	}
+	p.idle = newIdle
+
+	return activeCount
+}
+
 // waiter represents a client waiting for a server connection.
 type waiter struct {
 	conn     *ServerConn   // connection to deliver, or nil if not yet delivered
@@ -1554,6 +1599,74 @@ func (p *Pool) GetReplicas() []*Backend {
 	replicas := make([]*Backend, len(p.replicas))
 	copy(replicas, p.replicas)
 	return replicas
+}
+
+// AddBackend dynamically adds a new backend to the pool.
+func (p *Pool) AddBackend(host string, port int, role string, weight int, database string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Check for duplicate
+	for _, b := range p.backends {
+		if b.Host == host && b.Port == port {
+			return fmt.Errorf("backend %s:%d already exists", host, port)
+		}
+	}
+
+	backend := &Backend{
+		Host:     host,
+		Port:     port,
+		Role:     role,
+		Weight:   weight,
+		Database: database,
+	}
+	backend.Healthy.Store(true)
+	p.backends = append(p.backends, backend)
+	p.healthChecker.AddBackend(backend)
+	p.updateBackendLists()
+
+	p.log.Info("Backend added dynamically", "pool", p.name, "backend", backend.Address(), "role", role)
+	return nil
+}
+
+// RemoveBackend dynamically removes a backend from the pool.
+// The backend must be draining with zero active connections, or have no idle connections.
+func (p *Pool) RemoveBackend(backendAddr string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Verify backend exists before doing any work.
+	var targetBackend *Backend
+	for _, b := range p.backends {
+		if b.Address() == backendAddr {
+			targetBackend = b
+			break
+		}
+	}
+	if targetBackend == nil {
+		return fmt.Errorf("backend %s not found", backendAddr)
+	}
+
+	// Check active connections first, before mutating any state.
+	activeCount := p.serverConns.countActive(backendAddr)
+	if activeCount > 0 {
+		return fmt.Errorf("backend %s has %d active connections; drain it first", backendAddr, activeCount)
+	}
+
+	// Now safe to mutate: remove from health checker and backend list.
+	p.healthChecker.RemoveBackend(targetBackend)
+	for i, b := range p.backends {
+		if b.Address() == backendAddr {
+			p.backends = append(p.backends[:i], p.backends[i+1:]...)
+			break
+		}
+	}
+
+	// Close idle connections for the removed backend.
+	p.serverConns.closeBackend(backendAddr)
+	p.updateBackendLists()
+	p.log.Info("Backend removed dynamically", "pool", p.name, "backend", backendAddr)
+	return nil
 }
 
 // DrainBackend marks a backend for draining and returns the number of active connections.

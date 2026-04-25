@@ -262,7 +262,7 @@ func TestSnapshotInstaller_Install_Success(t *testing.T) {
 func TestNode_Propose_NotLeaderCov(t *testing.T) {
 	log, _ := logger.New("error", "text")
 	dir := t.TempDir()
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}

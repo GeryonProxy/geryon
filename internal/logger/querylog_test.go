@@ -752,3 +752,106 @@ func TestSetDefault(t *testing.T) {
 		t.Error("SetDefault should only work once")
 	}
 }
+
+func TestQueryLogger_PerUserStats(t *testing.T) {
+	tempDir := t.TempDir()
+	config := QueryLogConfig{
+		Enabled:       true,
+		Directory:     filepath.Join(tempDir, "queries"),
+		SlowThreshold: 50 * time.Millisecond,
+		BufferSize:    10,
+		FlushInterval: time.Second,
+	}
+
+	ql, err := NewQueryLogger(config)
+	if err != nil {
+		t.Fatalf("NewQueryLogger failed: %v", err)
+	}
+	defer ql.Stop()
+
+	// Log queries from different users
+	entries := []QueryLogEntry{
+		{Timestamp: time.Now(), QueryID: "1", Username: "alice", Query: "SELECT 1", Duration: 10 * time.Millisecond},
+		{Timestamp: time.Now(), QueryID: "2", Username: "alice", Query: "SELECT 2", Duration: 20 * time.Millisecond},
+		{Timestamp: time.Now(), QueryID: "3", Username: "bob", Query: "SELECT 3", Duration: 100 * time.Millisecond}, // slow
+		{Timestamp: time.Now(), QueryID: "4", Username: "charlie", Query: "SELECT 4", Duration: 5 * time.Millisecond},
+	}
+
+	for _, e := range entries {
+		ql.LogQuery(e)
+	}
+
+	stats := ql.GetPerUserStats()
+
+	// Should have 3 users
+	if len(stats) != 3 {
+		t.Fatalf("Expected 3 users, got %d", len(stats))
+	}
+
+	// Should be sorted by total queries descending (alice first with 2)
+	if stats[0].Username != "alice" || stats[0].TotalQueries != 2 {
+		t.Errorf("First user should be alice with 2 queries, got %s with %d", stats[0].Username, stats[0].TotalQueries)
+	}
+
+	// Bob should have 1 slow query
+	for _, s := range stats {
+		if s.Username == "bob" {
+			if s.SlowQueries != 1 {
+				t.Errorf("Bob should have 1 slow query, got %d", s.SlowQueries)
+			}
+			if s.MaxDuration != 100*time.Millisecond {
+				t.Errorf("Bob max duration should be 100ms, got %v", s.MaxDuration)
+			}
+		}
+	}
+}
+
+func TestQueryLogger_PerClientStats(t *testing.T) {
+	tempDir := t.TempDir()
+	config := QueryLogConfig{
+		Enabled:       true,
+		Directory:     filepath.Join(tempDir, "queries"),
+		SlowThreshold: 50 * time.Millisecond,
+		BufferSize:    10,
+		FlushInterval: time.Second,
+	}
+
+	ql, err := NewQueryLogger(config)
+	if err != nil {
+		t.Fatalf("NewQueryLogger failed: %v", err)
+	}
+	defer ql.Stop()
+
+	// Log queries from different clients
+	entries := []QueryLogEntry{
+		{Timestamp: time.Now(), QueryID: "1", ClientAddr: "10.0.0.1", Pool: "pg-pool", Username: "alice", Query: "SELECT 1", Duration: 10 * time.Millisecond},
+		{Timestamp: time.Now(), QueryID: "2", ClientAddr: "10.0.0.1", Pool: "pg-pool", Username: "alice", Query: "SELECT 2", Duration: 20 * time.Millisecond},
+		{Timestamp: time.Now(), QueryID: "3", ClientAddr: "10.0.0.2", Pool: "mysql-pool", Username: "bob", Query: "SELECT 3", Duration: 100 * time.Millisecond}, // slow
+		{Timestamp: time.Now(), QueryID: "4", ClientAddr: "10.0.0.1", Pool: "mysql-pool", Username: "alice", Query: "SELECT 4", Duration: 5 * time.Millisecond},
+	}
+
+	for _, e := range entries {
+		ql.LogQuery(e)
+	}
+
+	stats := ql.GetPerClientStats()
+
+	// Should have 3 client entries (10.0.0.1|pg-pool, 10.0.0.2|mysql-pool, 10.0.0.1|mysql-pool)
+	if len(stats) != 3 {
+		t.Fatalf("Expected 3 client entries, got %d", len(stats))
+	}
+
+	// Should be sorted by total queries descending (10.0.0.1|pg-pool first with 2)
+	if stats[0].ClientAddr != "10.0.0.1" || stats[0].Pool != "pg-pool" || stats[0].TotalQueries != 2 {
+		t.Errorf("First client should be 10.0.0.1|pg-pool with 2 queries, got %s|%s with %d", stats[0].ClientAddr, stats[0].Pool, stats[0].TotalQueries)
+	}
+
+	// 10.0.0.2|mysql-pool should have 1 slow query
+	for _, s := range stats {
+		if s.ClientAddr == "10.0.0.2" && s.Pool == "mysql-pool" {
+			if s.SlowQueries != 1 {
+				t.Errorf("10.0.0.2|mysql-pool should have 1 slow query, got %d", s.SlowQueries)
+			}
+		}
+	}
+}

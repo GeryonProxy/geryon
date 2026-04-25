@@ -104,6 +104,7 @@ func (s *Server) Start() error {
 		Handler:      s.withLogging(s.withPanicRecovery(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux))))),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {

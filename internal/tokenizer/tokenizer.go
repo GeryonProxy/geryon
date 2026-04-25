@@ -52,6 +52,8 @@ func (t QueryType) String() string {
 
 // ClassifyQuery determines the type of SQL query.
 func ClassifyQuery(query string) (QueryType, error) {
+	// Strip control characters that could bypass classification
+	query = stripControlChars(query)
 	// M-7 fix: strip comments and handle multi-statement queries
 	query = stripSQLComments(query)
 	query = strings.TrimSpace(query)
@@ -98,6 +100,26 @@ func ClassifyQuery(query string) (QueryType, error) {
 	}
 
 	return QueryUnknown, nil
+}
+
+// stripControlChars removes non-printable control characters (except whitespace)
+// that could bypass query classification.
+func stripControlChars(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		// Allow printable ASCII (0x20-0x7E), whitespace, and multi-byte UTF-8
+		if c >= 0x20 && c < 0x7F {
+			b.WriteByte(c)
+		} else if c == '\n' || c == '\r' || c == '\t' {
+			b.WriteByte(c) // Preserve whitespace needed for SQL parsing
+		} else if c >= 0x80 {
+			b.WriteByte(c) // Multi-byte UTF-8, pass through
+		}
+		// Strip 0x00-0x1F except \n\r\t, and 0x7F (DEL)
+	}
+	return b.String()
 }
 
 // stripSQLComments removes SQL comments from a query string.

@@ -4,7 +4,7 @@ info:
   description: |
     High-performance, multi-database connection pooler REST API.
     Supports PostgreSQL, MySQL, and MSSQL wire protocols.
-  version: 1.0.0
+  version: 1.0.1
   contact:
     name: Geryon Project
 
@@ -173,6 +173,46 @@ paths:
               schema:
                 type: string
 
+  /api/v1/stats/users:
+    get:
+      summary: Per-user query statistics
+      description: Returns aggregated query statistics per user across all pools
+      responses:
+        '200':
+          description: Per-user statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserStats'
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/v1/stats/clients:
+    get:
+      summary: Per-client query statistics
+      description: Returns aggregated query statistics per client address and pool
+      responses:
+        '200':
+          description: Per-client statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clients:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClientStats'
+                  timestamp:
+                    type: string
+                    format: date-time
+
   /api/v1/queries:
     get:
       summary: Get query statistics
@@ -340,6 +380,177 @@ paths:
                     type: string
                     format: date-time
 
+  /api/v1/pools/{poolName}/backends:
+    get:
+      summary: List pool backends
+      description: Returns backends for a specific pool
+      parameters:
+        - name: poolName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pool backends
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backends:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PoolBackend'
+        '404':
+          description: Pool not found
+    post:
+      summary: Add backend to pool
+      description: Dynamically adds a backend to a pool at runtime
+      parameters:
+        - name: poolName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddBackendRequest'
+      responses:
+        '201':
+          description: Backend added
+        '400':
+          description: Invalid request
+        '404':
+          description: Pool not found
+    delete:
+      summary: Remove backend from pool
+      description: Dynamically removes a backend from a pool at runtime
+      parameters:
+        - name: poolName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: address
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Backend removed
+        '404':
+          description: Pool or backend not found
+
+  /api/v1/config/file:
+    get:
+      summary: Read config file
+      description: Returns the raw YAML configuration file
+      responses:
+        '200':
+          description: YAML configuration
+          content:
+            text/yaml:
+              schema:
+                type: string
+    put:
+      summary: Update config file
+      description: Updates the configuration file with validated YAML
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Configuration updated
+        '400':
+          description: Invalid YAML or configuration
+
+  /api/v1/users:
+    get:
+      summary: List users
+      description: Returns all proxy users
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+    post:
+      summary: Create user
+      description: Creates a new proxy user with SCRAM-SHA-256 password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+        '400':
+          description: Invalid request
+        '409':
+          description: User already exists
+
+  /api/v1/users/{name}:
+    get:
+      summary: Get user details
+      description: Returns details for a specific user
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: User not found
+    delete:
+      summary: Delete user
+      description: Deletes a proxy user
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User deleted
+        '404':
+          description: User not found
+
+  /api/v1/cluster:
+    get:
+      summary: Cluster status
+      description: Returns cluster status and node information
+      responses:
+        '200':
+          description: Cluster status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterStatus'
+
 components:
   schemas:
     Pool:
@@ -397,6 +608,44 @@ components:
         pools:
           type: object
 
+    UserStats:
+      type: object
+      properties:
+        username:
+          type: string
+        total_queries:
+          type: integer
+        slow_queries:
+          type: integer
+        avg_duration:
+          type: string
+        max_duration:
+          type: string
+        last_query:
+          type: string
+          format: date-time
+
+    ClientStats:
+      type: object
+      properties:
+        client_addr:
+          type: string
+        username:
+          type: string
+        pool:
+          type: string
+        total_queries:
+          type: integer
+        slow_queries:
+          type: integer
+        avg_duration:
+          type: string
+        max_duration:
+          type: string
+        last_query:
+          type: string
+          format: date-time
+
     QueryDigest:
       type: object
       properties:
@@ -427,6 +676,100 @@ components:
           type: integer
         cached:
           type: boolean
+
+    PoolBackend:
+      type: object
+      properties:
+        address:
+          type: string
+        host:
+          type: string
+        port:
+          type: integer
+        role:
+          type: string
+          enum: [primary, replica]
+        weight:
+          type: integer
+        database:
+          type: string
+        healthy:
+          type: boolean
+        draining:
+          type: boolean
+        connections:
+          type: integer
+
+    AddBackendRequest:
+      type: object
+      required: [host, port]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        role:
+          type: string
+          default: primary
+        weight:
+          type: integer
+          default: 1
+        database:
+          type: string
+
+    User:
+      type: object
+      properties:
+        username:
+          type: string
+        max_connections:
+          type: integer
+        default_pool:
+          type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+
+    CreateUserRequest:
+      type: object
+      required: [username, password_hash]
+      properties:
+        username:
+          type: string
+        password_hash:
+          type: string
+        max_connections:
+          type: integer
+          default: 0
+        default_pool:
+          type: string
+        allowed_pools:
+          type: array
+          items:
+            type: string
+
+    ClusterStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, disabled, unavailable]
+        message:
+          type: string
+        leader:
+          type: string
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              healthy:
+                type: boolean
+              last_seen:
+                type: string
 
 security:
   - BearerAuth: []

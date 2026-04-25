@@ -13,6 +13,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
+// testToken is defined in server_coverage_test.go
+
 func TestWriteJSON(t *testing.T) {
 	rr := httptest.NewRecorder()
 	writeJSON(rr, http.StatusOK, map[string]string{"key": "value"})
@@ -93,7 +95,7 @@ func TestNewServer(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
@@ -108,7 +110,7 @@ func TestServer_StartStop(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
@@ -132,7 +134,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -146,7 +148,9 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	defer s.Stop(nil)
 
 	// Make HTTP request
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/health")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/health", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /health failed: %v", err)
 	}
@@ -169,7 +173,7 @@ func TestServer_ReadyEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -182,7 +186,9 @@ func TestServer_ReadyEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/ready")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/ready", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /ready failed: %v", err)
 	}
@@ -205,7 +211,7 @@ func TestServer_PoolsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -218,7 +224,9 @@ func TestServer_PoolsEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/pools")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /pools failed: %v", err)
 	}
@@ -245,7 +253,7 @@ func TestServer_StatsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -258,7 +266,9 @@ func TestServer_StatsEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/stats")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/stats", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /stats failed: %v", err)
 	}
@@ -273,7 +283,7 @@ func TestServer_BackendsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -286,7 +296,9 @@ func TestServer_BackendsEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/backends")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/backends", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /backends failed: %v", err)
 	}
@@ -301,7 +313,7 @@ func TestServer_TransactionsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -314,7 +326,9 @@ func TestServer_TransactionsEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/transactions")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/transactions", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /transactions failed: %v", err)
 	}
@@ -329,7 +343,7 @@ func TestServer_MetricsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false, Token: "test-token"},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -343,7 +357,7 @@ func TestServer_MetricsEndpoint(t *testing.T) {
 	defer s.Stop(nil)
 
 	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/metrics", nil)
-	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /metrics failed: %v", err)
@@ -359,7 +373,7 @@ func TestServer_ConfigReloadEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	reloaded := false
@@ -376,7 +390,9 @@ func TestServer_ConfigReloadEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Post("http://"+s.listener.Addr().String()+"/api/v1/config/reload", "application/json", nil)
+	req, _ := http.NewRequest("POST", "http://"+s.listener.Addr().String()+"/api/v1/config/reload", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /config/reload failed: %v", err)
 	}
@@ -395,7 +411,7 @@ func TestServer_ConfigEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -408,7 +424,9 @@ func TestServer_ConfigEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/config")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /config failed: %v", err)
 	}
@@ -423,7 +441,7 @@ func TestServer_TLSStatusEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -436,7 +454,9 @@ func TestServer_TLSStatusEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/tls/status")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/tls/status", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /tls/status failed: %v", err)
 	}
@@ -451,7 +471,7 @@ func TestServer_ConnectionsEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -464,7 +484,9 @@ func TestServer_ConnectionsEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/connections")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/connections", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /connections failed: %v", err)
 	}
@@ -479,7 +501,7 @@ func TestServer_QueriesEndpoint(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -492,7 +514,9 @@ func TestServer_QueriesEndpoint(t *testing.T) {
 	}
 	defer s.Stop(nil)
 
-	resp, err := http.Get("http://" + s.listener.Addr().String() + "/api/v1/queries")
+	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/queries", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /queries failed: %v", err)
 	}
@@ -507,7 +531,7 @@ func TestServer_AuthEnabled_RejectsWithoutToken(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: true, Token: "secret"},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
 	s, err := NewServer(cfg, pm, nil, log, "", nil, nil)
@@ -533,7 +557,7 @@ func TestServer_AuthEnabled_RejectsWithoutToken(t *testing.T) {
 
 	// With correct auth token
 	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/health", nil)
-	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Authenticated GET failed: %v", err)
@@ -587,7 +611,7 @@ func TestServer_Start_AlreadyStarted(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
@@ -610,7 +634,7 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, err := NewServer(cfg, nil, nil, log, "", nil, nil)
 	if err != nil {
@@ -774,7 +798,7 @@ func TestHandlePoolDetail_NotFound(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -799,7 +823,7 @@ func TestHandleSlowQueries(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -827,7 +851,7 @@ func TestHandleRecentQueries(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -855,7 +879,7 @@ func TestHandleActiveTransactions(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -883,7 +907,7 @@ func TestHandleBackendDrain_NotFound(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -907,7 +931,7 @@ func TestHandleBackendCancelDrain_NotFound(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -931,7 +955,7 @@ func TestHandleBackendAction_InvalidMethod(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -951,7 +975,7 @@ func TestHandleConnections_InvalidMethod(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -971,7 +995,7 @@ func TestHandleConfig_InvalidMethod(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -990,7 +1014,7 @@ func TestHandleSlowQueries_Limit(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -1017,7 +1041,7 @@ func TestHandleSlowQueries_InvalidLimit(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -1035,7 +1059,7 @@ func TestHandleSlowQueries_InvalidMethod(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -1053,7 +1077,7 @@ func TestHandleRecentQueries_Limit(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -1080,7 +1104,7 @@ func TestHandleRecentQueries_InvalidMethod(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -1098,7 +1122,7 @@ func TestHandleActiveTransactions_InvalidMethod(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -1116,7 +1140,7 @@ func TestHandleActiveTransactions_Response(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, nil, nil, log, "", nil, nil)
 
@@ -1164,7 +1188,7 @@ func TestHandlePoolDetail_WithPool(t *testing.T) {
 
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, pm, nil, log, "", nil, nil)
 
@@ -1209,7 +1233,7 @@ func TestHandlePoolDetail_NotFound_InvalidName(t *testing.T) {
 
 	cfg := &config.AdminRESTConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	s, _ := NewServer(cfg, pm, nil, log, "", nil, nil)
 
