@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/raft"
 	"github.com/GeryonProxy/geryon/internal/swim"
+	"github.com/GeryonProxy/geryon/internal/tlsutil"
 )
 
 // Coordinator wires together Raft consensus and SWIM gossip protocols.
@@ -175,6 +177,17 @@ func NewCoordinator(cfg *config.ClusterConfig, dataDir string, log *logger.Logge
 func (c *Coordinator) Start() error {
 	c.logger.Info("Starting cluster coordinator", "node_id", c.nodeID)
 
+	// C-2 fix: Load TLS config for inter-node encryption
+	var tlsConfig *tls.Config
+	if c.config.TLS.Mode != "" && c.config.TLS.Mode != "disable" {
+		var err error
+		tlsConfig, err = tlsutil.LoadServerConfig(c.config.TLS)
+		if err != nil {
+			return fmt.Errorf("failed to load cluster TLS config: %w", err)
+		}
+		c.logger.Info("Cluster TLS enabled", "mode", c.config.TLS.Mode)
+	}
+
 	// Start Raft node
 	raftNode, err := raft.NewNode(
 		c.nodeID,
@@ -182,6 +195,7 @@ func (c *Coordinator) Start() error {
 		c.config.Raft.Peers,
 		c.dataDir+"/raft",
 		c.config.Secret, // C-2 fix
+		tlsConfig, // C-2 fix
 		c.fsm,
 		c.logger,
 	)

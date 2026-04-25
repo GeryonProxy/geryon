@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -286,11 +287,24 @@ func main() {
 	// Create and start cluster if enabled
 	var clusterNode *cluster.Cluster
 	if cfg.Cluster.Enabled {
+		// C-2 fix: Load TLS config for inter-node encryption
+		var clusterTLS *tls.Config
+		if cfg.Cluster.TLS.Mode != "" && cfg.Cluster.TLS.Mode != "disable" {
+			var err error
+			clusterTLS, err = tlsutil.LoadServerConfig(cfg.Cluster.TLS)
+			if err != nil {
+				log.Error("Failed to load cluster TLS config", "error", err)
+				os.Exit(1)
+			}
+			log.Info("Cluster TLS enabled", "mode", cfg.Cluster.TLS.Mode)
+		}
+
 		clusterConfig := cluster.Config{
 			NodeID:            cfg.Cluster.NodeID,
 			ListenAddr:        cfg.Cluster.Raft.Listen,
 			Peers:             cfg.Cluster.Raft.Peers,
 			Secret:            cfg.Cluster.Secret, // C-2 fix
+			TLSConfig:         clusterTLS, // C-2 fix
 			ElectionTimeout:   parseDuration(cfg.Cluster.Raft.ElectionTimeout),
 			HeartbeatInterval: parseDuration(cfg.Cluster.Raft.HeartbeatInterval),
 			Logger:            log,

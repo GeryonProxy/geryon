@@ -21,7 +21,7 @@ The most severe remaining issues involve unauthenticated cluster communication (
 | # | Finding | Severity | Status |
 |---|---------|----------|--------|
 | 1 | Auth disabled when `auth.enabled: false` -- full API exposure | **CRITICAL** | **FIXED** |
-| 2 | Cluster inter-node communication: no auth or encryption | **CRITICAL** | Partial (HMAC added, no TLS) |
+| 2 | Cluster inter-node communication: no auth or encryption | **CRITICAL** | **FIXED** (TLS support added) |
 | 3 | Client connection counter double-decrement -- DoS | **CRITICAL** | **FIXED** |
 | 4 | Config file write enables auth manipulation | **HIGH** | **FIXED** |
 | 5 | MySQL passthrough bypasses pool access control | **HIGH** | **FIXED** |

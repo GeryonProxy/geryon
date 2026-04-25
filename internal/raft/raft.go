@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -90,6 +91,7 @@ type Node struct {
 	listener   net.Listener
 	connSem    chan struct{} // Bounded goroutine semaphore (H-4 fix)
 	secret     string        // C-2 fix: shared secret for inter-node auth
+	tlsConfig  *tls.Config  // C-2 fix: TLS config for inter-node encryption
 	dataDir    string
 
 	// Timing
@@ -188,13 +190,15 @@ type InstallSnapshotResponse struct {
 }
 
 // NewNode creates a new Raft node.
-func NewNode(id, listenAddr string, peers []string, dataDir string, secret string, fsm FSM, log *logger.Logger) (*Node, error) {
+// C-2 fix: tlsConfig enables TLS for inter-node communication. Pass nil for plaintext.
+func NewNode(id, listenAddr string, peers []string, dataDir string, secret string, tlsConfig *tls.Config, fsm FSM, log *logger.Logger) (*Node, error) {
 	n := &Node{
-		id:                id,
-		listenAddr:        listenAddr,
-		peers:             peers,
-		secret:            secret, // C-2 fix
-		dataDir:           dataDir,
+		id:                 id,
+		listenAddr:         listenAddr,
+		peers:              peers,
+		secret:             secret, // C-2 fix
+		tlsConfig:          tlsConfig,
+		dataDir:            dataDir,
 		electionTimeout:   1 * time.Second,
 		heartbeatInterval: 100 * time.Millisecond,
 		logEntries:        make([]Entry, 0),
@@ -295,6 +299,12 @@ func (n *Node) Start() error {
 	if err != nil {
 		return fmt.Errorf("failed to start listener: %w", err)
 	}
+
+	// C-2 fix: Wrap with TLS if configured
+	if n.tlsConfig != nil {
+		listener = tls.NewListener(listener, n.tlsConfig)
+	}
+
 	n.listener = listener
 	n.connSem = make(chan struct{}, 100) // H-4 fix: bounded goroutine limit
 
@@ -302,6 +312,7 @@ func (n *Node) Start() error {
 		"id", n.id,
 		"listen", n.listenAddr,
 		"peers", n.peers,
+		"tls", n.tlsConfig != nil,
 	)
 
 	// Start message handler
@@ -775,7 +786,13 @@ func (n *Node) sendMessage(to string, msgType MessageType, data interface{}) {
 	}
 
 	// Connect and send
-	conn, err := net.Dial("tcp", to)
+	// C-2 fix: Use TLS dial if configured
+	var conn net.Conn
+	if n.tlsConfig != nil {
+		conn, err = tls.Dial("tcp", to, n.tlsConfig)
+	} else {
+		conn, err = net.Dial("tcp", to)
+	}
 	if err != nil {
 		n.logger.Debug("Failed to connect to peer", "peer", to, "error", err)
 		return

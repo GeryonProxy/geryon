@@ -32,7 +32,7 @@
 
 | # | Finding | Severity | Reason |
 |---|---------|----------|--------|
-| C-2 | Cluster inter-node: no auth/encryption | CRITICAL | Requires TLS infrastructure + cluster secret management |
+| C-2 | Cluster inter-node: no auth/encryption | CRITICAL | **FIXED (2026-04-25)** - TLS support added to Raft/Cluster RPC (tls.Listener + tls.Dial) |
 | H-3 | CSRF: no protection on mutating endpoints | HIGH | **PARTIAL** - Content-type blocking only, not full CSRF tokens |
 
 ## Positive Security Controls (Verified)

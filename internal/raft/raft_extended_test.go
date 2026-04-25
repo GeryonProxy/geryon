@@ -50,7 +50,7 @@ func TestNode_lastLogInfo(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestNode_lastLogIndex(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestNode_hasLogEntry(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestNode_appendEntry(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestNode_isStopping(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestNode_hasMajority(t *testing.T) {
 	dir := t.TempDir()
 
 	// Node with no peers (single node) - always has majority
-	n1, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n1, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestNode_hasMajority(t *testing.T) {
 
 	// Node with 2 peers (3 nodes total) - needs 2 votes for majority
 	dir2 := t.TempDir()
-	n2, err := NewNode("node-2", "127.0.0.1:0", []string{"peer1", "peer2"}, dir2, "", nil, log)
+	n2, err := NewNode("node-2", "127.0.0.1:0", []string{"peer1", "peer2"}, dir2, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestNode_hasMajority(t *testing.T) {
 
 	// Node with 4 peers (5 nodes total) - needs 3 votes for majority
 	dir3 := t.TempDir()
-	n3, err := NewNode("node-3", "127.0.0.1:0", []string{"p1", "p2", "p3", "p4"}, dir3, "", nil, log)
+	n3, err := NewNode("node-3", "127.0.0.1:0", []string{"p1", "p2", "p3", "p4"}, dir3, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestNode_becomeFollower(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestNode_sendCommittedToApply(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1113,7 +1113,7 @@ func TestNode_becomeCandidate(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1143,7 +1143,7 @@ func TestNode_becomeLeader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log) // No peers
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log) // No peers
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1174,7 +1174,7 @@ func TestNode_onElectionTimeout(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1200,7 +1200,7 @@ func TestNode_onElectionTimeout_Leader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1226,7 +1226,7 @@ func TestNode_IsLeader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1255,7 +1255,7 @@ func TestNode_resetElectionTimer(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1277,7 +1277,7 @@ func TestNode_stopHeartbeat(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1306,7 +1306,7 @@ func TestNode_advanceCommitIndex(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1341,7 +1341,7 @@ func TestNode_advanceCommitIndex_NoAdvance(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2", "peer3"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2", "peer3"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1377,7 +1377,7 @@ func TestNode_Propose_NotLeader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1402,7 +1402,7 @@ func TestNode_InstallSnapshot(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1432,7 +1432,7 @@ func TestNode_GetSnapshot(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1458,7 +1458,7 @@ func TestNode_GetLeaderID(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1482,7 +1482,7 @@ func TestNode_handleVoteRequest_LowerTerm(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1522,7 +1522,7 @@ func TestNode_handleVoteRequest_HigherTerm(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1566,7 +1566,7 @@ func TestNode_handleVoteResponse(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1601,7 +1601,7 @@ func TestNode_handleVoteResponse_HigherTerm(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1642,7 +1642,7 @@ func TestNode_handleAppendEntries_LowerTerm(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1684,7 +1684,7 @@ func TestNode_handleAppendEntriesResponse(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1730,7 +1730,7 @@ func TestNode_sendHeartbeats(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"127.0.0.1:9999"}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"127.0.0.1:9999"}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1753,7 +1753,7 @@ func TestNode_sendAppendEntriesToAll(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"127.0.0.1:9999"}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"127.0.0.1:9999"}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1778,7 +1778,7 @@ func TestNode_maybeSnapshot(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -1807,7 +1807,7 @@ func TestNode_handleInstallSnapshot(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2166,7 +2166,7 @@ func TestNode_handleConnection(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2226,7 +2226,7 @@ func TestNode_handleConnection_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2262,7 +2262,7 @@ func TestNode_handleConnection_Timeout(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2305,7 +2305,7 @@ func TestNode_ApplyCommitted_WithFSM(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2354,7 +2354,7 @@ func TestNode_ApplyCommitted_InvalidCommand(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2393,7 +2393,7 @@ func TestNode_ApplyCommitted_FSMError(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2429,7 +2429,7 @@ func TestNode_ApplyCommitted_NilFSM(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2468,7 +2468,7 @@ func TestNode_Propose_AsLeader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2499,7 +2499,7 @@ func TestNode_Propose_WALClosed(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2521,7 +2521,7 @@ func TestNode_maybeSnapshot_TriggersSnapshot(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2550,7 +2550,7 @@ func TestNode_maybeSnapshot_NilFSM(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2574,7 +2574,7 @@ func TestNode_handleAppendEntries_SuccessfulWithEntries(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2621,7 +2621,7 @@ func TestNode_handleAppendEntries_WithPrevLogEntry(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2661,7 +2661,7 @@ func TestNode_handleAppendEntries_PrevLogMismatch(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2702,7 +2702,7 @@ func TestNode_handleAppendEntries_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2725,7 +2725,7 @@ func TestNode_handleAppendEntriesResponse_Failed(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2768,7 +2768,7 @@ func TestNode_handleAppendEntriesResponse_NotLeader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2796,7 +2796,7 @@ func TestNode_handleAppendEntriesResponse_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2821,7 +2821,7 @@ func TestNode_handleAppendEntriesResponse_HigherTerm(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2855,7 +2855,7 @@ func TestNode_handleAppendEntriesResponse_NextIndexFloor(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2905,7 +2905,7 @@ func TestNode_handleMessage_AllTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+			n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 			if err != nil {
 				t.Fatalf("NewNode failed: %v", err)
 			}
@@ -2933,7 +2933,7 @@ func TestNode_handleMessage_HigherTerm(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -2965,7 +2965,7 @@ func TestNode_handleVoteRequest_ValidVote(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3002,7 +3002,7 @@ func TestNode_handleVoteRequest_AlreadyVoted(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3039,7 +3039,7 @@ func TestNode_handleVoteRequest_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3062,7 +3062,7 @@ func TestNode_handleVoteResponse_NotCandidate(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3089,7 +3089,7 @@ func TestNode_handleVoteResponse_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3114,7 +3114,7 @@ func TestNode_handleVoteResponse_BecomeLeader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2", "node-3"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"node-2", "node-3"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3146,7 +3146,7 @@ func TestNode_handleInstallSnapshot_StaleTerm(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3185,7 +3185,7 @@ func TestNode_handleInstallSnapshot_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3208,7 +3208,7 @@ func TestNode_becomeLeader_WithPeers(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2", "peer3"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1", "peer2", "peer3"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3243,7 +3243,7 @@ func TestNode_becomeFollower_ClearsLeader(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3265,7 +3265,7 @@ func TestNode_InstallSnapshot_NilFSM(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3284,7 +3284,7 @@ func TestNode_InstallSnapshot_CorruptRestore(t *testing.T) {
 	dir := t.TempDir()
 
 	fsm := NewGeryonFSM(FSMConfig{})
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3303,7 +3303,7 @@ func TestNode_sendCommittedToApply_Nothing(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3330,7 +3330,7 @@ func TestNode_sendCommittedToApply_ChannelFull(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3365,7 +3365,7 @@ func TestNode_run_ElectionTimeout(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3393,7 +3393,7 @@ func TestNode_run_WithMessage(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3428,7 +3428,7 @@ func TestNode_becomeFollower_ResetsVotes(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -3968,7 +3968,7 @@ func TestNode_Start_AcceptConnections(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -4167,7 +4167,7 @@ func TestNode_sendMessage(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -4187,7 +4187,7 @@ func TestNode_sendMessage_ToListener(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -4241,7 +4241,7 @@ func TestNode_advanceCommitIndex_NotCurrentTerm(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1"}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{"peer1"}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -4273,7 +4273,7 @@ func TestNode_handleAppendEntries_LeaderCommitAboveLast(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -4320,7 +4320,7 @@ func TestNewNode_SnapshotRestoreFailure(t *testing.T) {
 	os.WriteFile(corruptPath, []byte("not a gzip"), 0644)
 
 	// NewNode should not fail even if snapshot restore fails
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode should not fail: %v", err)
 	}
@@ -4335,7 +4335,7 @@ func TestNewNode_WithSnapshotRestore(t *testing.T) {
 	fsm := NewGeryonFSM(FSMConfig{})
 
 	// Create a snapshot store and save a valid snapshot
-	n1, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm, log)
+	n1, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -4347,7 +4347,7 @@ func TestNewNode_WithSnapshotRestore(t *testing.T) {
 
 	// Create new node with same data dir
 	fsm2 := NewGeryonFSM(FSMConfig{})
-	n2, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", fsm2, log)
+	n2, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, fsm2, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}
@@ -4370,7 +4370,7 @@ func TestNode_acceptLoop_AcceptError(t *testing.T) {
 	log, _ := logger.New("debug", "text")
 	dir := t.TempDir()
 
-	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, log)
+	n, err := NewNode("node-1", "127.0.0.1:0", []string{}, dir, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewNode failed: %v", err)
 	}

@@ -7,6 +7,7 @@ package cluster
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -42,7 +43,8 @@ type Config struct {
 	NodeID            string
 	ListenAddr        string
 	Peers             []string
-	Secret            string // C-2 fix: shared secret for inter-node auth
+	Secret            string        // C-2 fix: shared secret for inter-node auth
+	TLSConfig         *tls.Config   // C-2 fix: TLS config for inter-node encryption
 	ElectionTimeout   time.Duration
 	HeartbeatInterval time.Duration
 	Logger            *logger.Logger
@@ -209,6 +211,11 @@ func (c *Cluster) serveRPC() {
 		return
 	}
 	defer listener.Close()
+
+	// C-2 fix: Wrap with TLS if configured
+	if c.config.TLSConfig != nil {
+		listener = tls.NewListener(listener, c.config.TLSConfig)
+	}
 
 	go func() {
 		<-c.shutdownCh
@@ -545,7 +552,13 @@ func (c *Cluster) sendRPC(to string, rpcType string, payload interface{}) {
 		return
 	}
 
-	conn, err := net.DialTimeout("tcp", node.Address, 5*time.Second)
+	// C-2 fix: Use TLS dial if configured
+	var conn net.Conn
+	if c.config.TLSConfig != nil {
+		conn, err = tls.Dial("tcp", node.Address, c.config.TLSConfig)
+	} else {
+		conn, err = net.DialTimeout("tcp", node.Address, 5*time.Second)
+	}
 	if err != nil {
 		c.log.Debug("Failed to connect to node", "node", to, "error", err)
 		return
