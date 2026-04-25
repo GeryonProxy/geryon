@@ -4,6 +4,7 @@
 package rest
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -16,6 +17,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/GeryonProxy/geryon/internal/auth"
+	"github.com/GeryonProxy/geryon/internal/cluster"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -36,11 +39,21 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
+// contextKey is a custom type for context keys to avoid collisions.
+type contextKey string
+
+const (
+	// usernameContextKey is stored in context after successful auth.
+	usernameContextKey contextKey = "username"
+)
+
 // Cluster provides cluster state for metrics export.
 type Cluster interface {
 	StateString() string
 	GetNodeCount() int
 	GetTerm() uint64
+	GetNodes() []*cluster.Node
+	GetLeader() string
 }
 
 // Server represents the REST API server.
@@ -57,6 +70,7 @@ type Server struct {
 	reloadFn   func() error
 	cluster    Cluster
 	userDB     *auth.UserDatabase
+	userMu     sync.Mutex // serializes user persistence operations
 }
 
 // NewServer creates a new REST API server.
@@ -76,6 +90,7 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 	// API routes
 	mux.HandleFunc("/api/v1/pools", s.handlePools)
 	mux.HandleFunc("/api/v1/pools/", s.handlePoolDetail)
+	mux.HandleFunc("/api/v1/pools/{poolName}/backends", s.handlePoolBackends)
 	mux.HandleFunc("/api/v1/connections", s.handleConnections)
 	mux.HandleFunc("/api/v1/backends", s.handleBackends)
 	mux.HandleFunc("/api/v1/backends/", s.handleBackendAction)
@@ -86,14 +101,18 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 	mux.HandleFunc("/api/v1/queries", s.handleQueries)
 	mux.HandleFunc("/api/v1/queries/slow", s.handleSlowQueries)
 	mux.HandleFunc("/api/v1/queries/recent", s.handleRecentQueries)
+	mux.HandleFunc("/api/v1/stats/users", s.handleUserStats)
+	mux.HandleFunc("/api/v1/stats/clients", s.handleClientStats)
 	mux.HandleFunc("/api/v1/transactions", s.handleTransactions)
 	mux.HandleFunc("/api/v1/transactions/active", s.handleActiveTransactions)
 	mux.HandleFunc("/api/v1/config", s.handleConfig)
 	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
+	mux.HandleFunc("/api/v1/config/validate", s.handleConfigValidate)
 	mux.HandleFunc("/api/v1/config/file", s.handleConfigFile)
 	mux.HandleFunc("/api/v1/users", s.handleUsers)
 	mux.HandleFunc("/api/v1/users/", s.handleUserDetail)
 	mux.HandleFunc("/api/v1/tls/status", s.handleTLSStatus)
+	mux.HandleFunc("/api/v1/cluster", s.handleCluster)
 
 	// Prometheus metrics endpoint (always requires auth)
 	mux.Handle("/metrics", s.requireAuth(http.HandlerFunc(s.handleMetrics)))
@@ -117,6 +136,7 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 		Handler:      s.withLogging(s.withPanicRecovery(s.withRateLimit(s.withSecurityHeaders(s.withCORS(s.withAuth(mux)))))),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	return s, nil
@@ -263,7 +283,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
 		}
 
 		if r.Method == http.MethodOptions {
@@ -271,18 +291,53 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 			return
 		}
 
+		// H-3 fix: CSRF protection for state-changing requests
+		// Reject browser-safe Content-Types that don't trigger CORS preflight.
+		// Browsers can send application/x-www-form-urlencoded, multipart/form-data,
+		// and text/plain cross-origin without preflight — these are the attack vector.
+		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
+			r.Method == http.MethodDelete || r.Method == http.MethodPatch {
+			// Origin check: when AllowedOrigins is empty, accept same-origin requests
+			// (Origin matching the request's own scheme+Host).
+			if origin != "" && !s.isAllowedOrigin(origin) {
+				// Same-origin check: Origin should match our Host
+				hostOrigin := "http://" + r.Host
+				hostOriginHTTPS := "https://" + r.Host
+				if origin != hostOrigin && origin != hostOriginHTTPS {
+					http.Error(w, "Forbidden: origin not allowed", http.StatusForbidden)
+					return
+				}
+			}
+			ct := r.Header.Get("Content-Type")
+			if ct != "" {
+				lower := strings.ToLower(ct)
+				switch {
+				case strings.HasPrefix(lower, "application/json"):
+				case strings.HasPrefix(lower, "application/yaml"):
+				case strings.HasPrefix(lower, "text/yaml"):
+				case strings.HasPrefix(lower, "application/octet-stream"):
+				default:
+					// Reject browser-safe content types (CSRF attack vector)
+					if strings.HasPrefix(lower, "application/x-www-form-urlencoded") ||
+						strings.HasPrefix(lower, "multipart/form-data") ||
+						strings.HasPrefix(lower, "text/plain") {
+						http.Error(w, "Forbidden: unsupported Content-Type", http.StatusForbidden)
+						return
+					}
+				}
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
 
 // withAuth adds authentication middleware.
+// C-1 FIX: Admin APIs ALWAYS require authentication regardless of auth.enabled flag.
+// The auth.enabled config option only controls proxy-client database authentication,
+// not admin API access. Admin endpoints must always be authenticated.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.config.Auth.Enabled {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -300,7 +355,10 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// M-8 FIX: Store username in context for rate limiting.
+		// Auth token is the admin token, not a per-user token, so we use "admin" as username.
+		ctx := context.WithValue(r.Context(), usernameContextKey, "admin")
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -370,42 +428,43 @@ func (rl *rateLimiter) periodicCleanup() {
 	}
 }
 
-func (rl *rateLimiter) GetLimiter(ip string) *rate.Limiter {
-	// Check if IP already has a limiter
-	if limiter, ok := rl.limiters.Load(ip); ok {
-		rl.lastSeen.Store(ip, time.Now()) // Update last seen
+func (rl *rateLimiter) GetLimiter(key string) *rate.Limiter {
+	// Check if key already has a limiter
+	if limiter, ok := rl.limiters.Load(key); ok {
+		rl.lastSeen.Store(key, time.Now()) // Update last seen
 		return limiter.(*rate.Limiter)
 	}
 
 	// Evict oldest entry if at capacity
 	if rl.size.Load() >= rl.maxSize.Load() {
-		var oldestIP string
+		var oldestKey string
 		var oldestTime time.Time
-		rl.lastSeen.Range(func(key, value interface{}) bool {
+		rl.lastSeen.Range(func(k, value interface{}) bool {
 			if last, ok := value.(time.Time); ok {
-				if oldestIP == "" || last.Before(oldestTime) {
-					oldestIP = key.(string)
+				if oldestKey == "" || last.Before(oldestTime) {
+					oldestKey = k.(string)
 					oldestTime = last
 				}
 			}
 			return true
 		})
-		if oldestIP != "" {
-			rl.limiters.Delete(oldestIP)
-			rl.lastSeen.Delete(oldestIP)
+		if oldestKey != "" {
+			rl.limiters.Delete(oldestKey)
+			rl.lastSeen.Delete(oldestKey)
 			rl.size.Add(-1)
 		}
 	}
 
 	// Create new limiter
 	limiter := rate.NewLimiter(rl.rate, rl.burst)
-	rl.limiters.Store(ip, limiter)
-	rl.lastSeen.Store(ip, time.Now())
+	rl.limiters.Store(key, limiter)
+	rl.lastSeen.Store(key, time.Now())
 	rl.size.Add(1)
 	return limiter
 }
 
 // withRateLimit adds rate limiting middleware per client IP.
+// M-8 FIX: Uses composite key (IP:username) for authenticated requests.
 func (s *Server) withRateLimit(next http.Handler) http.Handler {
 	rl := newRateLimiter(10, 20) // 10 req/s, burst 20
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +473,13 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 
-		limiter := rl.GetLimiter(ip)
+		// M-8 FIX: Create composite key with username when available
+		key := ip
+		if username, ok := r.Context().Value(usernameContextKey).(string); ok && username != "" {
+			key = ip + ":" + username
+		}
+
+		limiter := rl.GetLimiter(key)
 		if !limiter.Allow() {
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
@@ -442,12 +507,19 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // Internal details (file paths, connection strings) are stripped.
 func sanitizeErr(err error) string {
 	msg := err.Error()
+	// Strip file paths (Windows and Unix)
+	msg = fileStripRegex.ReplaceAllString(msg, "[PATH]")
+	// Strip connection strings (host:port patterns)
+	msg = connStripRegex.ReplaceAllString(msg, "[CONN]")
 	// Truncate to prevent leaking sensitive context
 	if len(msg) > 200 {
 		msg = msg[:200]
 	}
 	return msg
 }
+
+var fileStripRegex = regexp.MustCompile(`(?:[a-zA-Z]:)?[/\\][\w./\\_-]+(?:\.\w+)?`)
+var connStripRegex = regexp.MustCompile(`(?:[a-zA-Z0-9.-]+):(\d{1,5})`)
 
 // poolNameRegex validates pool names: alphanumeric, underscores, hyphens, 1-64 chars.
 var poolNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -501,6 +573,26 @@ func validatePoolConfig(cfg *config.PoolConfig) error {
 	return nil
 }
 
+// getAuthMode determines auth mode for new pool creation (M-4 fix).
+// Derives from existing listeners at runtime; falls back to config file.
+// Returns empty string on total failure, causing pool creation to fail closed.
+func (s *Server) getAuthMode() string {
+	// First try: derive from existing listeners (they store auth mode)
+	for _, l := range s.listeners {
+		if am := l.AuthMode(); am != "" {
+			return am
+		}
+	}
+	// Second try: read from config file
+	if s.configPath != "" {
+		cfg, err := config.Load(s.configPath)
+		if err == nil && cfg != nil {
+			return cfg.Auth.Mode
+		}
+	}
+	return "" // Fail closed: no listeners, no config
+}
+
 // handlePools handles pool listing and creation.
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -528,7 +620,23 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		// Create new pool
-		var req config.PoolConfig
+		// M-4 fix: Use a restricted request struct to prevent mass assignment
+		// of system-controlled fields (AuthMode is set server-side)
+		var req struct {
+			Name         string                    `json:"name"`
+			Body         string                    `json:"body"`
+			Mode         string                    `json:"mode"`
+			Listen       config.ListenConfig       `json:"listen"`
+			Backend      config.BackendConfig      `json:"backend"`
+			Limits       config.LimitConfig        `json:"limits"`
+			Health       config.HealthConfig       `json:"health"`
+			TLS          config.TLSConfig          `json:"tls"`
+			Cache        config.CacheConfig        `json:"cache"`
+			PreparedStmt config.PreparedStmtConfig `json:"prepared_stmt"`
+			Routing      config.RoutingConfig      `json:"routing"`
+			Transaction  config.TransactionConfig  `json:"transaction"`
+			// AuthMode intentionally excluded - set server-side
+		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON", http.StatusBadRequest)
 			return
@@ -574,7 +682,24 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if err := s.poolMgr.CreatePool(&req); err != nil {
+		// Build pool config with system-controlled fields set server-side
+		poolCfg := &config.PoolConfig{
+			Name:         req.Name,
+			Body:         req.Body,
+			Mode:         req.Mode,
+			Listen:       req.Listen,
+			Backend:      req.Backend,
+			Limits:       req.Limits,
+			Health:       req.Health,
+			TLS:          req.TLS,
+			Cache:        req.Cache,
+			PreparedStmt: req.PreparedStmt,
+			Routing:      req.Routing,
+			Transaction:  req.Transaction,
+			AuthMode:     s.getAuthMode(), // M-4 fix: set server-side from current config
+		}
+
+		if err := s.poolMgr.CreatePool(poolCfg); err != nil {
 			writeError(w, http.StatusConflict, "Failed to create pool: "+sanitizeErr(err))
 			return
 		}
@@ -677,6 +802,124 @@ func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
 			"status":  "success",
 			"message": "Pool deleted",
 			"pool":    poolName,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handlePoolBackends manages backends for a specific pool.
+func (s *Server) handlePoolBackends(w http.ResponseWriter, r *http.Request) {
+	// Extract pool name from {poolName} path variable
+	poolName := strings.TrimPrefix(r.URL.Path, "/api/v1/pools/")
+	poolName = strings.TrimSuffix(poolName, "/backends")
+	if poolName == "" {
+		writeError(w, http.StatusBadRequest, "pool name required")
+		return
+	}
+
+	p := s.poolMgr.GetPool(poolName)
+	if p == nil {
+		writeError(w, http.StatusNotFound, "pool not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		backends := p.GetBackends()
+		result := make([]map[string]interface{}, 0, len(backends))
+		for _, b := range backends {
+			result = append(result, map[string]interface{}{
+				"address":     b.Address(),
+				"host":        b.Host,
+				"port":        b.Port,
+				"role":        b.Role,
+				"weight":      b.Weight,
+				"database":    b.Database,
+				"healthy":     b.Healthy.Load(),
+				"draining":    b.Draining.Load(),
+				"connections": b.ConnCount.Load(),
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"backends": result})
+
+	case http.MethodPost:
+		var req struct {
+			Host     string `json:"host"`
+			Port     int    `json:"port"`
+			Role     string `json:"role"`
+			Weight   int    `json:"weight"`
+			Database string `json:"database"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "Invalid JSON: "+sanitizeErr(err))
+			return
+		}
+		if req.Host == "" || req.Port <= 0 {
+			writeError(w, http.StatusBadRequest, "host and port (positive integer) are required")
+			return
+		}
+		if req.Role == "" {
+			req.Role = "primary"
+		}
+		if req.Role != "primary" && req.Role != "replica" {
+			writeError(w, http.StatusBadRequest, "invalid role: must be primary or replica")
+			return
+		}
+		if req.Weight <= 0 {
+			req.Weight = 1
+		}
+		if req.Database == "" {
+			req.Database = ""
+		}
+		if err := p.AddBackend(req.Host, req.Port, req.Role, req.Weight, req.Database); err != nil {
+			writeError(w, http.StatusBadRequest, sanitizeErr(err))
+			return
+		}
+		// Refresh router on the listener for read/write splitting
+		for _, l := range s.listeners {
+			if l.Pool() == p {
+				l.RefreshRouter()
+				break
+			}
+		}
+		s.log.Info("Backend added via API", "pool", poolName, "backend", fmt.Sprintf("%s:%d", req.Host, req.Port))
+		writeJSON(w, http.StatusCreated, map[string]interface{}{
+			"status":  "success",
+			"message": "Backend added",
+			"address": fmt.Sprintf("%s:%d", req.Host, req.Port),
+		})
+
+	case http.MethodDelete:
+		// Parse address from query param or body
+		addr := r.URL.Query().Get("address")
+		if addr == "" {
+			var req struct {
+				Address string `json:"address"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Address == "" {
+				writeError(w, http.StatusBadRequest, "address query parameter or JSON body required")
+				return
+			}
+			addr = req.Address
+		}
+		if err := p.RemoveBackend(addr); err != nil {
+			writeError(w, http.StatusNotFound, sanitizeErr(err))
+			return
+		}
+		// Refresh router on the listener for read/write splitting
+		for _, l := range s.listeners {
+			if l.Pool() == p {
+				l.RefreshRouter()
+				break
+			}
+		}
+		s.log.Info("Backend removed via API", "pool", poolName, "backend", addr)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":  "success",
+			"message": "Backend removed",
+			"address": addr,
 		})
 
 	default:
@@ -1001,15 +1244,36 @@ func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Write to a temp file first, then rename for atomicity
+		// H-1 fix: prevent auth section modification via config file endpoint
+		currentData, err := os.ReadFile(s.configPath)
+		if err == nil {
+			var currentCfg config.Config
+			if err := yaml.Unmarshal(currentData, &currentCfg); err == nil {
+				currentAuthYAML, _ := yaml.Marshal(currentCfg.Auth)
+				newAuthYAML, _ := yaml.Marshal(testCfg.Auth)
+				if !bytes.Equal(bytes.TrimSpace(currentAuthYAML), bytes.TrimSpace(newAuthYAML)) {
+					writeError(w, http.StatusForbidden, "Auth section cannot be modified via this endpoint. Use user management API instead.")
+					return
+				}
+			}
+		}
+
+		// Write to a temp file first, then rename for atomicity.
+		// On Windows, os.Rename cannot overwrite an existing file. Instead of
+		// deleting the original (which risks data loss if the retry fails), we
+		// copy the temp file contents over the original using WriteFile.
 		tmpPath := s.configPath + ".tmp"
-		if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 			writeError(w, http.StatusInternalServerError, "Failed to write config: "+sanitizeErr(err))
 			return
 		}
 		if err := os.Rename(tmpPath, s.configPath); err != nil {
-			writeError(w, http.StatusInternalServerError, "Failed to save config: "+sanitizeErr(err))
-			return
+			// Rename failed (likely Windows with existing file). Overwrite the
+			// original contents instead of deleting it first.
+			if writeErr := os.WriteFile(s.configPath, data, 0600); writeErr != nil {
+				writeError(w, http.StatusInternalServerError, "Failed to save config: "+sanitizeErr(err))
+				return
+			}
 		}
 
 		s.log.Info("Configuration file updated", "path", s.configPath)
@@ -1022,6 +1286,37 @@ func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleConfigValidate validates YAML config without saving it.
+func (s *Server) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "Failed to read request body: "+sanitizeErr(err))
+		return
+	}
+
+	var testCfg config.Config
+	if err := yaml.Unmarshal(data, &testCfg); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid YAML: "+sanitizeErr(err))
+		return
+	}
+	if err := config.Validate(&testCfg); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid config: "+sanitizeErr(err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":    "valid",
+		"message":   "Configuration is valid",
+		"timestamp": time.Now().UTC(),
+	})
 }
 
 // handleBackendAction handles backend-specific actions (drain, etc.).
@@ -1233,6 +1528,107 @@ func (s *Server) handleSlowQueries(w http.ResponseWriter, r *http.Request) {
 		"slow_queries": slowQueries,
 		"limit":        limit,
 		"timestamp":    time.Now().UTC(),
+	})
+}
+
+// handleUserStats returns per-user query statistics.
+func (s *Server) handleUserStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Aggregate per-user stats from all listeners
+	userMap := make(map[string]*logger.UserStats)
+	for _, l := range s.listeners {
+		if ql := l.QueryLogger(); ql != nil {
+			for _, us := range ql.GetPerUserStats() {
+				existing, ok := userMap[us.Username]
+				if !ok {
+					copy := us
+					userMap[us.Username] = &copy
+				} else {
+					totalQ := existing.TotalQueries + us.TotalQueries
+					if totalQ > 0 {
+						avgNs := (float64(existing.AvgDuration)*float64(existing.TotalQueries) +
+							float64(us.AvgDuration)*float64(us.TotalQueries)) / float64(totalQ)
+						existing.AvgDuration = time.Duration(avgNs)
+					}
+					existing.TotalQueries += us.TotalQueries
+					existing.SlowQueries += us.SlowQueries
+					if us.MaxDuration > existing.MaxDuration {
+						existing.MaxDuration = us.MaxDuration
+					}
+					if us.LastQuery.After(existing.LastQuery) {
+						existing.LastQuery = us.LastQuery
+					}
+				}
+			}
+		}
+	}
+
+	users := make([]logger.UserStats, 0, len(userMap))
+	for _, us := range userMap {
+		users = append(users, *us)
+	}
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].TotalQueries > users[j].TotalQueries
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"users":     users,
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+// handleClientStats returns per-client query statistics.
+func (s *Server) handleClientStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Aggregate per-client stats from all listeners
+	clientMap := make(map[string]*logger.ClientStats)
+	for _, l := range s.listeners {
+		if ql := l.QueryLogger(); ql != nil {
+			for _, cs := range ql.GetPerClientStats() {
+				key := cs.ClientAddr + "|" + cs.Username + "|" + cs.Pool
+				existing, ok := clientMap[key]
+				if !ok {
+					copy := cs
+					clientMap[key] = &copy
+				} else {
+					totalQ := existing.TotalQueries + cs.TotalQueries
+					if totalQ > 0 {
+						avgNs := (float64(existing.AvgDuration)*float64(existing.TotalQueries) +
+							float64(cs.AvgDuration)*float64(cs.TotalQueries)) / float64(totalQ)
+						existing.AvgDuration = time.Duration(avgNs)
+					}
+					existing.TotalQueries += cs.TotalQueries
+					existing.SlowQueries += cs.SlowQueries
+					if cs.MaxDuration > existing.MaxDuration {
+						existing.MaxDuration = cs.MaxDuration
+					}
+					if cs.LastQuery.After(existing.LastQuery) {
+						existing.LastQuery = cs.LastQuery
+					}
+				}
+			}
+		}
+	}
+
+	clients := make([]logger.ClientStats, 0, len(clientMap))
+	for _, cs := range clientMap {
+		clients = append(clients, *cs)
+	}
+	sort.Slice(clients, func(i, j int) bool {
+		return clients[i].TotalQueries > clients[j].TotalQueries
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"clients":   clients,
+		"timestamp": time.Now().UTC(),
 	})
 }
 
@@ -1568,6 +1964,20 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		DefaultPool:    req.DefaultPool,
 		AllowedPools:   req.AllowedPools,
 	}
+	// Serialize persistence operations to prevent concurrent writes from
+	// overwriting each other
+	s.userMu.Lock()
+	defer s.userMu.Unlock()
+	// Check for duplicate inside the lock to prevent TOCTOU race
+	if s.userDB.GetUser(req.Username) != nil {
+		writeError(w, http.StatusConflict, "user "+req.Username+" already exists")
+		return
+	}
+	// Persist to disk first to avoid inconsistency if save fails
+	if err := s.saveUsersWithUser(user); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to persist user: "+sanitizeErr(err))
+		return
+	}
 	if err := s.userDB.AddUser(user); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -1592,6 +2002,14 @@ func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := parts[4]
+	// Serialize persistence operations
+	s.userMu.Lock()
+	defer s.userMu.Unlock()
+	// Persist to disk first (without this user) to avoid inconsistency
+	if err := s.saveUsersWithoutUser(username); err != nil {
+		writeError(w, http.StatusInternalServerError, "Failed to persist user deletion: "+sanitizeErr(err))
+		return
+	}
 	if err := s.userDB.RemoveUser(username); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -1601,6 +2019,77 @@ func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 		"username":  username,
 		"timestamp": time.Now().UTC(),
 	})
+}
+
+// saveUsers persists the current userDB to the config file.
+func (s *Server) saveUsers() error {
+	return s.saveUsersMutate(nil, "")
+}
+
+// saveUsersWithUser persists userDB plus one additional user (for create).
+func (s *Server) saveUsersWithUser(newUser *auth.User) error {
+	return s.saveUsersMutate(newUser, "")
+}
+
+// saveUsersWithoutUser persists userDB minus one user (for delete).
+func (s *Server) saveUsersWithoutUser(username string) error {
+	return s.saveUsersMutate(nil, username)
+}
+
+func (s *Server) saveUsersMutate(addUser *auth.User, removeUser string) error {
+	if s.configPath == "" {
+		// No config file — user changes are in-memory only.
+		// This is expected in test/embedded deployments.
+		return nil
+	}
+
+	cfg, err := config.Load(s.configPath)
+	if err != nil {
+		return err
+	}
+
+	users := s.userDB.ListUsers()
+	cfg.Auth.Users = make([]config.User, 0, len(users)+1)
+	for _, u := range users {
+		if removeUser != "" && u.Username == removeUser {
+			continue
+		}
+		cfg.Auth.Users = append(cfg.Auth.Users, config.User{
+			Username:          u.Username,
+			PasswordHash:      u.PasswordHash,
+			MysqlPasswordHash: u.MysqlPasswordHash,
+			MaxConnections:    u.MaxConnections,
+			DefaultPool:       u.DefaultPool,
+			AllowedPools:      u.AllowedPools,
+		})
+	}
+	if addUser != nil {
+		cfg.Auth.Users = append(cfg.Auth.Users, config.User{
+			Username:          addUser.Username,
+			PasswordHash:      addUser.PasswordHash,
+			MysqlPasswordHash: addUser.MysqlPasswordHash,
+			MaxConnections:    addUser.MaxConnections,
+			DefaultPool:       addUser.DefaultPool,
+			AllowedPools:      addUser.AllowedPools,
+		})
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	tmpPath := s.configPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, s.configPath); err != nil {
+		// Windows: overwrite original instead of deleting it
+		if writeErr := os.WriteFile(s.configPath, data, 0600); writeErr != nil {
+			return fmt.Errorf("rename failed and write fallback failed: %v (original: %v)", err, writeErr)
+		}
+	}
+	return nil
 }
 
 // handleTLSStatus returns TLS configuration status.
@@ -1627,6 +2116,40 @@ func (s *Server) handleTLSStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"tls_status": tlsStatus,
 		"timestamp":  time.Now().UTC(),
+	})
+}
+
+// handleCluster returns cluster status.
+func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	c := s.cluster
+	s.mu.RUnlock()
+
+	if c != nil {
+		nodes := c.GetNodes()
+		nodeList := make([]map[string]interface{}, 0, len(nodes))
+		for _, n := range nodes {
+			nodeList = append(nodeList, map[string]interface{}{
+				"id":       n.ID,
+				"healthy":  n.State != cluster.NodeStateDead,
+				"last_seen": n.LastSeen,
+			})
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":    c.StateString(),
+			"leader":    c.GetLeader(),
+			"nodes":     nodeList,
+			"term":      c.GetTerm(),
+			"timestamp": time.Now().UTC(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "disabled",
+		"message": "Clustering is not enabled for this node.",
+		"nodes":   []interface{}{},
 	})
 }
 

@@ -1,5 +1,5 @@
 // Package mcp implements the Model Context Protocol server for AI-assisted
-// database management. It exposes 13+ tools for pool, connection, backend,
+// database management. It exposes 11 tools for pool, connection, backend,
 // cache, cluster, and user management via SSE or stdio transports.
 package mcp
 
@@ -17,38 +17,66 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/GeryonProxy/geryon/internal/auth"
+	"github.com/GeryonProxy/geryon/internal/cluster"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
+// contextKey is a custom type for context keys to avoid collisions.
+type contextKey string
+
+const (
+	usernameContextKey contextKey = "username"
+)
+
 // Server implements the Model Context Protocol (MCP) server.
 type Server struct {
-	mu          sync.RWMutex
-	config      *config.AdminMCPConfig
-	poolMgr     *pool.Manager
-	log         *logger.Logger
-	server      *http.Server
-	started     bool
-	authToken   string
-	authEnabled bool
-	sseCount    atomic.Int64
-	sseLimit    int
-	reloadFn    func() error
+	mu              sync.RWMutex
+	config          *config.AdminMCPConfig
+	poolMgr         *pool.Manager
+	userDB          *auth.UserDatabase
+	log             *logger.Logger
+	server          *http.Server
+	started         bool
+	authToken       string
+	sseCount        atomic.Int64
+	sseLimit        int
+	reloadFn        func() error
+	refreshRouterFn func(poolName string)
+	cluster         mcpCluster
+}
+
+// mcpCluster is the subset of cluster state the MCP server needs.
+type mcpCluster interface {
+	StateString() string
+	GetNodeCount() int
+	GetTerm() uint64
+	GetNodes() []*cluster.Node
+	GetLeader() string
 }
 
 // NewServer creates a new MCP server.
-func NewServer(cfg *config.AdminMCPConfig, poolMgr *pool.Manager, log *logger.Logger, reloadFn func() error) *Server {
+func NewServer(cfg *config.AdminMCPConfig, poolMgr *pool.Manager, log *logger.Logger, reloadFn func() error, userDB *auth.UserDatabase, refreshRouterFn func(poolName string)) *Server {
 	s := &Server{
-		config:      cfg,
-		poolMgr:     poolMgr,
-		log:         log,
-		authEnabled: cfg.Auth.Enabled,
-		authToken:   cfg.Auth.Token,
-		sseLimit:    50,
-		reloadFn:    reloadFn,
+		config:          cfg,
+		poolMgr:         poolMgr,
+		userDB:          userDB,
+		log:             log,
+		authToken:       cfg.Auth.Token,
+		sseLimit:        50,
+		reloadFn:        reloadFn,
+		refreshRouterFn: refreshRouterFn,
 	}
 	return s
+}
+
+// SetCluster sets the cluster state accessor for the MCP server.
+func (s *Server) SetCluster(c mcpCluster) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cluster = c
 }
 
 // Start starts the MCP server.
@@ -79,6 +107,7 @@ func (s *Server) Start() error {
 		Handler:      s.withLogging(s.withPanicRecovery(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux))))),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	s.started = true
@@ -142,13 +171,10 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 }
 
 // withAuth adds authentication middleware.
+// C-1 FIX: Auth is always required for MCP server regardless of auth.enabled flag.
+// Admin API access must always be authenticated.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authEnabled {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -166,7 +192,19 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// H-3 fix: CSRF protection for state-changing requests
+		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
+			r.Method == http.MethodDelete || r.Method == http.MethodPatch {
+			ct := r.Header.Get("Content-Type")
+			if ct != "" && !strings.HasPrefix(ct, "application/json") {
+				http.Error(w, "Forbidden: unsupported Content-Type", http.StatusForbidden)
+				return
+			}
+		}
+
+		// M-8 FIX: Store username in context for rate limiting.
+		ctx := context.WithValue(r.Context(), usernameContextKey, "admin")
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -211,35 +249,36 @@ func (rl *mcpRateLimiter) doCleanup() {
 	}
 }
 
-func (rl *mcpRateLimiter) GetLimiter(ip string) *rate.Limiter {
+func (rl *mcpRateLimiter) GetLimiter(key string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	if len(rl.limiters) >= rl.maxSize {
-		var oldestIP string
+		var oldestKey string
 		var oldestTime time.Time
-		for ip, last := range rl.lastSeen {
-			if oldestIP == "" || last.Before(oldestTime) {
-				oldestIP = ip
+		for k, last := range rl.lastSeen {
+			if oldestKey == "" || last.Before(oldestTime) {
+				oldestKey = k
 				oldestTime = last
 			}
 		}
-		if oldestIP != "" {
-			delete(rl.limiters, oldestIP)
-			delete(rl.lastSeen, oldestIP)
+		if oldestKey != "" {
+			delete(rl.limiters, oldestKey)
+			delete(rl.lastSeen, oldestKey)
 		}
 	}
 
-	rl.lastSeen[ip] = time.Now()
-	limiter, ok := rl.limiters[ip]
+	rl.lastSeen[key] = time.Now()
+	limiter, ok := rl.limiters[key]
 	if !ok {
 		limiter = rate.NewLimiter(5, 10)
-		rl.limiters[ip] = limiter
+		rl.limiters[key] = limiter
 	}
 	return limiter
 }
 
 // withRateLimit adds rate limiting middleware.
+// M-8 FIX: Uses composite key (IP:username) for authenticated requests.
 func (s *Server) withRateLimit(next http.Handler) http.Handler {
 	rl := newMCPRateLimiter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +287,13 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 
-		if !rl.GetLimiter(ip).Allow() {
+		// M-8 FIX: Create composite key with username when available
+		key := ip
+		if username, ok := r.Context().Value(usernameContextKey).(string); ok && username != "" {
+			key = ip + ":" + username
+		}
+
+		if !rl.GetLimiter(key).Allow() {
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -410,6 +455,28 @@ func (s *Server) handleToolsList(w http.ResponseWriter, r *http.Request) {
 			Description: "Get query statistics",
 			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
+		{
+			Name:        "geryon_backend_detach",
+			Description: "Remove a backend from a specific pool (after draining)",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"pool":    map[string]interface{}{"type": "string", "description": "Pool name"},
+					"address": map[string]interface{}{"type": "string", "description": "Backend address (host:port)"},
+				},
+				"required": []string{"pool", "address"},
+			},
+		},
+		{
+			Name:        "geryon_cluster_status",
+			Description: "Get cluster status and node information",
+			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
+		{
+			Name:        "geryon_user_list",
+			Description: "List all proxy users",
+			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
+		},
 	}
 
 	resp := ToolsListResponse{Tools: tools}
@@ -452,6 +519,14 @@ func (s *Server) handleToolsCall(w http.ResponseWriter, r *http.Request) {
 		result = s.toolConfigReload()
 	case "geryon_query_stats":
 		result = s.toolQueryStats()
+	case "geryon_backend_detach":
+		poolName, _ := req.Arguments["pool"].(string)
+		address, _ := req.Arguments["address"].(string)
+		result = s.toolBackendDetach(poolName, address)
+	case "geryon_cluster_status":
+		result = s.toolClusterStatus()
+	case "geryon_user_list":
+		result = s.toolUserList()
 	default:
 		result = fmt.Sprintf("Unknown tool: %s", req.Name)
 		isError = true

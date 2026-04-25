@@ -4,20 +4,26 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
+	"gopkg.in/yaml.v3"
 
 	"github.com/GeryonProxy/geryon/internal/auth"
+	"github.com/GeryonProxy/geryon/internal/cluster"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -26,16 +32,37 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
+// contextKey is a custom type for context keys to avoid collisions.
+type contextKey string
+
+const (
+	usernameContextKey contextKey = "username"
+)
+
 // Server serves the web dashboard.
 type Server struct {
-	poolMgr     *pool.Manager
-	userDB      *auth.UserDatabase
-	log         *logger.Logger
-	server      *http.Server
-	config      *Config
-	authToken   string
-	authEnabled bool
-	reloadFn    func() error
+	mu             sync.RWMutex
+	userMu         sync.Mutex // serializes user persistence to config file
+	poolMgr        *pool.Manager
+	userDB         *auth.UserDatabase
+	log            *logger.Logger
+	server         *http.Server
+	config         *Config
+	authToken      string
+	authEnabled    bool
+	reloadFn       func() error
+	cluster        dashboardCluster
+	configPath     string
+	refreshRouterFn func()
+}
+
+// dashboardCluster is the subset of cluster state the dashboard needs.
+type dashboardCluster interface {
+	StateString() string
+	GetNodeCount() int
+	GetTerm() uint64
+	GetNodes() []*cluster.Node
+	GetLeader() string
 }
 
 // Config holds dashboard configuration.
@@ -59,6 +86,28 @@ func NewServer(cfg *Config, poolMgr *pool.Manager, log *logger.Logger, reloadFn 
 		authToken:   cfg.Auth.Token,
 		reloadFn:    reloadFn,
 	}
+}
+
+// SetCluster sets the cluster state accessor for the dashboard.
+func (s *Server) SetCluster(c dashboardCluster) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cluster = c
+}
+
+// SetConfigPath sets the path to the config file for read/write operations.
+func (s *Server) SetConfigPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.configPath = path
+}
+
+// SetRefreshRouterFn sets the callback to refresh listener routers after
+// backend topology changes.
+func (s *Server) SetRefreshRouterFn(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshRouterFn = fn
 }
 
 // Start starts the dashboard server.
@@ -85,12 +134,17 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/v1/stats", s.handleStats)
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/backends", s.handleBackends)
+	mux.HandleFunc("/api/v1/pools/", s.handlePoolDetail)
 	mux.HandleFunc("/api/v1/connections", s.handleConnections)
 	mux.HandleFunc("/api/v1/queries", s.handleQueries)
 	mux.HandleFunc("/api/v1/transactions", s.handleTransactions)
 	mux.HandleFunc("/api/v1/config", s.handleConfig)
+	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
+	mux.HandleFunc("/api/v1/config/file", s.handleConfigFile)
+	mux.HandleFunc("/api/v1/config/validate", s.handleConfigValidate)
 	mux.HandleFunc("/api/v1/users", s.handleUsers)
 	mux.HandleFunc("/api/v1/users/", s.handleUserDetail)
+	mux.HandleFunc("/api/v1/cluster", s.handleCluster)
 
 	readTimeout := parseDuration(s.config.ReadTimeout, 30*time.Second)
 	writeTimeout := parseDuration(s.config.WriteTimeout, 30*time.Second)
@@ -99,6 +153,7 @@ func (s *Server) Start() error {
 		Handler:      s.withLogging(s.withPanicRecovery(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux))))),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	ready := make(chan struct{})
@@ -159,13 +214,10 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 }
 
 // withAuth adds authentication middleware.
+// C-1 FIX: Auth is always required for dashboard regardless of auth.enabled flag.
+// Admin API access must always be authenticated.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authEnabled {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -183,7 +235,19 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// H-3 fix: CSRF protection for state-changing requests
+		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
+			r.Method == http.MethodDelete || r.Method == http.MethodPatch {
+			ct := r.Header.Get("Content-Type")
+			if ct != "" && !strings.HasPrefix(ct, "application/json") && !strings.HasPrefix(ct, "text/yaml") {
+				http.Error(w, "Forbidden: unsupported Content-Type", http.StatusForbidden)
+				return
+			}
+		}
+
+		// M-8 FIX: Store username in context for rate limiting.
+		ctx := context.WithValue(r.Context(), usernameContextKey, "admin")
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -223,35 +287,36 @@ func (rl *dashboardRateLimiter) periodicCleanup() {
 	}
 }
 
-func (rl *dashboardRateLimiter) GetLimiter(ip string) *rate.Limiter {
+func (rl *dashboardRateLimiter) GetLimiter(key string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	if len(rl.limiters) >= rl.maxSize {
-		var oldestIP string
+		var oldestKey string
 		var oldestTime time.Time
-		for ip, last := range rl.lastSeen {
-			if oldestIP == "" || last.Before(oldestTime) {
-				oldestIP = ip
+		for k, last := range rl.lastSeen {
+			if oldestKey == "" || last.Before(oldestTime) {
+				oldestKey = k
 				oldestTime = last
 			}
 		}
-		if oldestIP != "" {
-			delete(rl.limiters, oldestIP)
-			delete(rl.lastSeen, oldestIP)
+		if oldestKey != "" {
+			delete(rl.limiters, oldestKey)
+			delete(rl.lastSeen, oldestKey)
 		}
 	}
 
-	rl.lastSeen[ip] = time.Now()
-	limiter, ok := rl.limiters[ip]
+	rl.lastSeen[key] = time.Now()
+	limiter, ok := rl.limiters[key]
 	if !ok {
 		limiter = rate.NewLimiter(5, 15)
-		rl.limiters[ip] = limiter
+		rl.limiters[key] = limiter
 	}
 	return limiter
 }
 
 // withRateLimit adds per-IP rate limiting middleware.
+// M-8 FIX: Uses composite key (IP:username) for authenticated requests.
 func (s *Server) withRateLimit(next http.Handler) http.Handler {
 	rl := newDashboardRateLimiter(5, 15)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -260,7 +325,13 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 
-		if !rl.GetLimiter(ip).Allow() {
+		// M-8 FIX: Create composite key with username when available
+		key := ip
+		if username, ok := r.Context().Value(usernameContextKey).(string); ok && username != "" {
+			key = ip + ":" + username
+		}
+
+		if !rl.GetLimiter(key).Allow() {
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -348,6 +419,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"total_transactions":  totalTransactions,
 		"cached_queries":      totalCacheEntries,
 		"active_transactions": totalActiveConnections,
+		"cache_hits":          totalCacheHits,
+		"cache_misses":        totalCacheMisses,
 	})
 }
 
@@ -378,6 +451,137 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, map[string]any{"backends": result})
+}
+
+// handlePoolDetail returns details for a specific pool including backends.
+func (s *Server) handlePoolDetail(w http.ResponseWriter, r *http.Request) {
+	// Extract pool name from path: /api/v1/pools/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/pools/")
+	if path == "" {
+		s.writeErrorJSON(w, http.StatusBadRequest, "pool name required")
+		return
+	}
+
+	// Check if requesting backends sub-path
+	if strings.HasSuffix(path, "/backends") {
+		poolName := strings.TrimSuffix(path, "/backends")
+		p := s.poolMgr.GetPool(poolName)
+		if p == nil {
+			s.writeErrorJSON(w, http.StatusNotFound, "pool not found")
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			backends := make([]map[string]any, 0)
+			for _, b := range p.GetBackends() {
+				backends = append(backends, map[string]any{
+					"address":     b.Address(),
+					"host":        b.Host,
+					"port":        b.Port,
+					"role":        b.Role,
+					"weight":      b.Weight,
+					"healthy":     b.Healthy.Load(),
+					"draining":    b.Draining.Load(),
+					"connections": b.ConnCount.Load(),
+				})
+			}
+			s.writeJSON(w, map[string]any{"backends": backends})
+
+		case http.MethodPost:
+			var req struct {
+				Host     string `json:"host"`
+				Port     int    `json:"port"`
+				Role     string `json:"role"`
+				Weight   int    `json:"weight"`
+				Database string `json:"database"`
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, 4096)
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				s.writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			if req.Host == "" || req.Port == 0 {
+				s.writeErrorJSON(w, http.StatusBadRequest, "host and port are required")
+				return
+			}
+			if req.Role == "" {
+				req.Role = "primary"
+			}
+			if req.Role != "primary" && req.Role != "replica" {
+				s.writeErrorJSON(w, http.StatusBadRequest, "role must be 'primary' or 'replica'")
+				return
+			}
+			if req.Weight <= 0 {
+				req.Weight = 1
+			}
+			addr := fmt.Sprintf("%s:%d", req.Host, req.Port)
+			if err := p.AddBackend(req.Host, req.Port, req.Role, req.Weight, req.Database); err != nil {
+				s.writeErrorJSON(w, http.StatusBadRequest, "failed to add backend")
+				return
+			}
+			s.writeJSON(w, map[string]any{"status": "backend added", "address": addr})
+			if s.refreshRouterFn != nil {
+				s.refreshRouterFn()
+			}
+
+		case http.MethodDelete:
+			// Accept address from query param or JSON body
+			addr := r.URL.Query().Get("address")
+			if addr == "" {
+				var req struct {
+					Address string `json:"address"`
+				}
+				r.Body = http.MaxBytesReader(w, r.Body, 4096)
+				if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.Address != "" {
+					addr = req.Address
+				}
+			}
+			if addr == "" {
+				s.writeErrorJSON(w, http.StatusBadRequest, "address is required (query param or JSON body)")
+				return
+			}
+			// Try drain + remove; if already draining, try direct remove
+			activeConns, err := p.DrainBackend(addr)
+			if err != nil {
+				// Backend may already be draining; try direct removal
+				if err2 := p.RemoveBackend(addr); err2 != nil {
+					s.writeErrorJSON(w, http.StatusConflict, fmt.Sprintf("backend has %d active connections, drain and retry", activeConns))
+					return
+				}
+				s.writeJSON(w, map[string]any{"status": "backend removed", "address": addr})
+				if s.refreshRouterFn != nil {
+					s.refreshRouterFn()
+				}
+				return
+			}
+			if activeConns > 0 {
+				s.writeErrorJSON(w, http.StatusConflict, fmt.Sprintf("backend has %d active connections, drain and retry", activeConns))
+				return
+			}
+			if err := p.RemoveBackend(addr); err != nil {
+				s.writeErrorJSON(w, http.StatusBadRequest, "failed to remove backend")
+				return
+			}
+			s.writeJSON(w, map[string]any{"status": "backend removed", "address": addr})
+			if s.refreshRouterFn != nil {
+				s.refreshRouterFn()
+			}
+
+		default:
+			s.writeErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+		return
+	}
+
+	// Return pool stats
+	p := s.poolMgr.GetPool(path)
+	if p == nil {
+		s.writeErrorJSON(w, http.StatusNotFound, "pool not found")
+		return
+	}
+	stats := p.Stats()
+	s.writeJSON(w, stats)
 }
 
 // handleConnections returns connection information.
@@ -468,6 +672,95 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]any{"status": "reloaded"})
 }
 
+// handleConfigFile reads (GET) or writes (PUT) the raw YAML config file.
+func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	configPath := s.configPath
+	s.mu.RUnlock()
+
+	if configPath == "" {
+		s.writeErrorJSON(w, http.StatusNotImplemented, "Config file path not available")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			s.writeErrorJSON(w, http.StatusInternalServerError, "Failed to read config file: "+sanitizeErr(err))
+			return
+		}
+		w.Header().Set("Content-Type", "text/yaml")
+		w.Write(data)
+
+	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			s.writeErrorJSON(w, http.StatusBadRequest, "Failed to read request body")
+			return
+		}
+
+		var testCfg config.Config
+		if err := yaml.Unmarshal(data, &testCfg); err != nil {
+			s.writeErrorJSON(w, http.StatusBadRequest, "Invalid YAML: "+sanitizeErr(err))
+			return
+		}
+		if err := config.Validate(&testCfg); err != nil {
+			s.writeErrorJSON(w, http.StatusBadRequest, "Invalid config: "+sanitizeErr(err))
+			return
+		}
+
+		// Write to temp file, then rename. On Windows, rename fails if
+		// destination exists — overwrite the original as fallback instead of
+		// deleting it.
+		tmpPath := configPath + ".tmp"
+		if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+			s.writeErrorJSON(w, http.StatusInternalServerError, "Failed to write config")
+			return
+		}
+		if err := os.Rename(tmpPath, configPath); err != nil {
+			if writeErr := os.WriteFile(configPath, data, 0600); writeErr != nil {
+				s.writeErrorJSON(w, http.StatusInternalServerError, "Failed to save config")
+				return
+			}
+		}
+
+		s.log.Info("Configuration file updated via dashboard", "path", configPath)
+		s.writeJSON(w, map[string]any{"status": "success", "message": "Configuration saved"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleConfigValidate validates YAML config without saving.
+func (s *Server) handleConfigValidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeErrorJSON(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
+
+	var testCfg config.Config
+	if err := yaml.Unmarshal(data, &testCfg); err != nil {
+		s.writeErrorJSON(w, http.StatusBadRequest, "Invalid YAML: "+sanitizeErr(err))
+		return
+	}
+	if err := config.Validate(&testCfg); err != nil {
+		s.writeErrorJSON(w, http.StatusBadRequest, "Invalid config: "+sanitizeErr(err))
+		return
+	}
+
+	s.writeJSON(w, map[string]any{"status": "valid", "message": "Configuration is valid"})
+}
+
 // handleTransactions returns transaction statistics.
 func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 	var totalTransactions int64
@@ -483,6 +776,38 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 		"total_transactions":  totalTransactions,
 		"active_transactions": activeTransactions,
 		"aborted_count":       0,
+	})
+}
+
+// handleCluster returns cluster status.
+func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	c := s.cluster
+	s.mu.RUnlock()
+
+	if c != nil {
+		nodes := c.GetNodes()
+		nodeList := make([]map[string]any, 0, len(nodes))
+		for _, n := range nodes {
+			nodeList = append(nodeList, map[string]any{
+				"id":      n.ID,
+				"healthy": n.State != cluster.NodeStateDead,
+				"last_seen": n.LastSeen,
+			})
+		}
+		s.writeJSON(w, map[string]any{
+			"status":    c.StateString(),
+			"leader":    c.GetLeader(),
+			"nodes":     nodeList,
+			"term":      c.GetTerm(),
+			"timestamp": time.Now().UTC(),
+		})
+		return
+	}
+
+	s.writeJSON(w, map[string]any{
+		"status":  "disabled",
+		"message": "Clustering is not enabled for this node.",
 	})
 }
 
@@ -521,49 +846,47 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // handleCreateUser creates a new user.
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if s.userDB == nil {
-		s.writeJSON(w, map[string]any{"error": "user database not available"})
-		w.WriteHeader(http.StatusInternalServerError)
+		s.writeErrorJSON(w, http.StatusInternalServerError, "user database not available")
 		return
 	}
 
 	var req struct {
 		Username       string   `json:"username"`
+		Password       string   `json:"password"`
 		PasswordHash   string   `json:"password_hash"`
 		MaxConnections int      `json:"max_connections"`
 		DefaultPool    string   `json:"default_pool"`
 		AllowedPools   []string `json:"allowed_pools"`
 	}
 
+	// Limit request body size (L-10 fix)
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeJSON(w, map[string]any{"error": "invalid request body"})
-		w.WriteHeader(http.StatusBadRequest)
+		s.writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	if req.Username == "" {
-		s.writeJSON(w, map[string]any{"error": "username is required"})
-		w.WriteHeader(http.StatusBadRequest)
+		s.writeErrorJSON(w, http.StatusBadRequest, "username is required")
 		return
 	}
 
-	if req.PasswordHash == "" {
-		s.writeJSON(w, map[string]any{"error": "password_hash is required"})
-		w.WriteHeader(http.StatusBadRequest)
-		return
+	// Accept either plaintext password (password) or password field (password_hash from frontend)
+	// Always hash - the frontend sends plaintext in password_hash
+	password := req.Password
+	if password == "" {
+		password = req.PasswordHash
 	}
-
-	// Check if user already exists
-	if s.userDB.GetUser(req.Username) != nil {
-		s.writeJSON(w, map[string]any{"error": "user already exists"})
-		w.WriteHeader(http.StatusConflict)
+	if password == "" {
+		s.writeErrorJSON(w, http.StatusBadRequest, "password or password_hash is required")
 		return
 	}
 
 	// Generate SCRAM-SHA-256 hash from plaintext password
-	hash, err := auth.GenerateSCRAMHash(req.PasswordHash)
+	hash, err := auth.GenerateSCRAMHash(password)
 	if err != nil {
-		s.writeJSON(w, map[string]any{"error": "failed to hash password: " + err.Error()})
-		w.WriteHeader(http.StatusInternalServerError)
+		s.writeErrorJSON(w, http.StatusInternalServerError, "failed to hash password")
 		return
 	}
 
@@ -575,15 +898,82 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		AllowedPools:   req.AllowedPools,
 	}
 
+	// Persist to config file first, then mutate memory — prevents TOCTOU race
+	// and ensures durability (user survives restart/reload).
+	s.userMu.Lock()
+	defer s.userMu.Unlock()
+	if s.userDB.GetUser(req.Username) != nil {
+		s.writeErrorJSON(w, http.StatusConflict, "user already exists")
+		return
+	}
+	if s.configPath != "" {
+		if err := s.saveUsersWithUser(user); err != nil {
+			s.writeErrorJSON(w, http.StatusInternalServerError, "failed to persist user: "+sanitizeErr(err))
+			return
+		}
+	}
 	if err := s.userDB.AddUser(user); err != nil {
-		s.writeJSON(w, map[string]any{"error": err.Error()})
-		w.WriteHeader(http.StatusBadRequest)
+		s.writeErrorJSON(w, http.StatusBadRequest, "failed to add user")
 		return
 	}
 
 	s.log.Info("User created via dashboard", "username", req.Username)
 	w.WriteHeader(http.StatusCreated)
 	s.writeJSON(w, map[string]any{"status": "created", "username": req.Username})
+}
+
+// saveUsersWithUser persists userDB plus one additional user to the config file.
+func (s *Server) saveUsersWithUser(newUser *auth.User) error {
+	if s.configPath == "" {
+		return nil
+	}
+
+	cfg, err := config.Load(s.configPath)
+	if err != nil {
+		return err
+	}
+
+	users := s.userDB.ListUsers()
+	cfg.Auth.Users = make([]config.User, 0, len(users)+1)
+	for _, u := range users {
+		cfg.Auth.Users = append(cfg.Auth.Users, config.User{
+			Username:          u.Username,
+			PasswordHash:      u.PasswordHash,
+			MysqlPasswordHash: u.MysqlPasswordHash,
+			MaxConnections:    u.MaxConnections,
+			DefaultPool:       u.DefaultPool,
+			AllowedPools:      u.AllowedPools,
+		})
+	}
+	if newUser != nil {
+		cfg.Auth.Users = append(cfg.Auth.Users, config.User{
+			Username:          newUser.Username,
+			PasswordHash:      newUser.PasswordHash,
+			MysqlPasswordHash: newUser.MysqlPasswordHash,
+			MaxConnections:    newUser.MaxConnections,
+			DefaultPool:       newUser.DefaultPool,
+			AllowedPools:      newUser.AllowedPools,
+		})
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	tmpPath := s.configPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+
+	// Windows fallback: os.Rename cannot overwrite existing files
+	if err := os.Rename(tmpPath, s.configPath); err != nil {
+		if writeErr := os.WriteFile(s.configPath, data, 0600); writeErr != nil {
+			return fmt.Errorf("config write fallback failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // handleUserDetail returns or deletes a single user.
@@ -634,6 +1024,13 @@ func (s *Server) writeJSON(w http.ResponseWriter, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
+// writeErrorJSON writes an error response with the given status code.
+func (s *Server) writeErrorJSON(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg})
+}
+
 func parseDuration(s string, defaultVal time.Duration) time.Duration {
 	if s == "" {
 		return defaultVal
@@ -644,3 +1041,16 @@ func parseDuration(s string, defaultVal time.Duration) time.Duration {
 	}
 	return d
 }
+
+func sanitizeErr(err error) string {
+	msg := err.Error()
+	msg = fileStripRegex.ReplaceAllString(msg, "[PATH]")
+	msg = connStripRegex.ReplaceAllString(msg, "[CONN]")
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	return msg
+}
+
+var fileStripRegex = regexp.MustCompile(`(?:[a-zA-Z]:)?[/\\][\w./\\_-]+(?:\.\w+)?`)
+var connStripRegex = regexp.MustCompile(`(?:[a-zA-Z0-9.-]+):(\d{1,5})`)

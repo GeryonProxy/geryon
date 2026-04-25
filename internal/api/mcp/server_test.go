@@ -14,6 +14,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 )
 
+const testToken = "test-token"
+
 func bindRandomPort(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -29,9 +31,9 @@ func TestNewServer(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 	if s == nil {
 		t.Fatal("NewServer returned nil")
 	}
@@ -44,9 +46,9 @@ func TestServer_StartStop(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	err := s.Start()
 	if err != nil {
@@ -62,10 +64,10 @@ func TestServer_Initialize(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -76,7 +78,11 @@ func TestServer_Initialize(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/initialize", "application/json", strings.NewReader(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test"}}`))
+	respBody := strings.NewReader(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test"}}`)
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/initialize", respBody)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
@@ -100,10 +106,10 @@ func TestServer_ToolsList(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -116,7 +122,9 @@ func TestServer_ToolsList(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/list")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/tools/list", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ToolsList failed: %v", err)
 	}
@@ -144,10 +152,10 @@ func TestServer_ResourcesList(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -158,7 +166,9 @@ func TestServer_ResourcesList(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/resources/list")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/resources/list", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesList failed: %v", err)
 	}
@@ -174,16 +184,18 @@ func TestServer_SSE(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/sse")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/sse", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("SSE failed: %v", err)
 	}
@@ -210,7 +222,7 @@ func TestServer_Auth_RejectsWithoutToken(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "mcp-secret"},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -251,10 +263,10 @@ func TestServer_SecurityHeaders(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -265,7 +277,9 @@ func TestServer_SecurityHeaders(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/list")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/tools/list", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -284,10 +298,10 @@ func TestServer_MethodNotAllowed(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -299,7 +313,9 @@ func TestServer_MethodNotAllowed(t *testing.T) {
 	}()
 
 	// GET to initialize (requires POST)
-	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/initialize")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/initialize", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -381,10 +397,10 @@ func TestServer_ToolCall_Unknown(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -396,7 +412,10 @@ func TestServer_ToolCall_Unknown(t *testing.T) {
 	}()
 
 	body := `{"name":"unknown_tool","arguments":{}}`
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/call", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/tools/call", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ToolCall failed: %v", err)
 	}
@@ -428,10 +447,10 @@ func TestServer_ToolCall_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -444,7 +463,10 @@ func TestServer_ToolCall_InvalidJSON(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/call", "application/json", strings.NewReader("not json"))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/tools/call", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ToolCall failed: %v", err)
 	}
@@ -460,10 +482,10 @@ func TestServer_ResourcesRead(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -477,7 +499,10 @@ func TestServer_ResourcesRead(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	body := `{"uri":"geryon://config"}`
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/resources/read", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesRead failed: %v", err)
 	}
@@ -502,10 +527,10 @@ func TestServer_ResourcesRead_NotFound(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -517,7 +542,10 @@ func TestServer_ResourcesRead_NotFound(t *testing.T) {
 	}()
 
 	body := `{"uri":"geryon://nonexistent"}`
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/resources/read", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesRead failed: %v", err)
 	}
@@ -533,10 +561,10 @@ func TestServer_ResourcesRead_InvalidJSON(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -549,7 +577,10 @@ func TestServer_ResourcesRead_InvalidJSON(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader("bad"))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/resources/read", strings.NewReader("bad"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesRead failed: %v", err)
 	}
@@ -568,10 +599,10 @@ func TestServer_Initialize_MethodNotAllowed(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -582,7 +613,9 @@ func TestServer_Initialize_MethodNotAllowed(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/initialize")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/initialize", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -601,10 +634,10 @@ func TestServer_ToolsCall_MethodNotAllowed(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -615,7 +648,9 @@ func TestServer_ToolsCall_MethodNotAllowed(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
-	resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/call")
+	req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/tools/call", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
@@ -630,9 +665,9 @@ func TestServer_Start_AlreadyStarted(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	// First start
 	if err := s.Start(); err != nil {
@@ -654,9 +689,9 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	// Stop when not started should not error
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -670,9 +705,9 @@ func TestServer_sseCount(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	// Initially 0
 	if s.sseCount.Load() != 0 {
@@ -696,43 +731,13 @@ func TestServer_sseLimit(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	// Default limit should be 50
 	if s.sseLimit != 50 {
 		t.Errorf("sseLimit = %d, want 50", s.sseLimit)
-	}
-}
-
-func TestServer_authEnabled(t *testing.T) {
-	log, _ := logger.New("debug", "json")
-
-	tests := []struct {
-		name    string
-		enabled bool
-		token   string
-	}{
-		{"enabled", true, "secret"},
-		{"disabled", false, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.AdminMCPConfig{
-				Listen: "127.0.0.1:0",
-				Auth:   config.RESTAuthConfig{Enabled: tt.enabled, Token: tt.token},
-			}
-			s := NewServer(cfg, nil, log, nil)
-
-			if s.authEnabled != tt.enabled {
-				t.Errorf("authEnabled = %v, want %v", s.authEnabled, tt.enabled)
-			}
-			if s.authToken != tt.token {
-				t.Errorf("authToken = %q, want %q", s.authToken, tt.token)
-			}
-		})
 	}
 }
 
@@ -855,10 +860,10 @@ func TestServer_poolMgr(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if s.poolMgr != pm {
 		t.Error("poolMgr should be set correctly")
@@ -869,9 +874,9 @@ func TestServer_config(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:8080",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	if s.config != cfg {
 		t.Error("config should be set correctly")
@@ -885,7 +890,7 @@ func TestServer_reloadFn(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 
 	called := false
@@ -894,7 +899,7 @@ func TestServer_reloadFn(t *testing.T) {
 		return nil
 	}
 
-	s := NewServer(cfg, nil, log, reloadFn)
+	s := NewServer(cfg, nil, log, reloadFn, nil, nil)
 
 	if s.reloadFn == nil {
 		t.Error("reloadFn should be set")
@@ -913,9 +918,9 @@ func TestServer_log(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	if s.log != log {
 		t.Error("log should be set correctly")
@@ -926,9 +931,9 @@ func TestServer_started(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: "127.0.0.1:0",
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
-	s := NewServer(cfg, nil, log, nil)
+	s := NewServer(cfg, nil, log, nil, nil, nil)
 
 	// Initially false
 	if s.started {
@@ -974,7 +979,7 @@ func TestServer_Auth_InvalidToken(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "correct-token"},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1010,11 +1015,12 @@ func TestServer_Auth_MalformedHeader(t *testing.T) {
 		Auth:   config.RESTAuthConfig{Enabled: true, Token: "secret"},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
+	time.Sleep(50 * time.Millisecond) // Allow server to start
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -1054,10 +1060,10 @@ func TestServer_ToolsList_POST(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1068,7 +1074,10 @@ func TestServer_ToolsList_POST(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/list", "application/json", nil)
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/tools/list", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ToolsList POST failed: %v", err)
 	}
@@ -1085,10 +1094,10 @@ func TestServer_ResourcesList_POST(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1099,7 +1108,10 @@ func TestServer_ResourcesList_POST(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/list", "application/json", nil)
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/resources/list", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesList POST failed: %v", err)
 	}
@@ -1116,10 +1128,10 @@ func TestServer_ToolCall_PoolList(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1131,7 +1143,10 @@ func TestServer_ToolCall_PoolList(t *testing.T) {
 	}()
 
 	body := `{"name":"geryon_pool_list","arguments":{}}`
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/tools/call", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/tools/call", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ToolCall failed: %v", err)
 	}
@@ -1156,10 +1171,10 @@ func TestServer_ResourcesRead_Pools(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1171,7 +1186,10 @@ func TestServer_ResourcesRead_Pools(t *testing.T) {
 	}()
 
 	body := `{"uri":"geryon://pools"}`
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/resources/read", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesRead failed: %v", err)
 	}
@@ -1188,10 +1206,10 @@ func TestServer_ResourcesRead_StatsOverview(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1205,7 +1223,10 @@ func TestServer_ResourcesRead_StatsOverview(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	body := `{"uri":"geryon://stats/overview"}`
-	resp, err := http.Post("http://"+cfg.Listen+"/mcp/v1/resources/read", "application/json", strings.NewReader(body))
+	req, _ := http.NewRequest("POST", "http://"+cfg.Listen+"/mcp/v1/resources/read", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("ResourcesRead failed: %v", err)
 	}
@@ -1222,10 +1243,10 @@ func TestServer_RateLimit(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1240,7 +1261,9 @@ func TestServer_RateLimit(t *testing.T) {
 	// Most should succeed but eventually rate limit
 	var limited bool
 	for i := 0; i < 100; i++ {
-		resp, err := http.Get("http://" + cfg.Listen + "/mcp/v1/tools/list")
+		req, _ := http.NewRequest("GET", "http://"+cfg.Listen+"/mcp/v1/tools/list", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
@@ -1264,10 +1287,10 @@ func TestServer_ToolsList_MethodNotAllowed_DELETE(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1282,6 +1305,7 @@ func TestServer_ToolsList_MethodNotAllowed_DELETE(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	req, _ := http.NewRequest("DELETE", "http://"+cfg.Listen+"/mcp/v1/tools/list", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
@@ -1299,10 +1323,10 @@ func TestServer_ResourcesList_MethodNotAllowed_PUT(t *testing.T) {
 	log, _ := logger.New("debug", "json")
 	cfg := &config.AdminMCPConfig{
 		Listen: addr,
-		Auth:   config.RESTAuthConfig{Enabled: false},
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
 	}
 	pm := pool.NewManager(log)
-	s := NewServer(cfg, pm, log, nil)
+	s := NewServer(cfg, pm, log, nil, nil, nil)
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -1314,6 +1338,7 @@ func TestServer_ResourcesList_MethodNotAllowed_PUT(t *testing.T) {
 	}()
 
 	req, _ := http.NewRequest("PUT", "http://"+cfg.Listen+"/mcp/v1/resources/list", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
