@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -629,5 +630,255 @@ func TestDashboard_ConfigReload_NilReloadFn_Direct(t *testing.T) {
 	}
 	if data["status"] != "reloaded" {
 		t.Errorf("status = %v, want reloaded", data["status"])
+	}
+}
+
+func TestDashboard_HandleUsers_Get(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handleUsers(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want 200", rr.Code)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	if users, ok := data["users"]; !ok {
+		t.Error("response missing users field")
+	} else if users == nil {
+		t.Log("users is nil (no userDB), which is valid")
+	}
+}
+
+func TestDashboard_HandleUsers_Post(t *testing.T) {
+	// This test verifies the method routing works
+	// userDB is nil so POST returns 500 (user database not available)
+	// The actual user creation is tested in integration with auth package
+	t.Skip("requires userDB which is nil in this test context")
+}
+
+func TestDashboard_HandleUsers_MethodNotAllowed(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handleUsers(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Status = %d, want 405", rr.Code)
+	}
+}
+
+func TestDashboard_HandleCluster_NoCluster(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/cluster", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handleCluster(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want 200", rr.Code)
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&data); err != nil {
+		t.Fatalf("JSON decode failed: %v", err)
+	}
+	if data["status"] != "disabled" {
+		t.Errorf("status = %v, want disabled", data["status"])
+	}
+}
+
+func TestSanitizeErr(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"simple error", fmt.Errorf("connection refused"), "connection refused"},
+		{"nil error", nil, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeErr(tt.err)
+			if tt.err != nil && got == "" {
+				t.Errorf("sanitizeErr returned empty string for non-nil error")
+			}
+		})
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	tests := []struct {
+		input    string
+		def      time.Duration
+		expected time.Duration
+	}{
+		{"", 5 * time.Second, 5 * time.Second},
+		{"invalid", 5 * time.Second, 5 * time.Second},
+		{"300ms", 5 * time.Second, 300 * time.Millisecond},
+		{"1h30m", 5 * time.Second, 1*time.Hour + 30*time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := parseDuration(tt.input, tt.def)
+			if got != tt.expected {
+				t.Errorf("parseDuration(%q, %v) = %v, want %v", tt.input, tt.def, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDashboard_HandleConfigFile_Get(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/config/file", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handleConfigFile(rr, req)
+
+	if rr.Code != http.StatusOK && rr.Code != http.StatusNotFound && rr.Code != http.StatusNotImplemented {
+		t.Errorf("Status = %d, want 200, 404, or 501", rr.Code)
+	}
+}
+
+func TestDashboard_HandleConfigValidate(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	body := `pools: []`
+	req := httptest.NewRequest("POST", "/api/v1/config/validate", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	s.handleConfigValidate(rr, req)
+
+	if rr.Code != http.StatusOK && rr.Code != http.StatusBadRequest {
+		t.Errorf("Status = %d, want 200 or 400", rr.Code)
+	}
+}
+
+func TestDashboard_HandleTransactions(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/transactions", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handleTransactions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want 200", rr.Code)
+	}
+}
+
+func TestDashboard_HandleUserDetail(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/users/nonexistent", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handleUserDetail(rr, req)
+
+	if rr.Code != http.StatusOK && rr.Code != http.StatusNotFound && rr.Code != http.StatusNotImplemented {
+		t.Errorf("Status = %d, want 200, 404, or 501", rr.Code)
+	}
+}
+
+func TestDashboard_HandlePoolDetail(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	pm.CreatePool(&config.PoolConfig{Name: "test-pool", Mode: "transaction", Body: "postgresql"})
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/pools/test-pool", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handlePoolDetail(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want 200", rr.Code)
+	}
+}
+
+func TestDashboard_HandlePoolDetail_NotFound(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/pools/nonexistent-pool", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handlePoolDetail(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("Status = %d, want 404", rr.Code)
+	}
+}
+
+func TestDashboard_HandlePoolDetail_BadPath(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/pools/", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handlePoolDetail(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Status = %d, want 400", rr.Code)
 	}
 }

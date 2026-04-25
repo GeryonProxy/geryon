@@ -1043,6 +1043,9 @@ func parseDuration(s string, defaultVal time.Duration) time.Duration {
 }
 
 func sanitizeErr(err error) string {
+	if err == nil {
+		return ""
+	}
 	msg := err.Error()
 	msg = fileStripRegex.ReplaceAllString(msg, "[PATH]")
 	msg = connStripRegex.ReplaceAllString(msg, "[CONN]")
