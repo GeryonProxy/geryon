@@ -41,18 +41,18 @@ const (
 
 // Server serves the web dashboard.
 type Server struct {
-	mu             sync.RWMutex
-	userMu         sync.Mutex // serializes user persistence to config file
-	poolMgr        *pool.Manager
-	userDB         *auth.UserDatabase
-	log            *logger.Logger
-	server         *http.Server
-	config         *Config
-	authToken      string
-	authEnabled    bool
-	reloadFn       func() error
-	cluster        dashboardCluster
-	configPath     string
+	mu              sync.RWMutex
+	userMu          sync.Mutex // serializes user persistence to config file
+	poolMgr         *pool.Manager
+	userDB          *auth.UserDatabase
+	log             *logger.Logger
+	server          *http.Server
+	config          *Config
+	authToken       string
+	authEnabled     bool
+	reloadFn        func() error
+	cluster         dashboardCluster
+	configPath      string
 	refreshRouterFn func()
 }
 
@@ -790,8 +790,8 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		nodeList := make([]map[string]any, 0, len(nodes))
 		for _, n := range nodes {
 			nodeList = append(nodeList, map[string]any{
-				"id":      n.ID,
-				"healthy": n.State != cluster.NodeStateDead,
+				"id":        n.ID,
+				"healthy":   n.State != cluster.NodeStateDead,
 				"last_seen": n.LastSeen,
 			})
 		}

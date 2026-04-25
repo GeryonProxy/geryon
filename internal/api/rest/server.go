@@ -2130,8 +2130,8 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		nodeList := make([]map[string]interface{}, 0, len(nodes))
 		for _, n := range nodes {
 			nodeList = append(nodeList, map[string]interface{}{
-				"id":       n.ID,
-				"healthy":  n.State != cluster.NodeStateDead,
+				"id":        n.ID,
+				"healthy":   n.State != cluster.NodeStateDead,
 				"last_seen": n.LastSeen,
 			})
 		}

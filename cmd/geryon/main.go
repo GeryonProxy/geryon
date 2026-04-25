@@ -304,7 +304,7 @@ func main() {
 			ListenAddr:        cfg.Cluster.Raft.Listen,
 			Peers:             cfg.Cluster.Raft.Peers,
 			Secret:            cfg.Cluster.Secret, // C-2 fix
-			TLSConfig:         clusterTLS, // C-2 fix
+			TLSConfig:         clusterTLS,         // C-2 fix
 			ElectionTimeout:   parseDuration(cfg.Cluster.Raft.ElectionTimeout),
 			HeartbeatInterval: parseDuration(cfg.Cluster.Raft.HeartbeatInterval),
 			Logger:            log,

@@ -195,7 +195,7 @@ func (c *Coordinator) Start() error {
 		c.config.Raft.Peers,
 		c.dataDir+"/raft",
 		c.config.Secret, // C-2 fix
-		tlsConfig, // C-2 fix
+		tlsConfig,       // C-2 fix
 		c.fsm,
 		c.logger,
 	)

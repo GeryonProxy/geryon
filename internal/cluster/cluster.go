@@ -43,8 +43,8 @@ type Config struct {
 	NodeID            string
 	ListenAddr        string
 	Peers             []string
-	Secret            string        // C-2 fix: shared secret for inter-node auth
-	TLSConfig         *tls.Config   // C-2 fix: TLS config for inter-node encryption
+	Secret            string      // C-2 fix: shared secret for inter-node auth
+	TLSConfig         *tls.Config // C-2 fix: TLS config for inter-node encryption
 	ElectionTimeout   time.Duration
 	HeartbeatInterval time.Duration
 	Logger            *logger.Logger

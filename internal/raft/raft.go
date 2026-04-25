@@ -91,7 +91,7 @@ type Node struct {
 	listener   net.Listener
 	connSem    chan struct{} // Bounded goroutine semaphore (H-4 fix)
 	secret     string        // C-2 fix: shared secret for inter-node auth
-	tlsConfig  *tls.Config  // C-2 fix: TLS config for inter-node encryption
+	tlsConfig  *tls.Config   // C-2 fix: TLS config for inter-node encryption
 	dataDir    string
 
 	// Timing
@@ -193,12 +193,12 @@ type InstallSnapshotResponse struct {
 // C-2 fix: tlsConfig enables TLS for inter-node communication. Pass nil for plaintext.
 func NewNode(id, listenAddr string, peers []string, dataDir string, secret string, tlsConfig *tls.Config, fsm FSM, log *logger.Logger) (*Node, error) {
 	n := &Node{
-		id:                 id,
-		listenAddr:         listenAddr,
-		peers:              peers,
-		secret:             secret, // C-2 fix
-		tlsConfig:          tlsConfig,
-		dataDir:            dataDir,
+		id:                id,
+		listenAddr:        listenAddr,
+		peers:             peers,
+		secret:            secret, // C-2 fix
+		tlsConfig:         tlsConfig,
+		dataDir:           dataDir,
 		electionTimeout:   1 * time.Second,
 		heartbeatInterval: 100 * time.Millisecond,
 		logEntries:        make([]Entry, 0),

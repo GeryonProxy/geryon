@@ -166,7 +166,7 @@ type ClusterConfig struct {
 	Enabled bool         `yaml:"enabled"`
 	NodeID  string       `yaml:"node_id"`
 	Secret  string       `yaml:"secret"` // C-2 fix: shared secret for inter-node auth
-	TLS     TLSConfig    `yaml:"tls"`   // C-2 fix: TLS for inter-node communication
+	TLS     TLSConfig    `yaml:"tls"`    // C-2 fix: TLS for inter-node communication
 	Raft    RaftConfig   `yaml:"raft"`
 	Gossip  GossipConfig `yaml:"gossip"`
 }
