@@ -4,7 +4,28 @@ All notable changes to Geryon will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased] - 2026-04-16
+## [Unreleased] - 2026-04-25
+
+### Security Fixes (2026-04-25)
+
+- **C-1:** Removed auth bypass when `auth.enabled: false` in REST/Dashboard/MCP servers
+- **C-2:** Added TLS support for cluster inter-node communication (Raft + Cluster RPC)
+- **C-3:** Fixed connection counter double-decrement in proxy listener
+- **H-1:** Config file write now blocks auth section modifications
+- **H-2:** MySQL passthrough pool access control now enforced
+- **H-4:** Raft connection acceptance bounded via semaphore (max 100 concurrent)
+- **H-5:** SQL tokenizer now strips control characters before classification
+- **M-1:** mTLS clients must exist in user database and pass pool access check
+- **M-2:** Config file written with 0600 permissions (was 0644)
+- **M-3:** `sanitizeErr` now strips file paths and connection strings via regex
+- **M-4:** Pool creation uses restricted struct preventing mass assignment
+- **M-5:** SWIM and Raft RNG replaced with crypto/rand seeding
+- **M-6:** Dashboard user creation endpoint secured (MaxBytesReader, sanitized errors)
+- **M-7:** All HTTP servers set IdleTimeout to 60s
+- **M-8:** Rate limiting now uses composite IP:username key
+- **L-4:** Removed dead global `authMessage` variable
+- **L-9:** Dashboard API responses use generic error messages
+- **L-10:** Dashboard JSON decode has 4096 byte limit
 
 ### Added
 

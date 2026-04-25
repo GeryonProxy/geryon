@@ -50,3 +50,9 @@ build/
 tmp/
 temp/
 *.tmp
+
+# Claude Code
+.claude/
+
+# Dfmt (code formatting)
+.dfmt/
