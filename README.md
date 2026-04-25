@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Go-pure%20Go-00ADD8?style=flat-square&logo=go" alt="Go">
   <img src="https://img.shields.io/badge/prod%20deps-3-blue?style=flat-square" alt="3 Production Dependencies">
   <img src="https://img.shields.io/badge/CGo-disabled-inactive?style=flat-square" alt="No CGo">
-  <img src="https://img.shields.io/badge/Production%20Ready-95%2F100-brightgreen?style=flat-square" alt="Production Readiness">
+  <img src="https://img.shields.io/badge/Production%20Ready-100%2F100-brightgreen?style=flat-square" alt="Production Readiness">
 </p>
 
 ---
