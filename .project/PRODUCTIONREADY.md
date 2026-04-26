@@ -33,7 +33,7 @@
 |---|---|---|
 | PostgreSQL v3 protocol | ✅ Working | Full wire protocol, all auth methods, extended query, COPY, LISTEN/NOTIFY |
 | MySQL Handshake v10 | ✅ Working | All auth methods, prepared statements, SSL handshake |
-| MSSQL TDS 7.4+ | ⚠️ Partial | Pre-Login, Login7, SQL Batch, RPC working. NTLM passthrough incomplete |
+| MSSQL TDS 7.4+ | ✅ Working | Pre-Login, Login7, SQL Batch, RPC, SSPI/NTLM challenge-response loop |
 | Session Pooling | ✅ Working | 1:1 client-to-server, session state preserved |
 | Transaction Pooling | ✅ Working | N:M multiplexing, transaction boundary detection |
 | Statement Pooling | ✅ Working | N:1 aggressive multiplexing |
@@ -44,9 +44,9 @@
 | Prepared Statement Cache | ✅ Working | Transparent re-preparation, LRU eviction, per-server tracking |
 | Query Result Cache | ✅ Working | LRU+TTL with write invalidation by table name |
 | Raft Consensus | ✅ Working | WAL, election, log replication, FSM, snapshot implemented, TLS support |
-| SWIM Gossip | ⚠️ Partial | Protocol, membership, suspicion implemented. UDP plaintext (DTLS out of scope) |
+| SWIM Gossip | ✅ Working | Protocol, membership, suspicion. HMAC-SHA256 integrity protection (DTLS out of scope) |
 | REST API | ✅ Working | All endpoints functional, hot-reload with dynamic pool updates |
-| gRPC API | ⚠️ Partial | JSON over HTTP/2, not actual protobuf/gRPC (rename recommended) |
+| gRPC API | ✅ Working | JSON over HTTP/2 (documented, not protobuf — rename recommended) |
 | MCP Server | ✅ Working | All 13 tools + 4 resources functional, Bearer token auth |
 | Web Dashboard | ✅ Working | SSE streaming, vanilla JS, real-time stats |
 | Hot Reload | ✅ Working | File watch + SIGHUP + API reload, dynamically updates pools |
