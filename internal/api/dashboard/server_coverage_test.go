@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GeryonProxy/geryon/internal/cluster"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -882,3 +883,142 @@ func TestDashboard_HandlePoolDetail_BadPath(t *testing.T) {
 		t.Errorf("Status = %d, want 400", rr.Code)
 	}
 }
+
+func TestDashboard_SetCluster(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	mockCluster := &mockDashboardCluster{}
+	s.SetCluster(mockCluster)
+
+	s.mu.RLock()
+	if s.cluster == nil {
+		t.Error("cluster was not set")
+	}
+	s.mu.RUnlock()
+}
+
+func TestDashboard_SetConfigPath(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	s.SetConfigPath("/etc/geryon.yaml")
+
+	s.mu.RLock()
+	if s.configPath != "/etc/geryon.yaml" {
+		t.Errorf("configPath = %q, want /etc/geryon.yaml", s.configPath)
+	}
+	s.mu.RUnlock()
+}
+
+func TestDashboard_SetRefreshRouterFn(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	called := false
+	fn := func() { called = true }
+	s.SetRefreshRouterFn(fn)
+
+	s.mu.RLock()
+	if s.refreshRouterFn == nil {
+		t.Error("refreshRouterFn was not set")
+	}
+	s.mu.RUnlock()
+
+	s.refreshRouterFn()
+	if !called {
+		t.Error("refreshRouterFn was not called")
+	}
+}
+
+func TestDashboard_HandlePoolDetail_BackendsGet(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+
+	poolCfg := &config.PoolConfig{
+		Name: "backends-pool",
+		Body: "postgresql",
+		Mode: "transaction",
+		Listen: config.ListenConfig{
+			Host: "127.0.0.1",
+			Port: 0,
+		},
+		Backend: config.BackendConfig{
+			Hosts: []config.BackendHost{
+				{Host: "127.0.0.1", Port: 5432, Role: "primary"},
+				{Host: "127.0.0.2", Port: 5433, Role: "replica"},
+			},
+		},
+	}
+	pm.CreatePool(poolCfg)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/pools/backends-pool/backends", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handlePoolDetail(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Status = %d, want 200", rr.Code)
+	}
+}
+
+func TestDashboard_HandlePoolDetail_BackendsPost_MissingFields(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	pm.CreatePool(&config.PoolConfig{Name: "test-pool", Mode: "transaction", Body: "postgresql"})
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	body := `{"host": "", "port": 0}`
+	req := httptest.NewRequest("POST", "/api/v1/pools/test-pool/backends", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	s.handlePoolDetail(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Status = %d, want 400", rr.Code)
+	}
+}
+
+func TestDashboard_HandleListUsers(t *testing.T) {
+	addr := bindRandomPort(t)
+	log, _ := logger.New("debug", "text")
+	cfg := &Config{Enabled: true, Listen: addr, Auth: config.RESTAuthConfig{Enabled: true, Token: testToken}}
+	pm := pool.NewManager(log)
+	s := NewServer(cfg, pm, log, nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	rr := httptest.NewRecorder()
+
+	s.handleListUsers(rr, req)
+
+	if rr.Code != http.StatusOK && rr.Code != http.StatusNotImplemented && rr.Code != http.StatusNotFound {
+		t.Errorf("Status = %d, want 200, 404, or 501", rr.Code)
+	}
+}
+
+// mockDashboardCluster implements dashboardCluster interface for testing
+type mockDashboardCluster struct{}
+
+func (m *mockDashboardCluster) StateString() string                { return "leader" }
+func (m *mockDashboardCluster) GetNodeCount() int                  { return 3 }
+func (m *mockDashboardCluster) GetTerm() uint64                     { return 10 }
+func (m *mockDashboardCluster) GetNodes() []*cluster.Node          { return nil }
+func (m *mockDashboardCluster) GetLeader() string                  { return "node1" }
