@@ -1411,8 +1411,8 @@ func TestSetCluster(t *testing.T) {
 // mockMCPCluster implements mcpCluster interface for testing
 type mockMCPCluster struct{}
 
-func (m *mockMCPCluster) StateString() string            { return "leader" }
-func (m *mockMCPCluster) GetNodeCount() int             { return 3 }
-func (m *mockMCPCluster) GetTerm() uint64               { return 10 }
-func (m *mockMCPCluster) GetNodes() []*cluster.Node     { return nil }
-func (m *mockMCPCluster) GetLeader() string             { return "node1" }
+func (m *mockMCPCluster) StateString() string       { return "leader" }
+func (m *mockMCPCluster) GetNodeCount() int         { return 3 }
+func (m *mockMCPCluster) GetTerm() uint64           { return 10 }
+func (m *mockMCPCluster) GetNodes() []*cluster.Node { return nil }
+func (m *mockMCPCluster) GetLeader() string         { return "node1" }
