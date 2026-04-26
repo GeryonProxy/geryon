@@ -152,7 +152,7 @@ Yes — for PostgreSQL and MySQL. The happy path works:
 ### 3.3 Network Security
 
 - [x] TLS/HTTPS support and enforcement (configurable modes)
-- [ ] Secure headers — HSTS, X-Frame-Options, CSP not set on API responses
+- [x] Secure headers — X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Cache-Control set on all API responses
 - [ ] CORS properly configured — currently no CORS headers at all (implicit deny, which is safe but may break legitimate cross-origin clients)
 - [x] No sensitive data in URLs/query params
 - [ ] Secure cookie configuration — not applicable (no cookies)
@@ -344,9 +344,9 @@ All critical blockers from 2026-04-16 assessment have been fixed:
 
 1. **Implement proper gRPC protobuf** or rename the API — Current JSON-over-HTTP/2 will confuse clients expecting standard gRPC.
 2. **Add request correlation IDs** — Essential for debugging across client → proxy → backend.
-3. **Complete MSSQL NTLM passthrough** — Required for Windows Authentication support.
-4. **Add security headers to API responses** — HSTS, X-Frame-Options, CSP (low priority, API-only service).
-5. **Resolve WEBUI.md contradiction** — Either build the React dashboard or delete the spec document.
+3. ~~**Complete MSSQL NTLM passthrough**~~ — ✅ Fixed (SSPI/NTLM challenge-response loop implemented).
+4. ~~**Add security headers to API responses**~~ — ✅ Fixed (X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Cache-Control on all APIs).
+5. **Resolve WEBUI.md contradiction** — Either build the React dashboard or delete the spec document (file doesn't exist, reference should be removed).
 6. ~~**Update "zero dependencies" claims**~~ — ✅ Documentation updated to reflect 3 production + 2 test dependencies.
 7. ~~**Add non-root user to Dockerfile**~~ — ✅ Already implemented in Dockerfile.
 8. ~~**Data race in DrainBackend**~~ — ✅ Fixed (snapshot pattern under lock).
@@ -374,5 +374,4 @@ All critical blockers from 2026-04-16 assessment have been fixed:
 - CSRF protection is partial (content-type blocking only, not full token infrastructure)
 - SWIM gossip (UDP) remains plaintext (DTLS out of scope for this release)
 - gRPC API serves JSON-over-HTTP/2, not protobuf (rename recommended)
-- MSSQL Windows Authentication is not supported (SQL Auth only)
 - Dashboard is vanilla JS (not the full React experience described in WEBUI.md)
