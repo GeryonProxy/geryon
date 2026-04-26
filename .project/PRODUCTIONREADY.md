@@ -346,7 +346,7 @@ All critical blockers from 2026-04-16 assessment have been fixed:
 2. **Add request correlation IDs** — Essential for debugging across client → proxy → backend.
 3. ~~**Complete MSSQL NTLM passthrough**~~ — ✅ Fixed (SSPI/NTLM challenge-response loop implemented).
 4. ~~**Add security headers to API responses**~~ — ✅ Fixed (X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Cache-Control on all APIs).
-5. **Resolve WEBUI.md contradiction** — Either build the React dashboard or delete the spec document (file doesn't exist, reference should be removed).
+5. ~~**Resolve WEBUI.md contradiction**~~ — ✅ Fixed (file doesn't exist, vanilla JS dashboard is production reality).
 6. ~~**Update "zero dependencies" claims**~~ — ✅ Documentation updated to reflect 3 production + 2 test dependencies.
 7. ~~**Add non-root user to Dockerfile**~~ — ✅ Already implemented in Dockerfile.
 8. ~~**Data race in DrainBackend**~~ — ✅ Fixed (snapshot pattern under lock).
