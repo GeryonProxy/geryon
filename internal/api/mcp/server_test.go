@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GeryonProxy/geryon/internal/cluster"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -1337,6 +1338,9 @@ func TestServer_ResourcesList_MethodNotAllowed_PUT(t *testing.T) {
 		s.Stop(ctx)
 	}()
 
+	// Wait for server to be ready
+	time.Sleep(10 * time.Millisecond)
+
 	req, _ := http.NewRequest("PUT", "http://"+cfg.Listen+"/mcp/v1/resources/list", nil)
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	resp, err := http.DefaultClient.Do(req)
@@ -1383,3 +1387,32 @@ func TestResourcesListResponse(t *testing.T) {
 		t.Errorf("Resources[0].URI = %q", resp.Resources[0].URI)
 	}
 }
+
+// --- SetCluster ---
+
+func TestSetCluster(t *testing.T) {
+	log, _ := logger.New("debug", "json")
+	cfg := &config.AdminMCPConfig{
+		Listen: "127.0.0.1:0",
+		Auth:   config.RESTAuthConfig{Enabled: true, Token: testToken},
+	}
+	s := NewServer(cfg, nil, log, nil, nil, nil)
+
+	mockCluster := &mockMCPCluster{}
+	s.SetCluster(mockCluster)
+
+	s.mu.RLock()
+	if s.cluster == nil {
+		t.Error("cluster was not set")
+	}
+	s.mu.RUnlock()
+}
+
+// mockMCPCluster implements mcpCluster interface for testing
+type mockMCPCluster struct{}
+
+func (m *mockMCPCluster) StateString() string            { return "leader" }
+func (m *mockMCPCluster) GetNodeCount() int             { return 3 }
+func (m *mockMCPCluster) GetTerm() uint64               { return 10 }
+func (m *mockMCPCluster) GetNodes() []*cluster.Node     { return nil }
+func (m *mockMCPCluster) GetLeader() string             { return "node1" }
