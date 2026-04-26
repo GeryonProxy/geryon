@@ -1017,8 +1017,8 @@ func TestDashboard_HandleListUsers(t *testing.T) {
 // mockDashboardCluster implements dashboardCluster interface for testing
 type mockDashboardCluster struct{}
 
-func (m *mockDashboardCluster) StateString() string                { return "leader" }
-func (m *mockDashboardCluster) GetNodeCount() int                  { return 3 }
-func (m *mockDashboardCluster) GetTerm() uint64                     { return 10 }
-func (m *mockDashboardCluster) GetNodes() []*cluster.Node          { return nil }
-func (m *mockDashboardCluster) GetLeader() string                  { return "node1" }
+func (m *mockDashboardCluster) StateString() string       { return "leader" }
+func (m *mockDashboardCluster) GetNodeCount() int         { return 3 }
+func (m *mockDashboardCluster) GetTerm() uint64           { return 10 }
+func (m *mockDashboardCluster) GetNodes() []*cluster.Node { return nil }
+func (m *mockDashboardCluster) GetLeader() string         { return "node1" }
