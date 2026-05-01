@@ -1,12 +1,12 @@
 # SSRF Security Scan Results
 
-**Project:** GeryonProxy  
-**Scan Type:** Server-Side Request Forgery (SSRF) Analysis  
-**Date:** 2026-04-13
+**Project:** GeryonProxy
+**Scan Type:** Server-Side Request Forgery (SSRF) Analysis
+**Date:** 2026-05-01
 
 ## Findings
 
-No issues found by sc-ssrf.
+No issues found by sc-ssrf (client-exploitable SSRF).
 
 ## Analysis Details
 
@@ -64,6 +64,12 @@ No issues found by sc-ssrf.
    - Backend addresses come from YAML configuration
    - No runtime URL construction from external sources
 
+8. **internal/swim/swim.go**
+   - Uses UDP for gossip protocol
+   - Address validation via `isValidAddress()` at line 759
+   - HMAC signature verification on received messages
+   - No user-controlled addresses
+
 ### Conclusion
 
 The codebase is a database connection pooler that:
@@ -74,3 +80,7 @@ The codebase is a database connection pooler that:
 - No user-supplied URLs are fetched or resolved at runtime
 
 SSRF is not applicable to this architecture since there is no mechanism to trigger outbound HTTP requests to user-controlled URLs.
+
+### Administrative Note
+
+The Admin API allows backend configuration to arbitrary addresses via `PUT /api/v1/pools/{pool}/backends`. This could allow an attacker with admin credentials to configure backends pointing to internal services (e.g., cloud metadata at 169.254.169.254). However, this requires admin-level access and is not a client-exploitable SSRF vulnerability.

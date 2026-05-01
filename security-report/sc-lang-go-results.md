@@ -1,118 +1,174 @@
-# sc-lang-go Security Scan Results for GeryonProxy
+# sc-lang-go Security Scan Results
 
-## Scan Summary
-- **Project:** GeryonProxy (Pure Go database connection pooler proxy)
-- **Scan Date:** 2026-04-13
-- **Patterns Scanned:** 13 Go-specific security vulnerability categories
-- **Build Configuration:** CGO_ENABLED=0 (No CGo usage confirmed)
-
----
-
-### [HIGH] Orphaned Backend Transactions Due to Incomplete Timeout Handling
-- **Category:** Goroutine/Database Resource Management
-- **Location:** `internal/pool/transaction.go:200-266`
-- **Pattern Matched:** `checkTimeouts()` sets transaction status to TxnAborted/TxnIdle but does NOT send ROLLBACK to the backend database
-- **Description:** The `checkTimeouts()` function correctly detects transaction timeouts and idle timeouts, setting the transaction status to `TxnAborted` or `TxnIdle`. However, it only invokes optional abort callbacks without actually sending a ROLLBACK command to the backend database server. This leaves orphaned transactions on the database server that continue to hold locks and consume resources.
-- **Exploitability:** A malicious client could open a transaction, send queries that acquire row locks, then stop sending requests. The proxy marks the transaction as timed out in its internal state but the backend database continues to hold locks until its own timeout fires (which could be hours later or never).
-- **Remediation:** When a transaction times out, actually send a ROLLBACK command to the backend connection. The `AbortFunc` and `onAbortWithConn` callbacks should be used to properly terminate the backend transaction.
-- **Reference:** CWE-400 (Uncontrolled Resource Consumption)
-
----
-
-### [MEDIUM] context.Background() in Request Handler
-- **Category:** Context Misuse
-- **Location:** `internal/pool/session.go:290`
-- **Pattern Matched:** `ctx := context.Background()` in `HandleMessage()` method
-- **Description:** The `HandleMessage()` method uses `context.Background()` when acquiring a server connection via strategy. This creates an uncontextualized operation that cannot be cancelled or traced through the request lifecycle. If the session is terminated, there is no way to propagate cancellation to the connection acquisition.
-- **Exploitability:** If a client connection is closed while `strategy.OnQuery(ctx, s, msg)` is in progress, the operation may continue using resources until it naturally completes or times out. This could lead to resource exhaustion under heavy load with many closing connections.
-- **Remediation:** Use the context from the incoming message or a context derived from the session's lifecycle. Consider passing a cancellable context through the message handling chain.
-- **Reference:** CWE-675 (Duplicate Operations on Resource)
-
----
-
-### [MEDIUM] Ignored Write Errors in Relay Goroutines
-- **Category:** Error Handling / Resource Leaks
-- **Location:** `internal/proxy/listener.go` (relay operations)
-- **Pattern Matched:** `io.Copy` or similar operations with ignored write errors
-- **Description:** When relaying data between client and backend connections, write errors may be silently ignored. If a write fails (e.g., client connection is slow or closed), the goroutine may continue reading from the other direction, wasting resources and potentially corrupting state.
-- **Exploitability:** An attacker could initiate a connection and deliberately slow their read side to cause the proxy to buffer data indefinitely, or close the connection to trigger resource waste in relay goroutines that don't properly terminate on write failures.
-- **Remediation:** Properly handle all `io.Copy` errors and terminate the relay when either direction encounters an error. Consider implementing proper shutdown signaling between the two relay directions.
-- **Reference:** CWE-755 (Improper Handling of Exceptional Conditions)
-
----
-
-### [LOW] Unbounded Rate Limiter Map Growth
-- **Category:** Denial of Service / Memory Management
-- **Location:** `internal/api/rest/server.go:251-318`, `internal/api/grpc/server.go:191-257`, `internal/api/mcp/server.go:154-216`, `internal/api/dashboard/server.go:163-225`
-- **Pattern Matched:** `limiters map[string]*rate.Limiter` and `lastSeen map[string]time.Time` with unbounded growth
-- **Description:** The rate limiter implementations maintain per-IP limiter and timestamp maps. While there is a cleanup goroutine with `cleanupTTL`, the cleanup interval is 5 minutes and the maps can grow to `maxSize` (10000) before eviction starts. Under a coordinated attack, memory could grow significantly before cleanup occurs.
-- **Exploitability:** An attacker with many IP addresses (or through a botnet) could create enough unique entries to cause memory pressure before the 5-minute cleanup cycle removes stale entries.
-- **Remediation:** Consider adding memory-based limits with immediate eviction when `maxSize` is reached, or using a more memory-efficient structure like `sync.Map` with TTL-based expiration.
-- **Reference:** CWE-400 (Uncontrolled Resource Consumption)
-
----
-
-### [LOW] Missing Idle Timeout on Backend Connections
-- **Category:** Resource Management
-- **Location:** `internal/pool/pool.go:754-804`
-- **Pattern Matched:** Backend connection creation without explicit idle timeout
-- **Description:** Backend connections are created with `net.DialTimeout` for the initial connection, but once established, there is no idle timeout that would close connections that haven't been used for a prolonged period. The `lastUsedAt` field is tracked but not used to enforce timeouts.
-- **Exploitability:** If a backend server becomes unavailable but connections remain open, these stale connections could persist indefinitely, consuming resources and potentially causing the pool to think backends are healthy when they are not.
-- **Remediation:** Implement a idle connection timeout that closes backend connections that haven't been used within a configurable period (e.g., `MaxIdleTime`).
-- **Reference:** CWE-404 (Improper Resource Shutdown or Release)
-
----
-
-### [INFO] No Issues Found - Good Security Practices
-
-The following security patterns were verified and found to be properly implemented:
-
-**1. Unsafe Package Usage:** No usage of `unsafe.Pointer`, `reflect.NewAt`, or `reflect.Value.Pointer()` found.
-
-**2. CGo Boundary Safety:** Project consistently uses `CGO_ENABLED=0` in all build configurations (Dockerfile, Makefile, GitHub workflows). No CGo imports found.
-
-**3. Goroutine Termination:** Background goroutines (transaction monitor, health check loops, rate limiter cleanup) have proper termination paths via stop channels or context cancellation.
-
-**4. Race Conditions:** All maps in pool code (`transactions`, `active`, `byBackend`, `sessions`) are protected by appropriate mutexes (sync.Mutex or sync.RWMutex). Atomic operations are used where appropriate.
-
-**5. Cryptographically Secure Random:** Uses `crypto/rand` (not `math/rand`) for security-sensitive operations in:
-   - `internal/auth/auth.go` - Authentication
-   - `internal/auth/scram.go` - SCRAM-SHA-256 implementation
-   - `internal/tlsutil/tls.go` - Certificate generation
-   - `internal/tlsutil/config.go` - TLS configuration
-
-**6. TLS Configuration:** All TLS configurations properly set:
-   - `MinVersion: tls.VersionTLS12` (TLS 1.2 minimum)
-   - Secure cipher suites via `CipherSuites12()`
-   - `InsecureSkipVerify: false` by default
-   - Proper certificate validation
-
-**7. Command Injection:** No usage of `os/exec` with shell commands found.
-
-**8. HTTP Server Timeouts:** All API servers properly configure HTTP timeouts:
-   - REST server: `ReadTimeout: 30s`, `WriteTimeout: 30s`
-   - gRPC server: `ReadTimeout: 30s`, `WriteTimeout: 30s`
-   - MCP server: `ReadTimeout: 30s`, `WriteTimeout: 30s`
-   - Dashboard server: `ReadTimeout: 30s`, `WriteTimeout: 30s`
-
-**9. Integer Overflow in Codecs:** Protocol codec parsers properly validate lengths before arithmetic:
-   - PostgreSQL: `length < 4` check before `int(length) - 4`
-   - MySQL: `length > MaxPayloadLen` check before buffer allocation
-   - MSSQL: `length < 8` check before `int(length) - 8`
-
-**10. SQL Row Resource Management:** Not applicable - project uses raw database protocol connections, not `database/sql` package. Connection lifecycle is properly managed with explicit `Close()` calls and proper defer patterns.
-
-**11. Slice/Map Concurrent Access:** All concurrent map access is protected by mutexes or uses Go's built-in concurrency-safe structures where applicable.
+**Project:** GeryonProxy (pure Go database connection pooler/proxy)
+**Scanner:** sc-lang-go v1.0.0
+**Date:** 2026-05-01
+**Severity Threshold:** All findings (INFO and above)
 
 ---
 
 ## Summary
 
-| Severity | Count |
-|----------|-------|
-| HIGH     | 1     |
-| MEDIUM   | 2     |
-| LOW      | 2     |
-| INFO     | 11 categories verified secure |
+This scan evaluated the GeryonProxy codebase across all 20 Go-specific security categories. Overall, the codebase demonstrates strong security practices, particularly in cryptographic operations, TLS configuration, and error handling. However, one medium-severity issue was identified related to context usage in the session handling path.
 
-*Generated by sc-lang-go (Go Security Pattern Scanner)*
+---
+
+## Findings
+
+### [MEDIUM] context.Background() Used in Session Message Handler
+
+- **Category:** Context.Context Misuse (SC-GO-301)
+- **Location:** `internal/pool/session.go:290`
+- **Pattern Matched:** `ctx := context.Background()` in a request-processing context
+- **Description:** The `HandleMessage` method uses `context.Background()` when acquiring a server connection for query processing. This context is passed to `s.strategy.OnQuery(ctx, s, msg)` at line 312, which means client disconnection (via request context cancellation) is not honored during connection acquisition. If a client disconnects while their query is waiting for a connection, the goroutine continues processing until a connection is available or the pool's wait timeout expires.
+- **Exploitability:** An attacker who initiates a connection and sends a query, then disconnects, could cause the proxy to continue processing the query indefinitely (bounded only by the connection wait timeout). While the wait timeout provides a boundary, the query processing itself cannot be cancelled mid-flight due to the detached context.
+- **Remediation:** Replace `context.Background()` with a context derived from the session's parent context, or pass the caller's context through the message handling chain:
+
+```go
+// Option 1: If session stores a cancellable context
+ctx := s.ctx // where s.ctx is a context linked to the session lifecycle
+
+// Option 2: Create a child context with timeout tied to pool's connection timeout
+ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+defer cancel()
+```
+
+- **Reference:** [Go Context Documentation](https://pkg.go.dev/context), CWE-400
+
+---
+
+## Positive Security Findings (No Issues)
+
+### 1. Unsafe Package Usage
+No usage of `unsafe.Pointer`, `reflect.NewAt`, or other unsafe operations that bypass Go's type system.
+
+### 2. CGo Boundary Safety
+No CGo usage in production code (CGO_ENABLED=0 for releases per project policy).
+
+### 3. Goroutine Leaks
+All goroutines have termination paths:
+- Health checker uses `stopCh` channel for clean shutdown (pool/health.go)
+- Transaction manager uses `stopCh` for clean shutdown (pool/transaction.go)
+- WaitQueue uses context cancellation and explicit cleanup
+
+### 4. Race Conditions
+The codebase demonstrates careful concurrent access management:
+- `serverConnPool` uses `sync.Mutex` to protect all map operations (`active`, `idle`, `idleIndex`)
+- `ServerConn.preparedStmts` map protected by `sync.Mutex` (pool/pool.go:190-192)
+- Atomic operations used for counters (`atomic.Int64`, `atomic.Bool`)
+- Auth limiter uses nested mutexes to prevent lock inversion deadlocks (auth/auth.go:488-540)
+
+### 5. html/template vs text/template XSS
+No template rendering found in the codebase. Dashboard uses embedded static files.
+
+### 6. crypto/rand vs math/rand
+**Correctly uses `crypto/rand` for all security-sensitive operations:**
+- `auth/scram.go:19` - Salt generation for password hashing
+- `auth/scram.go:165` - Client nonce generation
+- `auth/scram.go:216` - Server nonce generation
+- `auth/auth.go:290` - Salt generation in hash generation
+- `internal/pool/session.go` and related files use `crypto/rand` for nonces
+
+### 7. TLS Configuration
+**TLS configuration is secure:**
+- `tlsutil/tls.go:22-23` - Server config: MinVersion TLS 1.2, CipherSuites12()
+- `tlsutil/tls.go:71-72` - Client config: MinVersion TLS 1.2, CipherSuites12()
+- `tlsutil/config.go:93` - InsecureSkipVerify only set explicitly for insecure modes (defaults to false)
+- `pool/pool.go:941-943` - Backend TLS: InsecureSkipVerify set to false
+- `CipherSuites12()` returns only strong cipher suites (ECDHE with AES-256-GCM, AES-128-GCM)
+
+### 8. os/exec Command Injection
+No `exec.Command` usage in production code. Only found in integration tests (integration-tests/) which are excluded by `-short` flag.
+
+### 9. filepath.Join Traversal
+No file serving operations that could be affected by path traversal. Configuration loading uses safe path handling.
+
+### 10. net/http Missing Timeouts
+**All HTTP servers have proper timeouts configured:**
+
+REST API Server (internal/api/rest/server.go:132-140):
+```go
+ReadTimeout:  30 * time.Second,
+WriteTimeout: 30 * time.Second,
+IdleTimeout:  60 * time.Second,
+```
+
+HTTP/2 Admin API Server (internal/api/grpc/server.go:100-108):
+```go
+ReadTimeout:  30 * time.Second,
+WriteTimeout: 30 * time.Second,
+IdleTimeout:  60 * time.Second,
+```
+
+### 11. encoding/json Deserialization
+**Body size limits enforced:**
+- `rest/server.go:647` - Pool creation: 1MB limit via `http.MaxBytesReader`
+- `rest/server.go:436` - Backend queries: 1MB limit
+- `rest/server.go:647,862,1235` - Multiple endpoints use `http.MaxBytesReader`
+- `grpc/server.go:341` - Stats streaming: 1MB limit
+
+### 12. Integer Overflow in Type Conversions
+**Proper error handling on all integer conversions:**
+- `rest/server.go:1509` - `strconv.Atoi(limitStr)` with bounds check: `n > 0 && n <= 1000`
+- `rest/server.go:1820` - Same pattern for recent queries limit
+- `config/loader.go:224` - `strconv.ParseInt(valueStr, 10, 64)` with error handling
+- `auth/scram.go:109` - `strconv.Atoi(iterSalt[0])` with error check
+
+### 13. Go Module Supply Chain
+- All dependencies are standard, well-maintained packages
+- No replace directives pointing to mutable remote repos
+- go.sum is committed to version control
+- Uses `govulncheck` for vulnerability scanning (per CLAUDE.md)
+
+### 14. context.Context Misuse
+**See main finding above.** Additionally:
+- REST and gRPC servers use `r.Context()` for request-scoped operations
+- Defer cancel pattern correctly used in tests
+
+### 15. Defer Ordering Bugs
+No defer-in-loop anti-patterns found. All defers execute at function return, and the pattern is correctly used for:
+- Mutex unlocking (defer after Lock)
+- Connection closing (defer after acquire)
+- Context cancellation (defer cancel after WithTimeout)
+
+### 16. Panic Recovery Anti-Patterns
+**Panic recovery is properly implemented:**
+- `rest/server.go:230-239` - Logs error with stack trace, returns generic 500
+- `grpc/server.go:149-159` - Same pattern, logs error with path context
+
+### 17. gRPC Security
+N/A - The `internal/api/grpc` package uses JSON-over-HTTP, not protobuf gRPC (per package comments). HTTP timeouts are properly configured (see finding #10).
+
+### 18. sql.DB Pool Exhaustion
+Not applicable - GeryonProxy is a database proxy that manages raw TCP connections, not sql.DB connections. Connection pool exhaustion is handled via:
+- `serverConnPool` with max size limits
+- `WaitQueue` with configurable max size (default 1000)
+- Memory limit via `Manager.TryAlloc()`
+
+### 19. Slice/Map Concurrent Access
+All maps are protected by appropriate synchronization:
+- `serverConnPool` maps protected by `sync.Mutex`
+- `UserDatabase.users` map protected by `sync.RWMutex`
+- `TransactionManager.transactions` map protected by `sync.RWMutex`
+- `AuthLimiter.attempts` map protected by `sync.Mutex`
+- `rateLimiter.limiters` uses `sync.Map` for lock-free concurrent access
+
+### 20. Error Wrapping Info Disclosure
+**REST API properly sanitizes errors:**
+- `rest/server.go:513-526` - `sanitizeErr()` strips file paths and connection strings
+- All internal errors wrapped and sanitized before client exposure
+- Generic error messages returned to clients
+
+---
+
+## Recommendations
+
+1. **Consider passing a proper context to `HandleMessage`** to enable cancellation on client disconnect, especially for long-running query operations.
+
+2. **Add a lint rule** to block `math/rand` in `internal/` packages to prevent accidental cryptographic use.
+
+3. **Continue following existing security practices** - the codebase demonstrates strong security awareness in critical areas like cryptography, TLS configuration, and error handling.
+
+---
+
+*Report generated by sc-lang-go security scanner.*

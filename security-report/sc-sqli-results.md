@@ -2,78 +2,80 @@
 
 ## Scan Summary
 
-**Tool**: sc-sqli (SQL Injection Pattern Scanner)  
-**Target**: GeryonProxy - Database Connection Pooler  
-**Date**: 2026-04-13  
+**Tool**: sc-sqli (SQL Injection Pattern Scanner)
+**Target**: GeryonProxy - Database Connection Pooler
+**Date**: 2026-05-01
 **Result**: No issues found
 
 ## Executive Summary
 
-GeryonProxy is a database connection pooler that acts as a pass-through proxy for PostgreSQL, MySQL, and MSSQL wire protocols. The proxy forwards SQL queries from clients to backend databases without modifying or reconstructing SQL statements.
+GeryonProxy is a database connection pooler that acts as a pass-through proxy for PostgreSQL, MySQL, and MSSQL wire protocols. The proxy forwards SQL queries from clients to backend databases without modifying or reconstructing SQL statements. No dynamic SQL construction from user input was found.
 
-## Scanned Files and Components
+## Scanned Files and Analysis
 
-### Protocol Handlers
+### Routing Logic (internal/pool/routing.go)
+- Uses `regexp.Regexp.MatchString(query)` for routing decisions - pattern matching only, no SQL construction
+- `ExtractHint()` and `StripHints()` use regex replacement to extract/strip routing hints from SQL comments - safe string manipulation
+- Routing decisions are based on pre-configured rules, not user-supplied SQL fragments
 
-- **internal/protocol/postgresql/codec.go** - PostgreSQL wire protocol codec
-- **internal/protocol/mysql/codec.go** - MySQL protocol codec  
-- **internal/protocol/mssql/codec.go** - MSSQL/TDS protocol codec
+### Config Loading (internal/config/loader.go)
+- Uses `gopkg.in/yaml.v3` for YAML parsing
+- Environment variable expansion restricted to `GERYON_` prefix only
+- No SQL query construction from config values
 
-All protocol handlers implement pass-through behavior:
-- `ExtractQuery()` methods extract SQL from client messages for routing/analysis
-- `WriteMessage()` methods forward raw message bytes to backends
-- No SQL construction from user input occurs
+### Query Logging (internal/logger/querylog.go)
+- Uses `fmt.Sprintf` for log formatting with hardcoded field names and safe types (timestamps, durations, client/backend addresses)
+- Query text is redacted before logging via `redactQuery()` using regex patterns to replace sensitive SQL fragments
+- Log lines are formatted as plain text, not SQL queries
 
-### Pool Management
+### Health Checks (internal/pool/health.go)
+- Sends hardcoded `SELECT 1` queries (or configurable `check_query`)
+- Queries are sent using raw wire protocol bytes, not string concatenation
+- No SQL construction from user input
 
-- **internal/pool/pool.go** - Connection pool management
-- **internal/pool/health.go** - Backend health checking
+### Query Cache Keys (internal/pool/pool.go)
+- Cache keys use `fmt.Sprintf("%s:%x", query, params)` - safe concatenation of query string with hex-encoded binary params
+- Not constructing SQL, merely creating an opaque cache key
 
-Pool operations use hardcoded SQL strings only:
-- Health checks use `"SELECT 1"` (configurable via `health.check_query`)
-- Query cache keys use `fmt.Sprintf("%s:%x", query, params)` - this is for cache key generation, not SQL construction
+### Admin API (internal/api/rest/server.go)
+- Pool creation uses a restricted request struct that explicitly excludes sensitive fields
+- Input validation enforced: pool names validated with `validatePoolName()`, body types and modes whitelist-checked, port ranges validated
+- Pool config is built from validated struct fields, not SQL strings
 
-### SQL Tokenizer
+### MCP Tools (internal/api/mcp/tools.go)
+- Uses `fmt.Sprintf` for formatting human-readable status strings
+- No SQL query construction
 
-- **internal/tokenizer/tokenizer.go** - SQL parsing for query routing
-
-Tokenizer provides analysis-only functions:
-- `ClassifyQuery()` - Determines query type (SELECT, INSERT, UPDATE, DELETE)
-- `ExtractTables()` - Extracts table names for cache invalidation
-- `NormalizeQuery()` - Normalizes queries for cache key generation
-- `RewriteQuery()` - Removes comments, normalizes whitespace
-
-None of these functions construct SQL queries - they only analyze existing client queries.
-
-### Configuration
-
-- **internal/config/config.go** - Configuration parsing
-
-No SQL construction found in config parsing.
+### Proxy Protocol Handling (internal/proxy/listener.go)
+- Raw query bytes from clients are forwarded to backends using wire protocol framing
+- No SQL string building from client input
+- Authentication flows use wire protocol messages, not SQL
 
 ## SQL Injection Pattern Analysis
 
 ### String Concatenation in SQL Construction
-
 **Finding**: None
 
 The codebase does not concatenate user input into SQL strings. The proxy passes SQL through as raw bytes without modification.
 
 ### Dynamic SQL in Backend Connection
-
 **Finding**: None
 
 Backend connections use hardcoded health check queries. User-provided SQL is forwarded to backends as-is without reconstruction.
 
 ### Protocol-Level SQL Handling
-
 **Finding**: None
 
 Protocol handlers extract queries from client messages for internal routing decisions but do not reconstruct or modify SQL.
 
 ## Conclusion
 
-No SQL injection vulnerabilities were found. GeryonProxy functions as a transparent proxy that forwards client SQL to backend databases without SQL reconstruction.
+GeryonProxy is a pass-through database proxy. It does not build SQL queries from user input. All SQL is either:
+1. Forwarded directly via wire protocol from client to backend
+2. Used for pattern-matching in routing (regex on full query string)
+3. Fixed health check queries sent over wire protocol
+
+No dynamic SQL construction was found that could enable injection attacks.
 
 ---
 *Generated by sc-sqli (SQL Injection Pattern Scanner)*

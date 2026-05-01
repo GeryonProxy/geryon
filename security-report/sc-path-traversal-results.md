@@ -1,82 +1,98 @@
-# Path Traversal Security Check Results
-
-**Project:** GeryonProxy  
-**Check:** sc-path-traversal  
-**Date:** 2026-04-13
+# sc-path-traversal Security Check Results
 
 ## Summary
 
-**Result: No issues found by sc-path-traversal.**
+Checked GeryonProxy for path traversal vulnerabilities across:
+- Config file path handling (cmd/geryon/main.go)
+- Config hot-reload file watching (internal/config/watcher.go)
+- TLS certificate loading (internal/tlsutil/tls.go)
+- Query log file paths (internal/logger/querylog.go)
+- Dashboard static file serving (internal/api/dashboard/server.go)
 
-The codebase implements adequate protections against path traversal vulnerabilities at all major entry points.
+## Findings
 
-## Analysis Details
+### Config Path (main.go)
+The config path is sourced from the `--config` command-line flag, not from client input:
 
-### 1. Config File Loading (internal/config/loader.go)
-
-The `Load()` function reads configuration files via `os.ReadFile(path)`. However, the path is sanitized at the main entry point before reaching this function.
-
-**File:** `D:/CODEBOX/PROJECTS/GeryonProxy/cmd/geryon/main.go`  
-**Line 79:**
 ```go
 safeConfigPath := filepath.Clean(*configPath)
+cfg, err := config.Load(safeConfigPath)
 ```
 
-Additionally, environment variable expansion restricts variable names to `GERYON_*` prefix only, preventing unintended environment variable exposure.
+`filepath.Clean` normalizes the path (removes `..` components after symlink resolution). The path is set at startup by the operator, not by clients. **No vulnerability.**
 
-**Status:** Protected
+### Config Hot-Reload (watcher.go)
+The watcher stores the already-cleaned path at initialization:
 
-### 2. Config Watcher (internal/config/watcher.go)
-
-The `NewWatcher` function sanitizes the watched path at construction:
-
-**Line 35:**
 ```go
-path: filepath.Clean(path),
+return &Watcher{
+    path:     filepath.Clean(path),
+    ...
+}
 ```
 
-**Status:** Protected
+Subsequent file reads use this stored clean path. **No vulnerability.**
 
-### 3. Logger (internal/logger/logger.go)
+### TLS Certificate Loading (tlsutil/tls.go)
+TLS file paths (cert_file, key_file, ca_file) are loaded directly from the config:
 
-The logger uses only `os.Stdout` for output with no file path configuration possible.
-
-**Status:** No path traversal risk
-
-### 4. Query Logger (internal/logger/querylog.go)
-
-The `QueryLogConfig.Directory` field is used with `os.MkdirAll()` and `filepath.Join()` without explicit `filepath.Clean()` in the function itself.
-
-However, production usage in `proxy/listener.go` constructs the directory safely:
-
-**Lines 75-77:**
 ```go
-safeName := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(cfg.Name, "_")
-qlConfig.Directory = filepath.Join("logs", "queries", safeName)
+cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+caCert, err := os.ReadFile(cfg.CAFile)
 ```
 
-The pool name is sanitized to only allow alphanumeric characters, underscores, and hyphens before being used in the path.
+**Note**: There is no directory boundary validation. If an operator uses a config with `cert_file: ../../etc/private_key`, the file would be read. However, since the config file itself is operator-controlled, this is not a client-exploitable path traversal. This is operational security (ensure your config file is secure), not a code vulnerability.
 
-**Status:** Protected in production usage
+### Query Log Paths (logger/querylog.go)
+Log paths are constructed using `filepath.Join`:
 
-### 5. TLS Certificate Paths (internal/tlsutil/tls.go)
+```go
+slowLogPath := filepath.Join(config.Directory, "slow.log")
+allLogPath := filepath.Join(config.Directory, "all.log")
+jsonLogPath := filepath.Join(config.Directory, "queries.json")
+```
 
-Paths from config (`cfg.CertFile`, `cfg.KeyFile`, `cfg.CAFile`) are passed directly to `tls.LoadX509KeyPair()` and `os.ReadFile()` without `filepath.Clean()`.
+**Note**: The `config.Directory` from the config file is not validated to be within an allowed directory. A malicious config could set `directory: ../../etc` and write log files there. Again, this requires operator-controlled config, not client input. **Not exploitable by clients.**
 
-**Risk Assessment:** Low - Exploitation requires attacker to control the configuration file, which grants them equivalent access.
+### Dashboard Static Files (api/dashboard/server.go)
+Static files are served from an embedded filesystem:
 
-### 6. Dashboard Path (internal/api/dashboard/server.go)
+```go
+//go:embed static/*
+var staticFS embed.FS
+...
+mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticContent))))
+```
 
-The `Dashboard.Config.Path` field is used only for HTTP route mounting (line 72: `mux.HandleFunc("/", s.handleIndex)`), not for file system access.
+The dashboard uses `embed.FS` - files are compiled into the binary at build time. **No path traversal possible** as the files don't exist on disk and cannot be modified at runtime.
 
-**Status:** No file system access risk
+### Dashboard Config Write (handleConfigFile)
+The dashboard can write the config file via `handleConfigFile`:
 
-### 7. Password File Field (BackendAuth.PasswordFile)
+```go
+tmpPath := configPath + ".tmp"
+if err := os.WriteFile(tmpPath, data, 0600); err != nil { ... }
+if err := os.Rename(tmpPath, configPath); err != nil { ... }
+```
 
-The `PasswordFile` field exists in the configuration schema but is **not actively used** anywhere in the codebase - it is only parsed and stored.
+The `configPath` is set once at startup from the main config path. **No path traversal** - the path is not derived from client input.
 
-**Status:** Currently unused
+---
+
+## sc-file-upload Check
+
+GeryonProxy is a database connection pooler, not a file server. File upload is not applicable.
+
+**Dashboard static files**: Served via `embed.FS` (compiled into binary). Cannot be replaced at runtime. **Not applicable.**
+
+---
 
 ## Conclusion
 
-No path traversal vulnerabilities were identified. The application properly sanitizes user-controlled paths at critical entry points, and environment variable expansion is restricted to a safe prefix.
+**No path traversal vulnerabilities found.**
+
+All file paths in GeryonProxy are controlled by:
+1. Command-line flags set at startup (operator-controlled)
+2. Configuration file set by the operator
+
+No file paths are derived from client input. The embedded filesystem for static assets cannot be modified at runtime. The architecture prevents client-controlled path manipulation.

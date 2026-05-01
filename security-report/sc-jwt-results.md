@@ -1,53 +1,44 @@
-# sc-jwt-results.md
+# sc-jwt Security Check Results
 
-## JWT Security Analysis
+## Finding: No JWT Usage
 
-**Project:** GeryonProxy
-**Date:** 2026-04-13
-**Scanner:** sc-jwt (JWT Implementation Flaws)
+GeryonProxy does **not** use JWTs (JSON Web Tokens) anywhere in the codebase.
 
-## Results
+## Authentication Mechanism
 
-**Status:** No issues found by sc-jwt.
+The project uses a simple **Bearer token** authentication mechanism for admin APIs:
 
-GeryonProxy does not use JWT tokens anywhere in its codebase, so JWT-specific vulnerabilities do not apply.
+- **Dashboard** (`internal/api/dashboard/server.go:243`):
+  ```go
+  if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.authToken)) != 1 {
+      http.Error(w, "Unauthorized", http.StatusUnauthorized)
+      return
+  }
+  ```
 
-## Authentication Methods Used
+- Tokens are static strings configured in `config.Auth.Token` via YAML configuration
+- No JWT library imports found in the codebase
+- No JWT parsing/validation code exists
 
-The project uses different, non-JWT authentication:
+## Algorithm Confusion
 
-1. **Database Authentication** (`internal/auth/auth.go`): SCRAM-SHA-256 with PBKDF2
-   - Proper password hashing with iterations (10000), salt, and HMAC-SHA-256
-   - Format: `SCRAM-SHA-256$<iterations>$<salt>$<storedkey>$<serverkey>`
+**Not applicable** - No JWT handling means no algorithm confusion vulnerability.
 
-2. **REST API Authentication** (`internal/api/rest/server.go` lines 222-248): 
-   - Simple bearer token with direct string comparison: `parts[1] != s.config.Auth.Token`
-   - Note: This uses non-constant-time comparison (potential issue for admin tokens)
+JWT algorithm confusion attacks typically exploit asymmetric/symmetric algorithm mismatches (e.g., `alg: none` or switching RS256 to HS256). Since GeryonProxy uses simple string comparison for Bearer tokens, this class of vulnerability does not apply.
 
-3. **gRPC API Authentication** (`internal/api/grpc/server.go` lines 145-172):
-   - Simple bearer token with direct string comparison: `parts[1] != s.authToken`
-   - Note: This uses non-constant-time comparison (potential issue for admin tokens)
+## Token Validation
 
-4. **MCP Authentication:** Bearer token with direct comparison
+Token comparison uses `crypto/subtle.ConstantTimeCompare`, which provides protection against timing attacks. This is the correct approach for comparing secrets.
 
-5. **Dashboard Authentication:** Bearer token with direct comparison
+## Recommendations
 
-## Analysis
-
-**1. JWT Library Usage** — NOT FOUND
-- The codebase does not use any JWT library (no `golang-jwt`, `dgrijalva/jwt`, or similar)
-- The `go.mod` shows only minimal dependencies: `golang.org/x/term` and `golang.org/x/time`
-- No JWT-related imports found anywhere in the codebase
-
-**2. Algorithm Confusion** — NOT APPLICABLE
-- No JWT tokens are used, so the "none" algorithm vulnerability does not apply
-
-**3. Weak Signing Keys** — NOT APPLICABLE
-- No JWT signing is performed
-
-**4. Missing Signature Verification** — NOT APPLICABLE
-- No JWT verification is performed
+1. **Current implementation is secure** for its design goal (static token auth)
+2. If JWT support is added in the future:
+   - Always specify expected algorithm (`jwt.WithValidMethods([]string{"RS256"})`)
+   - Validate algorithm header matches expectation
+   - Never trust the `alg` header from untrusted input
+   - Use `jwt.WithIssuer()` and `jwt.WithAudience()` validation
 
 ## Conclusion
 
-JWT-specific vulnerabilities do not apply to GeryonProxy. The authentication methods in use (SCRAM-SHA-256 for database connections, static bearer tokens for APIs) are not JWT-based.
+**No issues found.** GeryonProxy does not use JWTs and is not vulnerable to JWT-related attacks.

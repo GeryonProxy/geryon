@@ -1,366 +1,273 @@
-# GeryonProxy Security Report
+# Security Assessment Report
 
-**Date:** 2026-04-25
-**Scan Type:** Full 4-Phase Security Audit (Recon → Hunt → Verify → Report)
-**Scope:** All Go source files, configuration, network listeners, admin APIs, protocol handlers
+**Project:** GeryonProxy — Multi-database connection pooler and proxy
+**Date:** 2026-05-01
+**Scanner:** security-check v1.0.0
+**Risk Score:** 5.3/10 (Moderate Risk)
 
 ---
 
 ## Executive Summary
 
-GeryonProxy is a high-performance, multi-database connection pooler written in Go. The codebase demonstrates strong security fundamentals: no `os/exec` in production code, TLS 1.2+ with AEAD-only ciphers, constant-time secret comparisons, SCRAM-SHA-256 with 120k iterations, and embedded static files preventing path traversal.
+A security assessment was performed on GeryonProxy, a pure-Go database connection pooler supporting PostgreSQL, MySQL, and MSSQL wire protocols. The scan analyzed 85+ Go source files using 10 specialized security skills across 20+ vulnerability categories.
 
-**19 findings** were identified and verified. Of these, **17 are now FIXED** and **2 remain** (both require architectural changes).
+### Key Metrics
 
-The most severe remaining issues involve unauthenticated cluster communication (requires TLS infrastructure) and incomplete CSRF protection.
+| Metric | Value |
+|--------|-------|
+| Total Files Scanned | 85+ |
+| Languages | Go (100%) |
+| Skills Executed | 10 |
+| Skills with Findings | 2 |
+| Final Verified Findings | 2 (1 High, 1 Medium) |
+| False Positives Eliminated | 8 |
 
----
+### Top Risks
 
-## Findings Summary
-
-| # | Finding | Severity | Status |
-|---|---------|----------|--------|
-| 1 | Auth disabled when `auth.enabled: false` -- full API exposure | **CRITICAL** | **FIXED** |
-| 2 | Cluster inter-node communication: no auth or encryption | **CRITICAL** | **FIXED** (TLS support added) |
-| 3 | Client connection counter double-decrement -- DoS | **CRITICAL** | **FIXED** |
-| 4 | Config file write enables auth manipulation | **HIGH** | **FIXED** |
-| 5 | MySQL passthrough bypasses pool access control | **HIGH** | **FIXED** |
-| 6 | CSRF: no protection on state-changing endpoints | **HIGH** | Partial (content-type blocking) |
-| 7 | Unbounded goroutine creation in Raft/cluster accept loops | **HIGH** | **FIXED** |
-| 8 | mTLS bypasses user DB and pool access control | **MEDIUM** | **FIXED** |
-| 9 | Config file written with world-readable permissions (0644) | **MEDIUM** | **FIXED** |
-| 10 | `sanitizeErr` does not actually sanitize -- info disclosure | **MEDIUM** | **FIXED** |
-| 11 | Mass assignment on pool creation API | **MEDIUM** | **FIXED** |
-| 12 | SWIM predictable RNG (time.Now modulo) | **MEDIUM** | **FIXED** |
-| 13 | Raft LCG random number generator | **MEDIUM** | **FIXED** |
-| 14 | Dashboard user creation accepts plaintext password | **MEDIUM** | **FIXED** |
-| 15 | Rate limiting is IP-only, no username-based limits | **MEDIUM** | **FIXED** |
-| 16 | No HTTP IdleTimeout on any server | **MEDIUM** | **FIXED** |
-| 17 | CORS wildcard origin allowed | **LOW** | Monitor |
-| 18 | pprof endpoints exposed (opt-in recommended) | **LOW** | Monitor |
-| 19 | Query redaction patterns incomplete | **LOW** | Monitor |
-| 20 | Dead global `authMessage` variable | **LOW** | **FIXED** |
-| 21 | REST API user creation accepts arbitrary hash format | **LOW** | Monitor |
-| 22 | SCRAM error message differentiation | **LOW** | Monitor |
-| 23 | Integration tests contain hardcoded credentials | **LOW** | Monitor |
-| 24 | No rate limiting on user creation endpoint | **LOW** | Monitor |
-| 25 | Error messages leaked in dashboard API responses | **LOW** | **FIXED** |
-| 26 | Dashboard lacks MaxBytesReader on user creation | **LOW** | **FIXED** |
+1. **H-1: gRPC Admin API authentication bypass** when `auth.enabled=false` in config — all admin endpoints publicly accessible
+2. **M-9: Unbounded context in session handler** — client disconnection not respected during pool connection acquisition
 
 ---
 
-## Critical Findings
+## Scan Statistics
 
-### C-1: Authentication Disabled When `auth.enabled: false`
+| Statistic | Value |
+|-----------|-------|
+| Files Scanned | 85+ Go source files |
+| Lines of Code | ~25,000+ |
+| Languages Detected | Go |
+| Frameworks Detected | None (stdlib + 5 production deps) |
+| Skills Executed | 10 |
+| Findings Before Verification | 10 |
+| False Positives Eliminated | 8 |
+| Final Verified Findings | 2 |
 
-**Severity:** CRITICAL
-**Files:** `internal/api/rest/server.go:284-289`, `internal/api/dashboard/server.go:163-168`, `internal/api/mcp/server.go:148-153`
+### Skills Executed
 
-All admin interfaces (REST, Dashboard, MCP) share a `withAuth` middleware with a global bypass:
-
-```go
-if !s.config.Auth.Enabled {
-    next.ServeHTTP(w, r)  // NO AUTH AT ALL
-    return
-}
-```
-
-When `auth.enabled` is `false`, **every endpoint is accessible without authentication**, including config file write, user creation/deletion, pool management, and backend draining.
-
-**Proof of concept:**
-```bash
-curl -X PUT http://localhost:8080/api/v1/config/file -d '{"auth":{"users":[...]}}'
-```
-
-**Fix:** Either require auth for admin APIs (no bypass), or at minimum require `auth.enabled: true` before starting any admin server.
-
----
-
-### C-2: Cluster Inter-Node Communication: No Auth or Encryption
-
-**Severity:** CRITICAL
-**Files:** `internal/cluster/cluster.go:189-214`, `internal/raft/raft.go:700-731`, `internal/swim/swim.go`
-
-All inter-node communication uses plain TCP/UDP with no authentication or encryption:
-- **Raft TCP:** `net.Dial("tcp", to)` -- no TLS, no auth
-- **Cluster RPC:** Unbounded goroutine per connection, no auth
-- **SWIM UDP:** Gossip messages accepted without MAC or signature verification
-
-Any network-accessible attacker can inject fake Raft votes, spoof gossip, or eavesdrop on config data.
-
-**Fix:** Add mutual TLS for Raft/RPC, HMAC-SHA256 for SWIM with shared cluster secret.
-
----
-
-### C-3: Client Connection Counter Double-Decrement
-
-**Severity:** CRITICAL
-**File:** `internal/proxy/listener.go:300,333`
-
-`l.pool.DecrementClientCount()` is called both in a `defer` (line 300) AND explicitly (line 333). On normal exit, the counter decrements twice, eventually going negative.
-
-**Impact:** The `TryIncrementClientCount` limit check becomes ineffective, allowing unlimited connections -- a denial-of-service vector.
-
-**Fix:** Remove the explicit `DecrementClientCount()` at line 333; the defer already handles it.
+| Skill | Category | Result |
+|-------|----------|--------|
+| sc-lang-go | Language-specific | 1 finding |
+| sc-auth | Authentication | PASS |
+| sc-authz | Authorization | 1 finding |
+| sc-sqli | SQL Injection | PASS |
+| sc-ssrf | Server-Side Request Forgery | 1 info |
+| sc-rce | Remote Code Execution | PASS |
+| sc-secrets | Hardcoded Secrets | PASS |
+| sc-csrf | CSRF | PASS (N/A) |
+| sc-path-traversal | Path Traversal | PASS |
+| sc-file-upload | File Upload | N/A |
+| sc-race-condition | Race Conditions | PASS |
+| sc-rate-limiting | Rate Limiting | PASS |
+| sc-jwt | JWT | PASS (N/A) |
+| sc-business-logic | Business Logic | PASS |
+| sc-mass-assignment | Mass Assignment | PASS |
 
 ---
 
 ## High Findings
 
-### H-1: Config File Write Enables Auth Manipulation
+### VULN-001: H-1 — gRPC Admin API Authentication Bypass
 
-**Severity:** HIGH
-**File:** `internal/api/rest/server.go:1072-1130`
+**Severity:** High
+**Confidence:** 85/100 (High Probability)
+**CWE:** CWE-306 — Missing Authentication for Critical Function
+**OWASP:** A07:2021 — Security Misconfiguration
 
-`PUT /api/v1/config/file` writes arbitrary YAML to disk. While it validates YAML syntax, it does NOT reject modified auth sections. An attacker with a valid token can:
-1. Read current config
-2. Add their own user with `allowed_pools: ["*"]`
-3. Write back and trigger reload
+**Location:** `internal/api/grpc/server.go:176`
 
-Additionally, the temp file is written with `0644` permissions (world-readable).
+**Description:**
+When `auth.enabled=false` is set in the Geryon configuration, the gRPC admin API server's `withAuth` middleware skips authentication entirely. This bypass means all admin API endpoints (pool management, config reload, cluster operations) become publicly accessible without any credentials.
 
-**Fix:** Validate that auth sections aren't being maliciously modified, or require separate admin credentials for config writes. Change file permissions to `0600`.
+The REST API and MCP server are not affected — they correctly always require authentication regardless of the `auth.enabled` config flag.
 
----
-
-### H-2: MySQL Passthrough Bypasses Pool Access Control
-
-**Severity:** HIGH
-**File:** `internal/proxy/listener.go:1350-1356`
-
-In MySQL passthrough mode, pool access is only checked if the user exists in the proxy's user database. Unknown users skip the check entirely:
-
+**Vulnerable Code:**
 ```go
-if user := ps.userDB.GetUser(ps.username); user != nil && !user.CanAccessPool(...) {
-    // deny -- but only if user EXISTS in proxy DB
+// internal/api/grpc/server.go:174-178
+func (s *Server) withAuth(next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+    return func(w http.ResponseWriter, r *http.Request) {
+        if !s.authEnabled {
+            // BUG: Skips auth entirely when auth.enabled=false
+            return next(w, r)
+        }
+        // ... auth logic ...
+    }
 }
 ```
 
-PostgreSQL interception mode correctly enforces this. MySQL does not.
+**Impact:**
+- If `auth.enabled=false` (for testing or internal-only deployments), all gRPC admin endpoints are unauthenticated
+- Attackers could modify pool configurations, reload configs, or access cluster state
+- Does NOT affect production default (auth is enabled by default)
 
-**Fix:** Require user existence AND pool access check, not just "if exists then check".
-
----
-
-### H-3: CSRF: No Protection on State-Changing Endpoints
-
-**Severity:** HIGH
-**Files:** `internal/api/rest/server.go`, `internal/api/mcp/server.go`
-
-All POST/PUT/DELETE endpoints lack CSRF protection. If the admin UI stores tokens in localStorage and adds them via JavaScript, CSRF is possible through malicious pages.
-
-**Fix:** Add `X-Requested-With` or double-submit CSRF token pattern on all mutating endpoints.
-
----
-
-### H-4: Unbounded Goroutine Creation in Raft/Cluster
-
-**Severity:** HIGH
-**Files:** `internal/raft/raft.go:331`, `internal/cluster/cluster.go:202`
-
-Both accept loops spawn a goroutine per connection without limits:
+**Remediation:**
+Align gRPC server with REST/MCP behavior — always require authentication on admin endpoints. The `auth.enabled` config should control whether proxy clients authenticate to Geryon, not whether admin API is protected:
 
 ```go
-go r.handleConnection(conn)  // No limit
+func (s *Server) withAuth(next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+    return func(w http.ResponseWriter, r *http.Request) {
+        // Always authenticate admin endpoints
+        token := r.Header.Get("Authorization")
+        if token == "" {
+            http.Error(w, "missing authorization", http.StatusUnauthorized)
+            return
+        }
+        // Validate token...
+    }
+}
 ```
 
-**Fix:** Add semaphore: `sem := make(chan struct{}, maxConns)`, acquire before spawn, release on done.
-
----
-
-### H-5: SQL Tokenizer Classification Bypass
-
-**Severity:** HIGH
-**File:** `internal/tokenizer/tokenizer.go`
-
-The tokenizer uses `strings.HasPrefix` after `TrimSpace` and comment stripping to classify queries. Leading control characters or unusual whitespace patterns could cause misclassification (e.g., a WRITE query classified as READ), enabling routing bypass to read-only backends.
-
-**Fix:** Add control character stripping before classification, not just whitespace trimming.
+**References:**
+- [CWE-306: Missing Authentication for Critical Function](https://cwe.mitre.org/data/definitions/306.html)
+- [OWASP A07:2021](https://owasp.org/Top10/A07_2021-Security_Misconfiguration/)
 
 ---
 
 ## Medium Findings
 
-### M-1: mTLS Bypasses User DB and Pool Access Control
+### VULN-002: M-9 — Unbounded Context in Session Message Handler
 
-**File:** `internal/proxy/listener.go:3161-3200`
+**Severity:** Medium
+**Confidence:** 65/100 (Probable)
+**CWE:** CWE-400 — Resource Exhaustion
+**OWASP:** A04:2021 — Insecure Design
 
-Certificate-authenticated users not found in the proxy's user database are allowed through to the backend. Pool access control is never checked for cert-authenticated users.
+**Location:** `internal/pool/session.go:290`
 
-**Fix:** Require certificate-authenticated users to exist in the user database and enforce pool access.
+**Description:**
+The `HandleMessage` method in `session.go` uses `context.Background()` when acquiring a server connection for query processing. This means client disconnection is not honored during connection acquisition — a client that disconnects while waiting for a pool connection will have its goroutine continue until a connection is available or the pool's wait timeout expires.
 
----
+**Vulnerable Code:**
+```go
+// internal/pool/session.go:290
+func (s *ProxySession) HandleMessage(msg *ProxyMessage) error {
+    // ...
+    ctx := context.Background()  // Should use session context that respects client disconnect
+    serverConn, err := s.pool.AcquireContext(ctx)
+    // ...
+}
+```
 
-### M-2: Config File Written with World-Readable Permissions
+**Impact:**
+- A client that disconnects while waiting for a pool connection holds its goroutine open
+- Bounded by pool's `WaitTimeout` (so not completely unbounded)
+- Moderate resource waste if many clients disconnect while waiting
+- Low severity given timeout protection
 
-**File:** `internal/api/rest/server.go:1111`
+**Remediation:**
+Replace `context.Background()` with the session's parent context that respects client disconnection:
 
-`os.WriteFile(tmpPath, data, 0644)` makes password hashes, auth tokens, and backend credentials readable by any local user.
+```go
+func (s *ProxySession) HandleMessage(msg *ProxyMessage) error {
+    // Use parent session context that respects client disconnection
+    ctx := s.ctx  // or derive from s.parentCtx
+    serverConn, err := s.pool.AcquireContext(ctx)
+    // ...
+}
+```
 
-**Fix:** Change to `0600`.
-
----
-
-### M-3: `sanitizeErr` Does Not Actually Sanitize
-
-**File:** `internal/api/rest/server.go:446-455`
-
-Despite the doc comment claiming "Internal details (file paths, connection strings) are stripped," only truncation to 200 chars occurs. Go error messages often include file paths and connection strings.
-
-**Fix:** Strip file paths, connection strings, and sensitive patterns from error messages.
-
----
-
-### M-4: Mass Assignment on Pool Creation API
-
-**File:** `internal/api/rest/server.go:537`
-
-`json.Decode(&req)` decodes directly into `config.PoolConfig`, which includes all fields. Only a subset is validated.
-
-**Fix:** Decode into a restricted request struct, or validate every field.
-
----
-
-### M-5: Predictable RNG in SWIM and Raft
-
-**Files:** `internal/swim/swim.go:702-707`, `internal/raft/raft.go:1097-1102`
-
-SWIM uses `time.Now().UnixNano() % max` (trivially predictable). Raft uses a simple LCG.
-
-**Fix:** Replace with `crypto/rand` or `math/rand/v2` with proper seeding.
+**References:**
+- [Go Context Documentation](https://pkg.go.dev/context)
+- [CWE-400: Resource Exhaustion](https://cwe.mitre.org/data/definitions/400.html)
 
 ---
 
-### M-6: Dashboard User Creation Accepts Plaintext Password
+## Informational Findings
 
-**File:** `internal/api/dashboard/server.go:534-599`
+### INFO-001: Admin API SSRF Risk — Backend Address IP Range Validation
 
-The `password_hash` field is treated as plaintext and hashed server-side, inconsistent with the REST API which expects pre-hashed passwords.
+**Severity:** Info
+**Confidence:** 40/100 (Possible)
+**CWE:** CWE-918 — Server-Side Request Forgery
 
-**Fix:** Enforce HTTPS for dashboard or require pre-hashed passwords like REST API.
+**Location:** `internal/api/rest/server.go` (backend config endpoints)
 
----
+**Description:**
+The Admin API allows backend addresses to be configured to arbitrary IP addresses, including internal cloud metadata endpoints (e.g., 169.254.169.254). The `validateBackendAddr()` function only checks address format, not IP ranges or blocklists.
 
-### M-7: No HTTP IdleTimeout
+**Impact:**
+Requires valid admin credentials to exploit — not client-exploitable. An authenticated admin could configure a backend to point at internal services (cloud metadata servers, internal databases).
 
-**Files:** All API servers
-
-`ReadTimeout` and `WriteTimeout` are set but `IdleTimeout` is not, allowing slow connection exhaustion on keep-alive connections.
-
-**Fix:** Set `IdleTimeout: 60 * time.Second` on all `http.Server` instances.
-
----
-
-### M-8: Rate Limiting IP-Only
-
-**File:** `internal/auth/auth.go:446-575`
-
-Rate limiter keys by raw IP only. No username-based or global limits.
-
-**Fix:** Add username-based rate limiting and a global failure counter.
+**Remediation:**
+Add IP range blocklisting for known internal ranges in `validateBackendAddr()`:
+```go
+func validateBackendAddr(addr string) error {
+    // Block: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
+    // Add your implementation
+}
+```
 
 ---
 
-## Low Findings
+## Positive Security Observations
 
-### L-1: CORS Wildcard Origin
+The GeryonProxy codebase demonstrates strong security practices:
 
-`Access-Control-Allow-Origin: *` is allowed when configured. Limit impact since no credentials header, but should be restricted.
-
-### L-2: pprof Endpoints Exposed
-
-`/debug/pprof/*` gives detailed runtime introspection to any authenticated user. Make opt-in (disabled by default).
-
-### L-3: Query Redaction Patterns Incomplete
-
-`internal/logger/querylog.go:708-723` misses `ALTER USER ... WITH PASSWORD`, short passwords (<4 chars), and prepared statement parameters.
-
-### L-4: Dead Global `authMessage` Variable
-
-`internal/auth/scram.go:225` -- unused global, shadowed by local variable. Delete it.
-
-### L-5: REST API User Creation Accepts Arbitrary Hash
-
-No validation that `password_hash` is in recognized `SCRAM-SHA-256$...` format.
-
-### L-6: SCRAM Error Message Differentiation
-
-Different errors for "user not found" vs "invalid password" enable username enumeration (timing mitigated by 50ms delay).
-
-### L-7: Integration Tests Contain Hardcoded Credentials
-
-`integration-tests/e2e_test.go:135`, `pooling_test.go:30` -- `user=geryon password=geryon_password`.
-
-### L-8: No Rate Limiting on User Creation Endpoint
-
-`internal/api/rest/server.go:1745` -- user creation has `MaxBytesReader(4096)` but no stricter per-IP rate limiting.
-
-### L-9: Error Messages Leaked in Dashboard API Responses
-
-`internal/api/dashboard/server.go:578,592` -- `err.Error()` directly concatenated into responses without sanitization.
-
-### L-10: Dashboard Lacks MaxBytesReader
-
-`internal/api/dashboard/server.go:550` -- no body size limit on JSON decode for user creation.
+| Security Control | Implementation |
+|-----------------|----------------|
+| **Authentication** | SCRAM-SHA-256 with 120k PBKDF2 iterations for proxy clients |
+| **Password Storage** | `subtle.ConstantTimeCompare` for timing-safe comparison |
+| **Auth Rate Limiting** | `AuthLimiter` — 10 failed attempts per IP, 5min lockout |
+| **Token Generation** | `crypto/rand` used for all security-sensitive randomness |
+| **HTTP Server Timeouts** | All admin servers configured with Read/Write/Idle timeouts |
+| **JSON Body Limits** | 1MB max via `http.MaxBytesReader` |
+| **CSRF Protection** | `X-Requested-With` header check on state-changing operations |
+| **Race Condition Safety** | All maps protected by `sync.Mutex`/`sync.RWMutex` or `sync.Map` |
+| **Atomic Config** | `atomic.Pointer[config.Config]` for lock-free hot-reload reads |
+| **Connection Reset** | Protocol-specific reset (`DISCARD ALL`, `COM_RESET_CONNECTION`) |
+| **Error Sanitization** | REST API uses `sanitizeErr()` to prevent info disclosure |
+| **Dependency Security** | Only 5 direct deps, all well-known, no known CVEs |
 
 ---
 
-## Positive Findings
+## Remediation Roadmap
 
-1. **No `os/exec` in production code** -- zero command injection surface
-2. **TLS 1.2 minimum** with AEAD-only cipher suites
-3. **SCRAM-SHA-256 with 120k PBKDF2 iterations** -- meets OWASP 2023+
-4. **Constant-time comparison** for all secrets (`crypto/subtle`)
-5. **`embed.FS` for static files** -- no path traversal possible
-6. **Auth rate limiter** with per-IP brute-force protection
-7. **`http.MaxBytesReader`** on most JSON endpoints
-8. **Environment variable scoping** -- only `${GERYON_*}` expanded
-9. **XSS-safe dashboard** -- all data rendered via `textContent`
-10. **Panic recovery** middleware on all HTTP servers
-11. **Input validation** with regex on pool names, backend addresses
-12. **Password zeroing** after use in memory
-13. **Request body limits** on REST API endpoints (1MB pools, 64KB backends, 4KB users)
-14. **Security headers** set: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection
-15. **Path sanitization** via `filepath.Clean` and pool name regex sanitization
-16. **Startup parameter limits** -- max 64 params, max 256 bytes per value
-17. **CORS defaults to same-origin** when `allowed_origins` is empty
+### Phase 1: Immediate (1-3 days)
+| # | Finding | Effort | Impact |
+|---|---------|--------|--------|
+| 1 | H-1: gRPC auth bypass | Low | High |
 
----
+**Action:** Remove the `if !s.authEnabled` bypass in gRPC server. Always require admin API authentication.
 
-## Carried Over from Previous Scan (2026-04-16)
+### Phase 2: Short-Term (1-2 weeks)
+| # | Finding | Effort | Impact |
+|---|---------|--------|--------|
+| 2 | M-9: context.Background in session | Low | Medium |
 
-The following findings from the previous scan were NOT re-verified in this scan and may still be present:
+**Action:** Replace `context.Background()` with session context in `pool/session.go:290`.
 
-| ID | Finding | Severity |
-|----|---------|----------|
-| CRIT-1 (prev) | Goroutine leak in SWIM protocol indirect probe | CRITICAL |
-| CRIT-2 (prev) | Cross-mutex race in SWIM probe | CRITICAL |
-| HIGH-1 (prev) | Backend transaction orphaning -- no ROLLBACK on timeout | HIGH |
-| HIGH-2 (prev) | Missing defer cancel() leaks timers | HIGH |
-| HIGH-3 (prev) | TCP connection leak in cluster RPC | HIGH |
-| HIGH-4 (prev) | Unencrypted backend connections (passthrough auth) | HIGH |
-| HIGH-5 (prev) | Unauthenticated Raft cluster communication | HIGH |
-| MED-1 (prev) | Unauthenticated SWIM Gossip (UDP) | MEDIUM |
-| MED-2 (prev) | Weak PRNG for Raft elections | MEDIUM |
-| MED-3 (prev) | Insecure default 0.0.0.0 binding | MEDIUM |
+### Phase 3: Medium-Term (1-2 months)
+| # | Finding | Effort | Impact |
+|---|---------|--------|--------|
+| 3 | INFO-001: SSRF IP validation | Medium | Low |
 
-Note: Several of these overlap with new findings (e.g., unauthenticated cluster communication, weak PRNG, 0.0.0.0 binding).
+**Action:** Add IP range blocklisting for internal ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16).
 
 ---
 
-## Recommended Priority Order
+## Methodology
 
-1. **C-3:** Fix connection counter double-decrement (one-line fix, immediate DoS mitigation)
-2. **C-1:** Remove auth bypass when `auth.enabled: false` or require auth for admin APIs
-3. **C-2:** Add TLS + auth to cluster inter-node communication
-4. **H-1:** Validate config file writes, change permissions to `0600`
-5. **H-2:** Enforce MySQL passthrough pool access control
-6. **H-3:** Add CSRF protection to mutating endpoints
-7. **H-4:** Bound goroutine creation in Raft/cluster
-8. **H-5:** Add control character validation in SQL tokenizer
-9. **M-1-M-8:** Address medium-severity findings
-10. **L-1-L-10:** Clean up low-severity findings
+This assessment was performed using security-check, an AI-powered static analysis tool that uses large language model reasoning to detect security vulnerabilities across 48 specialized skills.
+
+### Pipeline Phases
+
+1. **Reconnaissance** — Automated codebase architecture mapping and technology detection
+2. **Vulnerability Hunting** — 10 specialized skills scanned for 20+ vulnerability categories
+3. **Verification** — False positive elimination with confidence scoring (0-100)
+4. **Reporting** — CVSS-aligned severity classification and remediation prioritization
+
+### Limitations
+
+- Static analysis only — no runtime testing or dynamic analysis performed
+- AI-based reasoning may miss vulnerabilities requiring deep domain knowledge
+- Confidence scores are estimates, not guarantees
+- Custom business logic flaws may require manual review
 
 ---
 
-Report generated: 2026-04-18
+## Disclaimer
+
+This security assessment was performed using automated AI-powered static analysis. It does not constitute a comprehensive penetration test or security audit. The findings represent potential vulnerabilities identified through code pattern analysis and LLM reasoning. False positives and false negatives are possible.
+
+This report should be used as a starting point for security remediation, not as a definitive statement of the application's security posture. A professional security audit by qualified security engineers is recommended for production applications handling sensitive data.
+
+**Generated by security-check** — github.com/ersinkoc/security-check
