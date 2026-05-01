@@ -4,6 +4,13 @@ All notable changes to Geryon will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Security Fixes
+
+- **M-9:** Log injection prevention — sanitize usernames, CN, and query snippets before logging
+- **L-6:** Added Content-Security-Policy headers to all 4 HTTP servers (REST, gRPC, MCP, Dashboard)
+
 ## [1.0.2] - 2026-04-25
 
 ### Security Fixes

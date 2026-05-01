@@ -39,6 +39,13 @@ const (
 	usernameContextKey contextKey = "username"
 )
 
+// logSanitizer strips control characters to prevent log injection.
+var logSanitizer = regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`)
+
+func sanitizeLogValue(s string) string {
+	return logSanitizer.ReplaceAllString(s, "")
+}
+
 // Server serves the web dashboard.
 type Server struct {
 	mu              sync.RWMutex
@@ -210,6 +217,7 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'")
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 		next.ServeHTTP(w, r)
 	})
@@ -919,7 +927,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("User created via dashboard", "username", req.Username)
+	s.log.Info("User created via dashboard", "username", sanitizeLogValue(req.Username))
 	w.WriteHeader(http.StatusCreated)
 	s.writeJSON(w, map[string]any{"status": "created", "username": req.Username})
 }
@@ -1013,7 +1021,7 @@ func (s *Server) handleUserDetail(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		s.log.Info("User deleted via dashboard", "username", username)
+		s.log.Info("User deleted via dashboard", "username", sanitizeLogValue(username))
 		s.writeJSON(w, map[string]any{"status": "deleted", "username": username})
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

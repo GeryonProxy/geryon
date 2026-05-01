@@ -1,6 +1,6 @@
 # Verified Findings Report
 
-**Date:** 2026-04-25
+**Date:** 2026-05-01
 **Method:** Cross-referenced 4 independent security agent scans, eliminated duplicates, validated exploitability
 **Status:** FIX APPLIED for all actionable findings in scope
 
@@ -27,6 +27,8 @@
 | M-7 | No HTTP IdleTimeout | MEDIUM | **FIXED** - All 4 servers set IdleTimeout to 60s |
 | M-8 | Rate limiting IP-only | MEDIUM | **FIXED (2026-04-25)** - Composite IP:username key in REST/Dashboard/MCP |
 | M-4 | Mass assignment on pool creation | MEDIUM | **FIXED** - Restricted struct excludes AuthMode (set server-side) |
+| M-9 | Log injection via username/query | MEDIUM | **FIXED (2026-05-01)** - sanitizeLogValue strips control characters in listener.go and dashboard |
+| L-6 | No Content-Security-Policy headers | LOW | **FIXED (2026-05-01)** - CSP added to all 4 HTTP servers |
 
 ## Remaining Findings (Not In Scope / Architecture Changes)
 
@@ -49,6 +51,8 @@
 10. Pool name sanitization
 11. CORS defaults to same-origin
 12. Security headers set (X-Content-Type-Options, X-Frame-Options, X-XSS-Protection)
+13. Content-Security-Policy on all HTTP servers
+14. Log injection prevention via sanitizeLogValue
 
 ## Test Results
 

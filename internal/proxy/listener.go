@@ -45,6 +45,14 @@ var bufferPool = sync.Pool{
 	},
 }
 
+// sanitizeLogValue strips control characters from user-supplied strings
+// before logging, preventing log injection attacks.
+var logSanitizer = regexp.MustCompile(`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`)
+
+func sanitizeLogValue(s string) string {
+	return logSanitizer.ReplaceAllString(s, "")
+}
+
 // getBuffer retrieves a buffer from the pool.
 func getBuffer() []byte {
 	return bufferPool.Get().([]byte)
@@ -730,7 +738,7 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 	// Check per-user connection limit (NEW fix)
 	if user.MaxConnections > 0 {
 		if !ps.pool.TryIncrementUserCount(ps.username, user.MaxConnections) {
-			ps.log.Warn("Per-user connection limit exceeded", "user", ps.username, "limit", user.MaxConnections)
+			ps.log.Warn("Per-user connection limit exceeded", "user", sanitizeLogValue(ps.username), "limit", user.MaxConnections)
 			errMsg := postgresql.CreateErrorResponse("28P01", "too many connections for user")
 			if _, werr := ps.clientConn.Write(errMsg); werr != nil {
 				return fmt.Errorf("user %s connection limit exceeded, failed to send error: %w", ps.username, werr)
@@ -741,7 +749,7 @@ func (ps *ProxySession) handlePostgreSQLStartup(ctx context.Context) error {
 
 	// Check pool access authorization
 	if !user.CanAccessPool(ps.pool.Name()) {
-		ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+		ps.log.Warn("Pool access denied", "user", sanitizeLogValue(ps.username), "pool", ps.pool.Name())
 		errMsg := postgresql.CreateErrorResponse("28000", "access to pool denied")
 		if _, werr := ps.clientConn.Write(errMsg); werr != nil {
 			return fmt.Errorf("access denied for user %s to pool %s, failed to send error: %w", ps.username, ps.pool.Name(), werr)
@@ -1385,11 +1393,11 @@ func (ps *ProxySession) handleMySQLPassthrough(ctx context.Context) error {
 	if ps.authMode == "interception" && ps.userDB != nil {
 		user := ps.userDB.GetUser(ps.username)
 		if user == nil {
-			ps.log.Warn("Pool access denied: user not found in proxy database", "user", ps.username)
+			ps.log.Warn("Pool access denied: user not found in proxy database", "user", sanitizeLogValue(ps.username))
 			return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
 		}
 		if !user.CanAccessPool(ps.pool.Name()) {
-			ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+			ps.log.Warn("Pool access denied", "user", sanitizeLogValue(ps.username), "pool", ps.pool.Name())
 			return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
 		}
 	}
@@ -1422,7 +1430,7 @@ func (ps *ProxySession) handleMySQLPassthrough(ctx context.Context) error {
 func (ps *ProxySession) handleMySQLInterception(ctx context.Context, user *auth.User, clientIP string) error {
 	// Verify user exists in Geryon database
 	if user == nil {
-		ps.log.Warn("Unknown user in interception mode", "user", ps.username)
+		ps.log.Warn("Unknown user in interception mode", "user", sanitizeLogValue(ps.username))
 		ps.recordAuthFailure()
 		return fmt.Errorf("unknown user: %s", ps.username)
 	}
@@ -1430,7 +1438,7 @@ func (ps *ProxySession) handleMySQLInterception(ctx context.Context, user *auth.
 	// Check per-user connection limit
 	if user.MaxConnections > 0 {
 		if !ps.pool.TryIncrementUserCount(ps.username, user.MaxConnections) {
-			ps.log.Warn("Per-user connection limit exceeded", "user", ps.username, "limit", user.MaxConnections)
+			ps.log.Warn("Per-user connection limit exceeded", "user", sanitizeLogValue(ps.username), "limit", user.MaxConnections)
 			ps.recordAuthFailure()
 			return fmt.Errorf("too many connections for user %s", ps.username)
 		}
@@ -1438,7 +1446,7 @@ func (ps *ProxySession) handleMySQLInterception(ctx context.Context, user *auth.
 
 	// Check pool access authorization
 	if !user.CanAccessPool(ps.pool.Name()) {
-		ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+		ps.log.Warn("Pool access denied", "user", sanitizeLogValue(ps.username), "pool", ps.pool.Name())
 		ps.recordAuthFailure()
 		return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
 	}
@@ -1500,7 +1508,7 @@ func (ps *ProxySession) handleMySQLInterception(ctx context.Context, user *auth.
 	// Verify password if we have MySQL password hash stored
 	if user.MysqlPasswordHash != "" {
 		if err := auth.VerifyMySQLPassword(user.MysqlPasswordHash, scramble, authResponse); err != nil {
-			ps.log.Warn("MySQL password verification failed", "user", ps.username, "error", err)
+			ps.log.Warn("MySQL password verification failed", "user", sanitizeLogValue(ps.username), "error", err)
 			ps.recordAuthFailure()
 			// Send error packet to client
 			errPkt := createMySQLErrorPacket(1045, "28000", "Access denied")
@@ -1509,13 +1517,13 @@ func (ps *ProxySession) handleMySQLInterception(ctx context.Context, user *auth.
 		}
 	} else if user.PasswordHash != "" {
 		// Fall back to SCRAM-SHA-256 (treat as PostgreSQL format)
-		ps.log.Warn("No MySQL password hash, using SCRAM fallback", "user", ps.username)
+		ps.log.Warn("No MySQL password hash, using SCRAM fallback", "user", sanitizeLogValue(ps.username))
 		ps.recordAuthFailure()
 		errPkt := createMySQLErrorPacket(1045, "28000", "MySQL password not configured")
 		ps.clientConn.Write(errPkt)
 		return fmt.Errorf("MySQL password hash required for interception mode")
 	} else {
-		ps.log.Warn("No password hash available for user", "user", ps.username)
+		ps.log.Warn("No password hash available for user", "user", sanitizeLogValue(ps.username))
 		ps.recordAuthFailure()
 		errPkt := createMySQLErrorPacket(1045, "28000", "Access denied")
 		ps.clientConn.Write(errPkt)
@@ -2046,7 +2054,7 @@ func (ps *ProxySession) handleMSSQLPassthrough(ctx context.Context) error {
 func (ps *ProxySession) handleMSSQLInterception(ctx context.Context, user *auth.User, clientIP string, preLoginData, login7Data []byte) error {
 	// Verify user exists in Geryon database
 	if user == nil {
-		ps.log.Warn("Unknown user in interception mode", "user", ps.username)
+		ps.log.Warn("Unknown user in interception mode", "user", sanitizeLogValue(ps.username))
 		ps.recordAuthFailure()
 		return fmt.Errorf("unknown user: %s", ps.username)
 	}
@@ -2054,7 +2062,7 @@ func (ps *ProxySession) handleMSSQLInterception(ctx context.Context, user *auth.
 	// Check per-user connection limit
 	if user.MaxConnections > 0 {
 		if !ps.pool.TryIncrementUserCount(ps.username, user.MaxConnections) {
-			ps.log.Warn("Per-user connection limit exceeded", "user", ps.username, "limit", user.MaxConnections)
+			ps.log.Warn("Per-user connection limit exceeded", "user", sanitizeLogValue(ps.username), "limit", user.MaxConnections)
 			ps.recordAuthFailure()
 			return fmt.Errorf("too many connections for user %s", ps.username)
 		}
@@ -2062,7 +2070,7 @@ func (ps *ProxySession) handleMSSQLInterception(ctx context.Context, user *auth.
 
 	// Check pool access authorization
 	if !user.CanAccessPool(ps.pool.Name()) {
-		ps.log.Warn("Pool access denied", "user", ps.username, "pool", ps.pool.Name())
+		ps.log.Warn("Pool access denied", "user", sanitizeLogValue(ps.username), "pool", ps.pool.Name())
 		ps.recordAuthFailure()
 		return fmt.Errorf("access denied for user %s to pool %s", ps.username, ps.pool.Name())
 	}
@@ -2747,14 +2755,14 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 				// Invalidate cache for affected tables
 				tables := extractTablesFromQuery(query)
 				if len(tables) > 0 {
-					ps.log.Debug("Cache invalidation", "tables", tables, "query", query[:min(len(query), 50)])
+					ps.log.Debug("Cache invalidation", "tables", tables, "query", sanitizeLogValue(query[:min(len(query), 50)]))
 					ps.cacheStore.InvalidateTables(tables)
 				}
 			} else if ps.cacheRules.ShouldCache(query) && isSelectQuery(query) {
 				cacheKey = cache.GenerateKey(query).String()
 				// Check cache
 				if cachedData, hit := ps.cacheStore.Get(cacheKey); hit {
-					ps.log.Debug("Cache hit", "query", query[:min(len(query), 50)])
+					ps.log.Debug("Cache hit", "query", sanitizeLogValue(query[:min(len(query), 50)]))
 					// Send cached response to client
 					if err := ps.sendCachedResponse(clientConn, cachedData); err != nil {
 						ps.log.Error("Failed to send cached response", "error", err)
@@ -3228,20 +3236,20 @@ func (ps *ProxySession) authenticateWithCertificate() error {
 	if ps.authMode == "interception" && ps.userDB != nil {
 		user := ps.userDB.GetUser(username)
 		if user == nil {
-			ps.log.Warn("Certificate authenticated user not found in database", "username", username)
+			ps.log.Warn("Certificate authenticated user not found in database", "username", sanitizeLogValue(username))
 			return fmt.Errorf("access denied for certificate user %s: not in proxy user database", username)
 		}
 
 		// Enforce pool access control for certificate-authenticated users
 		if !user.CanAccessPool(ps.pool.Name()) {
-			ps.log.Warn("Pool access denied for certificate user", "user", username, "pool", ps.pool.Name())
+			ps.log.Warn("Pool access denied for certificate user", "user", sanitizeLogValue(username), "pool", ps.pool.Name())
 			return fmt.Errorf("access denied for certificate user %s to pool %s", username, ps.pool.Name())
 		}
 	}
 
 	// Set authenticated username
 	ps.username = username
-	ps.log.Info("Client authenticated via certificate", "username", username, "cn", cert.Subject.CommonName)
+	ps.log.Info("Client authenticated via certificate", "username", sanitizeLogValue(username), "cn", sanitizeLogValue(cert.Subject.CommonName))
 
 	return nil
 }
