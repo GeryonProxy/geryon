@@ -848,7 +848,7 @@
         try {
             const resp = await fetch('/api/v1/pools/' + encodeURIComponent(poolSelect.value) + '/backends', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify(body)
             });
             if (!resp.ok) {
@@ -868,7 +868,8 @@
         if (!confirm('Remove backend ' + address + ' from pool ' + poolName + '?')) return;
         try {
             const resp = await fetch('/api/v1/pools/' + encodeURIComponent(poolName) + '/backends?address=' + encodeURIComponent(address), {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
             });
             if (!resp.ok) throw new Error('Remove backend failed');
             showNotification('Backend removed', 'success');
@@ -1735,7 +1736,7 @@
         try {
             const response = await fetch('/api/v1/config/file', {
                 method: 'PUT',
-                headers: { 'Content-Type': 'text/yaml' },
+                headers: { 'Content-Type': 'text/yaml', 'X-Requested-With': 'XMLHttpRequest' },
                 body: editor.value
             });
 
@@ -1759,7 +1760,7 @@
         try {
             const response = await fetch('/api/v1/config/validate', {
                 method: 'POST',
-                headers: { 'Content-Type': 'text/yaml' },
+                headers: { 'Content-Type': 'text/yaml', 'X-Requested-With': 'XMLHttpRequest' },
                 body: editor.value
             });
 
@@ -1820,7 +1821,7 @@
         }
 
         try {
-            const response = await fetch('/api/v1/config/reload', { method: 'POST' });
+            const response = await fetch('/api/v1/config/reload', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
             if (!response.ok) throw new Error('Reload failed');
             const data = await response.json();
             showNotification(data.message || 'Configuration reloaded successfully', 'success');
@@ -1839,7 +1840,8 @@
     async function drainBackend(address) {
         try {
             const response = await fetch('/api/v1/backends/' + encodeURIComponent(address) + '/drain', {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
             });
             if (!response.ok) throw new Error('Drain failed');
             showNotification('Backend ' + address + ' draining', 'success');
@@ -2045,7 +2047,8 @@
         if (!confirm('Delete user "' + username + '"?')) return;
         try {
             const response = await fetch('/api/v1/users/' + encodeURIComponent(username), {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
             });
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
@@ -2159,7 +2162,7 @@
         try {
             const response = await fetch('/api/v1/users', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
                 body: JSON.stringify(body)
             });
             if (!response.ok) {

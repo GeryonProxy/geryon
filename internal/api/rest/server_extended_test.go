@@ -694,6 +694,7 @@ func TestServer_StatsStream(t *testing.T) {
 	// Test with POST (should fail)
 	req, _ := http.NewRequest("POST", "http://"+s.listener.Addr().String()+"/api/v1/stats/stream", nil)
 	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)

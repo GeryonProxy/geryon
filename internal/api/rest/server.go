@@ -284,7 +284,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-CSRF-Token")
 		}
 
 		if r.Method == http.MethodOptions {
@@ -298,7 +298,13 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		// and text/plain cross-origin without preflight — these are the attack vector.
 		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
 			r.Method == http.MethodDelete || r.Method == http.MethodPatch {
-			// Origin check: when AllowedOrigins is empty, accept same-origin requests
+			// Layer 1: Require X-Requested-With header
+				if r.Header.Get("X-Requested-With") == "" {
+					http.Error(w, "Forbidden: missing X-Requested-With header", http.StatusForbidden)
+					return
+				}
+
+				// Layer 3: Origin check: when AllowedOrigins is empty, accept same-origin requests
 			// (Origin matching the request's own scheme+Host).
 			if origin != "" && !s.isAllowedOrigin(origin) {
 				// Same-origin check: Origin should match our Host

@@ -150,6 +150,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	// Make HTTP request
 	req, _ := http.NewRequest("GET", "http://"+s.listener.Addr().String()+"/api/v1/health", nil)
 	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /health failed: %v", err)
