@@ -35,7 +35,7 @@
 | # | Finding | Severity | Reason |
 |---|---------|----------|--------|
 | C-2 | Cluster inter-node: no auth/encryption | CRITICAL | **FIXED (2026-04-25)** - TLS support added to Raft/Cluster RPC (tls.Listener + tls.Dial) |
-| H-3 | CSRF: no protection on mutating endpoints | HIGH | **PARTIAL** - Content-type blocking only, not full CSRF tokens |
+| H-3 | CSRF: no protection on mutating endpoints | HIGH | **FIXED (2026-05-01)** - X-Requested-With header required for POST/PUT/DELETE/PATCH, origin + Content-Type checks |
 
 ## Positive Security Controls (Verified)
 
@@ -53,6 +53,7 @@
 12. Security headers set (X-Content-Type-Options, X-Frame-Options, X-XSS-Protection)
 13. Content-Security-Policy on all HTTP servers
 14. Log injection prevention via sanitizeLogValue
+15. CSRF protection via X-Requested-With header + Content-Type blocking + origin check
 
 ## Test Results
 

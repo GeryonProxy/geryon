@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **M-9:** Log injection prevention — sanitize usernames, CN, and query snippets before logging
 - **L-6:** Added Content-Security-Policy headers to all 4 HTTP servers (REST, gRPC, MCP, Dashboard)
+- **H-3:** Added X-Requested-With header requirement for all mutating REST API endpoints (CSRF protection)
 
 ## [1.0.2] - 2026-04-25
 
