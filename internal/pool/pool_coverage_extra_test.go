@@ -133,7 +133,9 @@ func TestSession_HandleMessage_NilMsg(t *testing.T) {
 	p := pm.GetPool("test-nil-msg")
 
 	strategy := NewTransactionStrategy(p)
-	sess := NewSession(p, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, p, strategy)
 	err := sess.HandleMessage(nil)
 	if err != nil {
 		t.Errorf("HandleMessage(nil) should return nil, got: %v", err)
@@ -491,7 +493,9 @@ func TestSession_HandleMessage_TransactionBegin(t *testing.T) {
 	}
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("BEGIN")})
 	if err != nil {
@@ -529,7 +533,9 @@ func TestSession_HandleMessage_TransactionBegin_StrategyError(t *testing.T) {
 		pool:          pool,
 		onTxnBeginErr: errors.New("strategy begin error"),
 	}
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("BEGIN")})
 	if err == nil {
@@ -558,7 +564,9 @@ func TestSession_HandleMessage_TransactionEnd(t *testing.T) {
 	}
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 	sess.SetInTransaction(true)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("COMMIT")})
@@ -594,7 +602,9 @@ func TestSession_HandleMessage_TransactionEnd_StrategyError(t *testing.T) {
 		pool:        pool,
 		onTxnEndErr: errors.New("strategy end error"),
 	}
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 	sess.SetInTransaction(true)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("COMMIT")})
@@ -628,7 +638,9 @@ func TestSession_HandleMessage_OnQueryNilConn(t *testing.T) {
 		onQueryResult: nil,
 		onQueryErr:    nil,
 	}
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("SELECT 1")})
 	if err == nil {
@@ -681,7 +693,9 @@ func TestSession_HandleMessage_WriteMessageError(t *testing.T) {
 		pool:          pool,
 		onQueryResult: serverConn,
 	}
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("SELECT 1")})
 	if err == nil {
@@ -722,7 +736,9 @@ func TestSession_HandleMessage_OnQueryCompleteError(t *testing.T) {
 		onQueryResult:   serverConn,
 		onQueryComplete: errors.New("query complete error"),
 	}
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("SELECT 1")})
 	if err == nil {
@@ -762,7 +778,9 @@ func TestSession_HandleMessage_ExtractQueryError(t *testing.T) {
 		pool:          pool,
 		onQueryResult: serverConn,
 	}
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("SELECT 1")})
 	if err != nil {
@@ -806,7 +824,9 @@ func TestSession_HandleMessage_QuerySuccess(t *testing.T) {
 		pool:          pool,
 		onQueryResult: serverConn,
 	}
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = sess.HandleMessage(&common.Message{Raw: []byte("SELECT 1")})
 	if err != nil {
@@ -840,7 +860,9 @@ func TestStatementStrategy_OnTransactionBegin_Error(t *testing.T) {
 	}
 
 	strategy := NewStatementStrategy(pool)
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
 	err = strategy.OnTransactionBegin(sess)
 	if err == nil {
@@ -868,9 +890,11 @@ func TestStatementStrategy_OnQuery_NoIdleConns(t *testing.T) {
 	}
 
 	strategy := NewStatementStrategy(pool)
-	sess := NewSession(pool, strategy)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sess := NewSession(ctx, cancel, pool, strategy)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	_, err = strategy.OnQuery(ctx, sess, &common.Message{Raw: []byte("SELECT 1")})

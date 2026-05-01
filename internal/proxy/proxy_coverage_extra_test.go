@@ -238,7 +238,7 @@ func TestProxySession_OnQuery_NoRouter(t *testing.T) {
 	client, _ := net.Pipe()
 	defer client.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	msg := &common.Message{Type: 'Q', Payload: []byte("INSERT INTO t VALUES (1)\x00")}
 	_, err := ps.OnQuery(context.Background(), msg)
@@ -267,7 +267,7 @@ func TestProxySession_reprepareStatement_EmptyName(t *testing.T) {
 	defer client.Close()
 	defer server.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	ps.reprepareStatement(codec, server, "") // Should return immediately
 }
 
@@ -286,7 +286,7 @@ func TestProxySession_reprepareStatement_NoServerConn(t *testing.T) {
 	defer client.Close()
 	defer server.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	ps.reprepareStatement(codec, server, "stmt1")
 }
 
@@ -316,7 +316,7 @@ func TestProxySession_reprepareStatement_WithStmt(t *testing.T) {
 	}()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	serverConn := &pool.ServerConn{}
 	serverConn.SetConnForTest(backend)
@@ -350,7 +350,7 @@ func TestProxySession_forwardAuthFromBackend_ReadError(t *testing.T) {
 	defer backendWrite.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	serverConn := &pool.ServerConn{}
 	serverConn.SetConnForTest(backendWrite)
 	ps.serverConn = serverConn
@@ -383,7 +383,7 @@ func TestProxySession_forwardAuthToBackend_ReadError(t *testing.T) {
 	defer backendWrite.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	serverConn := &pool.ServerConn{}
 	serverConn.SetConnForTest(backendWrite)
 	ps.serverConn = serverConn
@@ -412,7 +412,7 @@ func TestProxySession_connectToBackend_NoBackend(t *testing.T) {
 	client, _ := net.Pipe()
 	defer client.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	ps.username = "testuser"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -441,7 +441,7 @@ func TestProxySession_handlePostgreSQLStartup_BadProtoVersion(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	go func() {
 		msg := make([]byte, 12)
@@ -477,7 +477,7 @@ func TestProxySession_handlePostgreSQLStartup_ControlChars(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	userDB.AddUser(&auth.User{Username: "testuser"})
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	go func() {
 		params := []byte{'u', 's', 'e', 'r', 0, 't', 'e', 's', 't', 0x01, 'u', 's', 'e', 'r', 0, 0}
@@ -513,7 +513,7 @@ func TestProxySession_handlePostgreSQLStartup_TooLarge(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	go func() {
 		msg := make([]byte, 4)
@@ -545,7 +545,7 @@ func TestProxySession_handlePostgreSQLStartup_ValueTooLong(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	go func() {
 		longVal := make([]byte, 300)
@@ -599,8 +599,8 @@ func TestProxySession_ID_Increments(t *testing.T) {
 	defer c2.Close()
 
 	codec := postgresql.NewCodec()
-	ps1, _ := NewProxySession(c1, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
-	ps2, _ := NewProxySession(c2, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps1, _ := NewProxySession(context.Background(), c1, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps2, _ := NewProxySession(context.Background(), c2, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	if ps1.ID() >= ps2.ID() {
 		t.Error("Session IDs should increment")
@@ -624,7 +624,7 @@ func TestProxySession_StmtRepreparer_Initialized(t *testing.T) {
 	client, _ := net.Pipe()
 	defer client.Close()
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 
 	if ps.stmtRepreparer == nil {
 		t.Error("stmtRepreparer should be initialized")

@@ -14,6 +14,8 @@ import (
 type Session struct {
 	id          uint64
 	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
 	pool        *Pool
 	serverConn  *ServerConn
 	strategy    Strategy
@@ -54,10 +56,12 @@ var (
 )
 
 // NewSession creates a new client session.
-func NewSession(pool *Pool, strategy Strategy) *Session {
+func NewSession(ctx context.Context, cancel context.CancelFunc, pool *Pool, strategy Strategy) *Session {
 	now := time.Now()
 	s := &Session{
 		id:          sessionIDCounter.Add(1),
+		ctx:         ctx,
+		cancel:      cancel,
 		pool:        pool,
 		strategy:    strategy,
 		startedAt:   now,
@@ -81,6 +85,13 @@ func (s *Session) Pool() *Pool {
 // Strategy returns the session's strategy.
 func (s *Session) Strategy() Strategy {
 	return s.strategy
+}
+
+// Close cancels the session context and releases resources.
+func (s *Session) Close() {
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 // ServerConn returns the assigned server connection.
@@ -287,7 +298,7 @@ func (s *Session) HandleMessage(msg *common.Message) error {
 	}
 
 	// Handle different message types based on strategy
-	ctx := context.Background()
+	ctx := s.ctx
 
 	// Transaction boundary detection
 	if codec.IsTransactionBegin(msg) {

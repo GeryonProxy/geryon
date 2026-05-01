@@ -1673,7 +1673,7 @@ func TestNewProxySession_WithPool(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	ps, err := NewProxySession(client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2520,7 +2520,7 @@ func TestNewProxySession_Errors(t *testing.T) {
 	codec := &postgresql.PGCodec{}
 
 	// Test with valid pool
-	ps, err := NewProxySession(client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
 	if err != nil {
 		t.Errorf("NewProxySession error = %v", err)
 	}
@@ -2682,7 +2682,7 @@ func TestProxySession_OnQuery(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	ps, err := NewProxySession(client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2741,7 +2741,7 @@ func TestProxySession_OnQueryComplete(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	ps, err := NewProxySession(client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3282,7 +3282,7 @@ func TestProxySession_OnQuery_Select(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := postgresql.NewCodec()
 
-	ps, err := NewProxySession(client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3336,7 +3336,7 @@ func TestProxySession_OnQuery_Insert(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := postgresql.NewCodec()
 
-	ps, err := NewProxySession(client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}

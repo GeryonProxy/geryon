@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"testing"
@@ -30,7 +31,7 @@ func newProxySessionWithPipes(t *testing.T) (*ProxySession, net.Conn, net.Conn, 
 	clientEnd, clientProxy := net.Pipe()
 	backendProxy, backendEnd := net.Pipe()
 
-	ps, err := NewProxySession(clientProxy, p, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}

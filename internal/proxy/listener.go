@@ -320,7 +320,7 @@ func (l *Listener) handleConnection(conn net.Conn) {
 	}
 
 	// Create proxy session with cache, query logger, and transaction manager
-	session, err := NewProxySession(conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.authLimiter, l.router, l.tlsConfig, l.log)
+	session, err := NewProxySession(l.ctx, conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.authLimiter, l.router, l.tlsConfig, l.log)
 	if err != nil {
 		l.log.Error("Failed to create session", "error", err)
 		return
@@ -508,7 +508,7 @@ var (
 )
 
 // NewProxySession creates a new proxy session.
-func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, authLimiter *auth.AuthLimiter, router *pool.Router, tlsConfig *tls.Config, log *logger.Logger) (*ProxySession, error) {
+func NewProxySession(ctx context.Context, clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, authLimiter *auth.AuthLimiter, router *pool.Router, tlsConfig *tls.Config, log *logger.Logger) (*ProxySession, error) {
 	// Create pool strategy
 	strategy, err := pool.DefaultStrategyFactory.CreateStrategy(p)
 	if err != nil {
@@ -516,7 +516,8 @@ func NewProxySession(clientConn net.Conn, p *pool.Pool, codec common.Codec, user
 	}
 
 	// Create pool session
-	poolSession := pool.NewSession(p, strategy)
+	poolCtx, poolCancel := context.WithCancel(ctx)
+	poolSession := pool.NewSession(poolCtx, poolCancel, p, strategy)
 
 	ps := &ProxySession{
 		id:             sessionIDCounter.Add(1),

@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -27,7 +28,9 @@ func TestSession_NewSession(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s == nil {
 		t.Fatal("NewSession returned nil")
 	}
@@ -55,7 +58,9 @@ func TestSession_User(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.User() != "" {
 		t.Errorf("Session.User() = %q, want empty", s.User())
 	}
@@ -85,7 +90,9 @@ func TestSession_Database(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.Database() != "" {
 		t.Errorf("Session.Database() = %q, want empty", s.Database())
 	}
@@ -115,7 +122,9 @@ func TestSession_AuthDone(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.AuthDone() {
 		t.Error("Session.AuthDone() should be false initially")
 	}
@@ -145,7 +154,9 @@ func TestSession_InTransaction(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.InTransaction() {
 		t.Error("Session.InTransaction() should be false initially")
 	}
@@ -175,7 +186,9 @@ func TestSession_AutoCommitRelease(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if !s.AutoCommitRelease() {
 		t.Error("Session.AutoCommitRelease() should be true initially")
 	}
@@ -205,7 +218,9 @@ func TestSession_TransactionStart(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if !s.TransactionStart().IsZero() {
 		t.Error("Session.TransactionStart() should be zero initially")
 	}
@@ -230,7 +245,9 @@ func TestSession_StartedAt(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.StartedAt().IsZero() {
 		t.Error("Session.StartedAt() should not be zero")
 	}
@@ -255,7 +272,9 @@ func TestSession_LastActive(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.LastActive().IsZero() {
 		t.Error("Session.LastActive() should not be zero initially")
 	}
@@ -287,7 +306,9 @@ func TestSession_QueryCount(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.QueryCount() != 0 {
 		t.Errorf("Session.QueryCount() = %d, want 0", s.QueryCount())
 	}
@@ -317,7 +338,9 @@ func TestSession_BytesIn(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.BytesIn() != 0 {
 		t.Errorf("Session.BytesIn() = %d, want 0", s.BytesIn())
 	}
@@ -347,7 +370,9 @@ func TestSession_BytesOut(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.BytesOut() != 0 {
 		t.Errorf("Session.BytesOut() = %d, want 0", s.BytesOut())
 	}
@@ -377,7 +402,9 @@ func TestSession_LastQuery(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.LastQuery() != "" {
 		t.Errorf("Session.LastQuery() = %q, want empty", s.LastQuery())
 	}
@@ -407,7 +434,9 @@ func TestSession_PreparedStatements(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.PreparedStatements() == nil {
 		t.Error("Session.PreparedStatements() should not be nil")
 	}
@@ -432,7 +461,9 @@ func TestSession_Stats(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	stats := s.Stats()
 	if stats.ID != s.ID() {
 		t.Errorf("Stats.ID = %d, want %d", stats.ID, s.ID())
@@ -458,7 +489,9 @@ func TestSession_Pool(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.Pool() != p {
 		t.Error("Session.Pool() should return the pool")
 	}
@@ -483,7 +516,9 @@ func TestSession_Strategy(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 	if s.Strategy() != nil {
 		t.Error("Session.Strategy() should be nil when not set")
 	}
@@ -508,7 +543,9 @@ func TestSession_TargetRole(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	s := NewSession(p, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := NewSession(ctx, cancel, p, nil)
 
 	// Default should be empty string
 	if role := s.TargetRole(); role != "" {

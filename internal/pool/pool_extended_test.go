@@ -4392,7 +4392,7 @@ func TestTransactionStrategy_OnClientConnect(t *testing.T) {
 	}
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	// OnClientConnect should not assign server in transaction mode
 	err = strategy.OnClientConnect(context.Background(), sess)
@@ -4425,7 +4425,7 @@ func TestTransactionStrategy_OnTransactionEnd(t *testing.T) {
 	}
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	// Simulate having a server conn
 	conn := &ServerConn{
@@ -4494,7 +4494,7 @@ func TestStatementStrategy_OnClientConnect(t *testing.T) {
 	}
 
 	strategy := NewStatementStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	// OnClientConnect should not assign server in statement mode
 	err = strategy.OnClientConnect(context.Background(), sess)
@@ -4651,7 +4651,7 @@ func TestSession_ServerConn(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially nil
 	if sess.ServerConn() != nil {
@@ -4689,7 +4689,7 @@ func TestSession_GetLastQuery(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially empty
 	if sess.GetLastQuery() != "" {
@@ -4720,7 +4720,7 @@ func TestSession_HandleMessage_NilMessage(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Nil message should return nil error
 	err = sess.HandleMessage(nil)
@@ -4748,7 +4748,7 @@ func TestSession_HandleMessage_NilCodec(t *testing.T) {
 
 	// Nil codec
 	pool.codec = nil
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	msg := &common.Message{}
 	err = sess.HandleMessage(msg)
@@ -4776,7 +4776,7 @@ func TestSession_HandleMessage_QueryWithNilServerConn(t *testing.T) {
 	}
 
 	strategy := NewSessionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	// No server conn assigned
 	msg := &common.Message{Raw: []byte("SELECT 1")}
@@ -4817,7 +4817,7 @@ func TestSession_UserDatabase(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially empty
 	if sess.User() != "" {
@@ -4856,7 +4856,7 @@ func TestSession_AuthDone_Extended(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially false
 	if sess.AuthDone() {
@@ -4887,7 +4887,7 @@ func TestSession_TransactionStart_Extended(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially zero time
 	if !sess.TransactionStart().IsZero() {
@@ -4918,7 +4918,7 @@ func TestSession_UpdateLastActive(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	oldActive := sess.LastActive()
 	time.Sleep(10 * time.Millisecond)
@@ -4946,7 +4946,7 @@ func TestSession_BytesInOut(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially 0
 	if sess.BytesIn() != 0 {
@@ -4985,7 +4985,7 @@ func TestSession_QueryCount_Extended(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially 0
 	if sess.QueryCount() != 0 {
@@ -5018,7 +5018,7 @@ func TestSession_TargetRole_Extended(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 
 	// Initially empty
 	if sess.TargetRole() != "" {
@@ -5049,7 +5049,7 @@ func TestSession_Stats_Extended(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 	sess.SetUser("testuser")
 	sess.SetDatabase("testdb")
 	sess.SetAuthDone()
@@ -5109,7 +5109,7 @@ func TestSession_Stats_NoServerConn(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 	stats := sess.Stats()
 
 	if stats.ServerConnID != 0 {
@@ -5638,7 +5638,7 @@ func TestSession_HandleMessage_Prepare(t *testing.T) {
 	}
 
 	strategy := NewSessionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	// Assign a server conn with nil net.Conn (will fail on WriteMessage but that's ok for prepare path)
 	// Actually, prepare message doesn't write in HandleMessage, so it should work
@@ -5681,7 +5681,7 @@ func TestSession_HandleMessage_Close(t *testing.T) {
 	}
 
 	strategy := NewSessionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	msg := &common.Message{Raw: []byte("close")}
 	err = sess.HandleMessage(msg)
@@ -6074,7 +6074,7 @@ func TestSession_IncrementQueryCount_UpdatesLastActive(t *testing.T) {
 		t.Fatalf("NewPool failed: %v", err)
 	}
 
-	sess := NewSession(pool, nil)
+	sess := NewSession(context.Background(), func() {}, pool, nil)
 	oldActive := sess.LastActive()
 	time.Sleep(10 * time.Millisecond)
 
@@ -6167,7 +6167,7 @@ func TestSessionStrategy_OnClientConnect(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewSessionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	err := strategy.OnClientConnect(ctx, sess)
@@ -6192,7 +6192,7 @@ func TestSessionStrategy_OnClientDisconnect(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewSessionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	if err := strategy.OnClientConnect(ctx, sess); err != nil {
@@ -6231,7 +6231,7 @@ func TestTransactionStrategy_OnClientDisconnect(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	// OnClientConnect is a no-op for transaction strategy
 	ctx := context.Background()
@@ -6266,7 +6266,7 @@ func TestTransactionStrategy_OnQuery(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	msg := &common.Message{Raw: []byte("SELECT 1")}
@@ -6300,7 +6300,7 @@ func TestTransactionStrategy_OnQueryComplete(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	msg := &common.Message{Raw: []byte("SELECT 1")}
@@ -6328,7 +6328,7 @@ func TestTransactionStrategy_OnQueryComplete_InTransaction(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	msg := &common.Message{Raw: []byte("SELECT 1")}
@@ -6361,7 +6361,7 @@ func TestTransactionStrategy_OnTransactionBegin(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	if sess.InTransaction() {
 		t.Fatal("Session should not be in transaction initially")
@@ -6383,7 +6383,7 @@ func TestTransactionStrategy_OnTransactionEnd_MockBackend(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	msg := &common.Message{Raw: []byte("SELECT 1")}
@@ -6426,7 +6426,7 @@ func TestStatementStrategy_OnClientDisconnect(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewStatementStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	// Connect is a no-op for statement
@@ -6457,7 +6457,7 @@ func TestStatementStrategy_OnQuery(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewStatementStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	msg := &common.Message{Raw: []byte("SELECT 1")}
@@ -6494,7 +6494,7 @@ func TestStatementStrategy_OnQueryComplete(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewStatementStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	ctx := context.Background()
 	msg := &common.Message{Raw: []byte("SELECT 1")}
@@ -6536,7 +6536,7 @@ func TestStatementStrategy_OnTransactionBegin_MockBackend(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewStatementStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 
 	err := strategy.OnTransactionBegin(sess)
 	if err == nil {
@@ -6580,7 +6580,7 @@ func TestTransactionStrategy_OnQuery_WithTargetRole(t *testing.T) {
 	defer pool.Close()
 
 	strategy := NewTransactionStrategy(pool)
-	sess := NewSession(pool, strategy)
+	sess := NewSession(context.Background(), func() {}, pool, strategy)
 	sess.SetTargetRole("replica")
 
 	ctx := context.Background()

@@ -48,7 +48,7 @@ func newTestProxySession(t *testing.T, body string) (*ProxySession, net.Conn, ne
 	clientEnd, clientProxy := net.Pipe()
 	backendProxy, backendEnd := net.Pipe()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestHandlePostgreSQLStartup_SSLNotSupported(t *testing.T) {
 
 	clientEnd, clientProxy := net.Pipe()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestHandlePostgreSQLStartup_UnknownUser(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestHandlePostgreSQLStartup_ControlCharInUsername(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "bad\x01user"})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestConnectToBackend_PassthroughStartup(t *testing.T) {
 	clientEnd, clientProxy := net.Pipe()
 	backendProxy, backendEnd := net.Pipe()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestOnQuery_BasicPath(t *testing.T) {
 	codec := postgresql.NewCodec()
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -646,7 +646,7 @@ func TestOnQuery_WithRouter(t *testing.T) {
 	clientEnd, clientProxy := net.Pipe()
 	router, _ := pool.NewRouter(&config.RoutingConfig{ReadWriteSplit: true}, nil)
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, router, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, router, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestOnQueryComplete_Coverage(t *testing.T) {
 	defer clientEnd.Close()
 	defer clientProxy.Close()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -721,7 +721,7 @@ func TestHandle_StartupFailure(t *testing.T) {
 	codec := postgresql.NewCodec()
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestHandle_UnsupportedBody(t *testing.T) {
 	unsupportedCfg := *cfg
 	unsupportedCfg.Body = "oracle"
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, &unsupportedCfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, &unsupportedCfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -813,7 +813,7 @@ func TestRecordAuth_NoLimiter(t *testing.T) {
 	defer clientEnd.Close()
 	defer clientProxy.Close()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -844,7 +844,7 @@ func TestForwardServerToClient_NoServerConn(t *testing.T) {
 	defer clientEnd.Close()
 	defer clientProxy.Close()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -925,7 +925,7 @@ func TestRelay_Run_CancelledContext(t *testing.T) {
 	defer clientEnd.Close()
 	defer backendEnd.Close()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -974,7 +974,7 @@ func TestHandlePostgreSQLAuth_RateLimited(t *testing.T) {
 	limiter := auth.NewAuthLimiter()
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, limiter, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, limiter, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1022,7 +1022,7 @@ func TestHandlePostgreSQLAuth_ClientClosesAfterSASL(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser"})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1065,7 +1065,7 @@ func TestHandlePostgreSQLAuth_WrongMsgType(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser"})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1108,7 +1108,7 @@ func TestHandlePostgreSQLAuth_UnsupportedMechanism(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser"})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1161,7 +1161,7 @@ func TestHandlePostgreSQLAuth_InvalidClientFirst(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser"})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1371,7 +1371,7 @@ func TestSendRollbackToBackend_WithPoolSessionConn(t *testing.T) {
 	defer backendEnd.Close()
 	defer backendProxy.Close()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1455,7 +1455,7 @@ func TestReprepareStatement_NeedsReprep(t *testing.T) {
 	defer backendEnd.Close()
 	defer backendProxy.Close()
 
-	ps, err := NewProxySession(clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1776,7 +1776,7 @@ func TestHandleStartup_MySQL_Body(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	ps, err := NewProxySession(server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1814,7 +1814,7 @@ func TestHandleStartup_MSSQL_Body(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	ps, err := NewProxySession(server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1860,7 +1860,7 @@ func TestHandleMySQLStartup_MockBackend(t *testing.T) {
 	clientServer, clientClient := net.Pipe()
 	defer clientClient.Close()
 
-	ps, err := NewProxySession(clientServer, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientServer, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1998,7 +1998,7 @@ func TestHandleMSSQLStartup_MockBackend(t *testing.T) {
 	clientServer, clientClient := net.Pipe()
 	defer clientClient.Close()
 
-	ps, err := NewProxySession(clientServer, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientServer, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2107,13 +2107,13 @@ func TestForwardClientToServer_TerminatePath(t *testing.T) {
 
 	sc := pool.NewServerConnForTest(1, serverOtherEnd, &pool.Backend{Host: "127.0.0.1", Port: 5432})
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
 	ps.serverConn = sc
 
-	poolSession := pool.NewSession(p, pool.NewSessionStrategy(p))
+	poolSession := pool.NewSession(context.Background(), func() {}, p, pool.NewSessionStrategy(p))
 	poolSession.SetServerConn(sc)
 	ps.poolSession = poolSession
 
@@ -2162,13 +2162,13 @@ func TestForwardClientToServer_TransactionBeginEnd(t *testing.T) {
 
 	sc := pool.NewServerConnForTest(1, serverOtherEnd, &pool.Backend{Host: "127.0.0.1", Port: 5432})
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
 	ps.serverConn = sc
 
-	poolSession := pool.NewSession(p, pool.NewTransactionStrategy(p))
+	poolSession := pool.NewSession(context.Background(), func() {}, p, pool.NewTransactionStrategy(p))
 	ps.poolSession = poolSession
 
 	txnMgr := pool.NewTransactionManager(30*time.Minute, 5*time.Minute, 30*time.Second, log)
@@ -2238,13 +2238,13 @@ func TestForwardClientToServer_PreparedStatementPaths(t *testing.T) {
 
 	sc := pool.NewServerConnForTest(1, serverOtherEnd, &pool.Backend{Host: "127.0.0.1", Port: 5432})
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
 	ps.serverConn = sc
 
-	poolSession := pool.NewSession(p, pool.NewSessionStrategy(p))
+	poolSession := pool.NewSession(context.Background(), func() {}, p, pool.NewSessionStrategy(p))
 	poolSession.SetServerConn(sc)
 	ps.poolSession = poolSession
 
@@ -2319,13 +2319,13 @@ func TestForwardClientToServer_SyncMessage(t *testing.T) {
 
 	sc := pool.NewServerConnForTest(1, serverOtherEnd, &pool.Backend{Host: "127.0.0.1", Port: 5432})
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
 	ps.serverConn = sc
 
-	poolSession := pool.NewSession(p, pool.NewSessionStrategy(p))
+	poolSession := pool.NewSession(context.Background(), func() {}, p, pool.NewSessionStrategy(p))
 	poolSession.SetServerConn(sc)
 	ps.poolSession = poolSession
 
@@ -2383,13 +2383,13 @@ func TestForwardClientToServer_CacheHitPath(t *testing.T) {
 
 	sc := pool.NewServerConnForTest(1, serverOtherEnd, &pool.Backend{Host: "127.0.0.1", Port: 5432})
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
 	ps.serverConn = sc
 
-	poolSession := pool.NewSession(p, pool.NewSessionStrategy(p))
+	poolSession := pool.NewSession(context.Background(), func() {}, p, pool.NewSessionStrategy(p))
 	poolSession.SetServerConn(sc)
 	ps.poolSession = poolSession
 	ps.stmtRepreparer = stmt.NewTransparentRepreparer(stmt.NewManager(1000))
@@ -2461,13 +2461,13 @@ func TestForwardClientToServer_ModificationCacheInvalidation(t *testing.T) {
 
 	sc := pool.NewServerConnForTest(1, serverOtherEnd, &pool.Backend{Host: "127.0.0.1", Port: 5432})
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
 	ps.serverConn = sc
 
-	poolSession := pool.NewSession(p, pool.NewSessionStrategy(p))
+	poolSession := pool.NewSession(context.Background(), func() {}, p, pool.NewSessionStrategy(p))
 	poolSession.SetServerConn(sc)
 	ps.poolSession = poolSession
 
@@ -2519,7 +2519,7 @@ func TestForwardMySQLAuth_OKResponsePath(t *testing.T) {
 	defer clientOtherEnd.Close()
 	defer serverOtherEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2565,7 +2565,7 @@ func TestForwardMySQLAuth_ERRResponsePath(t *testing.T) {
 	defer serverOtherEnd.Close()
 
 	authLimiter := auth.NewAuthLimiter()
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, authLimiter, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, authLimiter, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2609,7 +2609,7 @@ func TestForwardMySQLAuth_ServerClosesConnPath(t *testing.T) {
 	defer clientEnd.Close()
 	serverEnd, serverOtherEnd := net.Pipe()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2645,7 +2645,7 @@ func TestForwardMySQLAuth_AuthSwitchPath(t *testing.T) {
 	defer clientOtherEnd.Close()
 	defer serverOtherEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2831,7 +2831,7 @@ func TestForwardMSSQLPreLogin_InvalidType(t *testing.T) {
 	defer serverOtherEnd.Close()
 	_ = serverEnd
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2874,7 +2874,7 @@ func TestForwardMSSQLPreLogin_MultiPacketResponse(t *testing.T) {
 	defer clientOtherEnd.Close()
 	defer serverOtherEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2950,7 +2950,7 @@ func TestForwardMSSQLLogin7_InvalidType(t *testing.T) {
 	defer serverOtherEnd.Close()
 	_ = serverEnd
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2994,7 +2994,7 @@ func TestForwardMSSQLAuthResponse_ErrorTokenPath(t *testing.T) {
 	defer serverOtherEnd.Close()
 
 	authLimiter := auth.NewAuthLimiter()
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, authLimiter, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, authLimiter, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3040,7 +3040,7 @@ func TestForwardMSSQLAuthResponse_InvalidLengthPath(t *testing.T) {
 	serverEnd, serverOtherEnd := net.Pipe()
 	defer serverOtherEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3083,7 +3083,7 @@ func TestForwardMSSQLAuthResponse_LoginAckPath(t *testing.T) {
 	defer clientOtherEnd.Close()
 	defer serverOtherEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3160,7 +3160,7 @@ func TestConnectToBackend_PassthroughStartupCov(t *testing.T) {
 		}
 	}()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3213,7 +3213,7 @@ func TestAuthenticateWithCertificate_NonTLSConn(t *testing.T) {
 	clientEnd, _ := net.Pipe()
 	defer clientEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3245,7 +3245,7 @@ func TestForwardAndCapture_ServerWriteError(t *testing.T) {
 	clientEnd, _ := net.Pipe()
 	defer clientEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3295,7 +3295,7 @@ func TestProxySession_Handle_MySQLBody(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	ps, err := NewProxySession(server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3341,7 +3341,7 @@ func TestProxySession_Handle_MSSQLBody(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	ps, err := NewProxySession(server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3395,7 +3395,7 @@ func TestHandlePostgreSQLAuth_GenerateServerFirstError(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser", PasswordHash: "invalid-hash"})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3454,7 +3454,7 @@ func TestHandlePostgreSQLAuth_ClientClosesAfterSASLContinue(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser", PasswordHash: hash})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3514,7 +3514,7 @@ func TestHandlePostgreSQLAuth_WrongSecondMsgType(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser", PasswordHash: hash})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3577,7 +3577,7 @@ func TestHandlePostgreSQLAuth_VerifyClientFinalFails(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser", PasswordHash: hash})
 
 	clientEnd, clientProxy := net.Pipe()
-	ps, err := NewProxySession(clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3679,7 +3679,7 @@ func TestForwardAndCapture_FullResponseLoop(t *testing.T) {
 	defer clientOtherEnd.Close()
 	defer serverOtherEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3752,7 +3752,7 @@ func TestForwardAndCapture_ServerReadError(t *testing.T) {
 	serverEnd, serverOtherEnd := net.Pipe()
 	defer clientOtherEnd.Close()
 
-	ps, err := NewProxySession(clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientEnd, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
