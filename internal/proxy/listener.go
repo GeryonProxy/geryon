@@ -2797,7 +2797,7 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 								Query:        query,
 								QueryHash:    cacheKey,
 								Duration:     time.Since(queryStartTime),
-								IsCached:     true,
+								IsCached:      true,
 								RowsReturned: 0,
 							})
 						}
@@ -2995,10 +2995,11 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 					backendAddr = ps.serverConn.Conn().RemoteAddr().String()
 				}
 				ps.queryLogger.LogQuery(logger.QueryLogEntry{
-					Timestamp:    queryStartTime,
-					QueryID:      fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
-					Pool:         ps.config.Name,
-					ClientAddr:   ps.clientConn.RemoteAddr().String(),
+					Timestamp:     queryStartTime,
+					QueryID:       fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
+					CorrelationID:  ps.relay.CorrelationID(),
+					Pool:          ps.config.Name,
+					ClientAddr:    ps.clientConn.RemoteAddr().String(),
 					BackendAddr:  backendAddr,
 					Username:     ps.username,
 					Database:     ps.database,
@@ -3006,7 +3007,7 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 					QueryHash:    cacheKey,
 					Duration:     duration,
 					RowsReturned: rowCount,
-					IsCached:     false,
+					IsCached:      false,
 					TransactionID: func() string {
 						if ps.transactionInfo != nil {
 							return fmt.Sprintf("%d", ps.transactionInfo.ID)
@@ -3178,18 +3179,19 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 				backendAddr = ps.serverConn.Conn().RemoteAddr().String()
 			}
 			ps.queryLogger.LogQuery(logger.QueryLogEntry{
-				Timestamp:    ps.queryStartTime,
-				QueryID:      fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
-				Pool:         ps.config.Name,
-				ClientAddr:   ps.clientConn.RemoteAddr().String(),
-				BackendAddr:  backendAddr,
-				Username:     ps.username,
-				Database:     ps.database,
-				Query:        ps.currentQuery,
-				QueryHash:    cache.GenerateKey(ps.currentQuery).String(),
-				Duration:     duration,
+				Timestamp:     ps.queryStartTime,
+				QueryID:       fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
+				CorrelationID:  ps.relay.CorrelationID(),
+				Pool:          ps.config.Name,
+				ClientAddr:    ps.clientConn.RemoteAddr().String(),
+				BackendAddr:   backendAddr,
+				Username:      ps.username,
+				Database:      ps.database,
+				Query:         ps.currentQuery,
+				QueryHash:     cache.GenerateKey(ps.currentQuery).String(),
+				Duration:      duration,
 				RowsReturned: rowCount,
-				IsCached:     false,
+				IsCached:      false,
 				TransactionID: func() string {
 					if ps.transactionInfo != nil {
 						return fmt.Sprintf("%d", ps.transactionInfo.ID)

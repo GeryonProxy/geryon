@@ -76,6 +76,7 @@ func DefaultQueryLogConfig() QueryLogConfig {
 type QueryLogEntry struct {
 	Timestamp     time.Time     `json:"timestamp"`
 	QueryID       string        `json:"query_id"`
+	CorrelationID string        `json:"correlation_id,omitempty"`
 	Pool          string        `json:"pool"`
 	ClientAddr    string        `json:"client_addr"`
 	BackendAddr   string        `json:"backend_addr"`
