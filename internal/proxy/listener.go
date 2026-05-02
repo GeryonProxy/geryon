@@ -3009,6 +3009,12 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 
 		// Check for end of response
 		if respMsg.Type == 'Z' { // ReadyForQuery
+			// End OTel span on query completion
+			if ps.lastSpanEnd != nil {
+				ps.lastSpanEnd()
+				ps.lastSpanEnd = nil
+			}
+
 			// Log query with timing
 			if ps.queryLogger != nil && query != "" {
 				duration := time.Since(queryStartTime)

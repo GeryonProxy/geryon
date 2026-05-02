@@ -846,6 +846,14 @@ admin:
     enabled: true
     path: "/"               # Served on REST port
 
+# Distributed tracing (OpenTelemetry OTLP)
+# Requires otel collector running to receive traces
+tracing:
+  enabled: false
+  exporter: otlpgrpc        # otlpgrpc (OTLP gRPC, requires otel-collector)
+  endpoint: "localhost:4317" # OTLP receiver address
+  sampling_rate: 1.0        # 0.0 to 1.0 (1.0 = trace everything)
+
 cluster:
   enabled: false
   node_id: "node-1"
