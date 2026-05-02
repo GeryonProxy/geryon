@@ -10,6 +10,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 )
 
 // Helper: create a ProxySession with net.Pipe connections for client and server
@@ -31,7 +32,7 @@ func newProxySessionWithPipes(t *testing.T) (*ProxySession, net.Conn, net.Conn, 
 	clientEnd, clientProxy := net.Pipe()
 	backendProxy, backendEnd := net.Pipe()
 
-	ps, err := NewProxySession(context.Background(), clientProxy, p, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientProxy, p, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}

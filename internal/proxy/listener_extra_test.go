@@ -13,6 +13,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 )
 
 // Test Listener Stop_NotStarted
@@ -33,7 +34,7 @@ func TestListener_Stop_NotStarted_ReturnsNil(t *testing.T) {
 	p := pm.GetPool("test")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestProxySession_Close_Idempotent(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestListener_CacheConfig(t *testing.T) {
 	p := pm.GetPool("test")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestListener_Start_WhenActive(t *testing.T) {
 	p := pm.GetPool("test")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -259,7 +260,7 @@ func TestSessionIDCounter_Increment(t *testing.T) {
 	defer server1.Close()
 	defer client1.Close()
 
-	NewProxySession(context.Background(), server1, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	NewProxySession(context.Background(), server1, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 
 	after := sessionIDCounter.Load()
 	if after <= before {
@@ -290,7 +291,7 @@ func TestListener_CacheEnabled(t *testing.T) {
 	p := pm.GetPool("test-cache")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -330,7 +331,7 @@ func TestListener_ReadWriteSplitting(t *testing.T) {
 	p := pm.GetPool("test-routing")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -358,7 +359,7 @@ func TestListener_NoReadWriteSplitting(t *testing.T) {
 	p := pm.GetPool("test-no-routing")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -386,7 +387,7 @@ func TestListener_TransactionManagerIntegration(t *testing.T) {
 	p := pm.GetPool("test-txn")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -476,7 +477,7 @@ func TestProxySession_StmtRepreparer(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -509,7 +510,7 @@ func TestListener_TransactionTimeoutsConfig(t *testing.T) {
 	p := pm.GetPool("test-txn-timeouts")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -585,7 +586,7 @@ func TestProxySession_HandleStartup_UnsupportedBody(t *testing.T) {
 	unsupportedCfg := *cfg
 	unsupportedCfg.Body = "oracle"
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, &unsupportedCfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, &unsupportedCfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -630,7 +631,7 @@ func TestProxySession_SendRollbackToBackend_NoServerConn(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -672,7 +673,7 @@ func TestProxySession_RecordAuthFailure_WithLimiter(t *testing.T) {
 
 	limiter := auth.NewAuthLimiter()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, limiter, nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, limiter, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -717,7 +718,7 @@ func TestProxySession_RecordAuthSuccess_WithLimiter(t *testing.T) {
 
 	limiter := auth.NewAuthLimiter()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, limiter, nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, limiter, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -757,7 +758,7 @@ func TestProxySession_ExtractLogin7_TooShort(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -801,7 +802,7 @@ func TestProxySession_ExtractLogin7_ValidUsername(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -857,7 +858,7 @@ func TestProxySession_AuthenticateWithCertificate_NonTLS(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -901,7 +902,7 @@ func TestProxySession_ReprepareStatement_EmptyStmtName(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -929,7 +930,7 @@ func TestListener_AcceptLoop_ContextCancel(t *testing.T) {
 	p := pm.GetPool("test-accept")
 	codec := postgresql.NewCodec()
 
-	listener, err := NewListener(p, cfg, codec, nil, log)
+	listener, err := NewListener(p, cfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -979,7 +980,7 @@ func TestProxySession_QueryCounting(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -1038,7 +1039,7 @@ func TestProxySession_Handle_ContextCancel(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 
-	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	session, err := NewProxySession(context.Background(), server, p, codec, nil, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/proxy"
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 	"golang.org/x/term"
 )
 
@@ -106,8 +107,22 @@ func main() {
 
 	log.Info("Geryon starting", "version", version)
 
+	// Create root context for initialization (cancelled on shutdown)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Initialize distributed tracing (OpenTelemetry)
+	tracer := tracing.NewTracer(&tracing.Config{
+		Enabled:      cfg.Tracing.Enabled,
+		Exporter:     cfg.Tracing.Exporter,
+		Endpoint:     cfg.Tracing.Endpoint,
+		SamplingRate: cfg.Tracing.SamplingRate,
+		ServiceName:  "geryon",
+	}, log)
+	if err := tracer.Init(ctx); err != nil {
+		log.Error("Failed to initialize tracing", "error", err)
+		os.Exit(1)
+	}
 
 	// Create user database
 	userDB := auth.NewUserDatabase()
@@ -138,7 +153,7 @@ func main() {
 			continue
 		}
 
-		listener, err := proxy.NewListener(p, poolCfg, p.Codec(), userDB, log)
+		listener, err := proxy.NewListener(p, poolCfg, p.Codec(), userDB, tracer, log)
 		if err != nil {
 			log.Error("Failed to create listener", "pool", poolCfg.Name, "error", err)
 			os.Exit(1)

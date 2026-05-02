@@ -14,6 +14,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 	"github.com/GeryonProxy/geryon/internal/proxy"
 )
 
@@ -43,7 +44,7 @@ func createListenerWithPool(t *testing.T, poolName string) (*proxy.Listener, *po
 	p := pm.GetPool(poolName)
 	codec := postgresql.NewCodec()
 
-	l, err := proxy.NewListener(p, poolCfg, codec, nil, log)
+	l, err := proxy.NewListener(p, poolCfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 )
 
 func TestSetDeadline(t *testing.T) {
@@ -1455,7 +1456,7 @@ func TestNewListener_NilPool(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	l, err := NewListener(nil, cfg, codec, userDB, log)
+	l, err := NewListener(nil, cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener with nil pool failed: %v", err)
 	}
@@ -1504,7 +1505,7 @@ func TestNewListener_WithCache(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	l, err := NewListener(nil, cfg, codec, userDB, log)
+	l, err := NewListener(nil, cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener with cache failed: %v", err)
 	}
@@ -1548,7 +1549,7 @@ func TestNewListener_WithTLS(t *testing.T) {
 	codec := &postgresql.PGCodec{}
 
 	// This should fail because TLS files don't exist
-	_, err := NewListener(nil, cfg, codec, userDB, log)
+	_, err := NewListener(nil, cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 	if err == nil {
 		t.Error("NewListener with invalid TLS should fail")
 	}
@@ -1673,7 +1674,7 @@ func TestNewProxySession_WithPool(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2140,7 +2141,7 @@ func TestNewListener_Variants(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			l, err := NewListener(nil, tc.cfg, codec, userDB, log)
+			l, err := NewListener(nil, tc.cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 			if tc.wantErr && err == nil {
 				t.Error("expected error but got none")
 			}
@@ -2300,7 +2301,7 @@ func TestListener_StartStop_Lifecycle(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	l, err := NewListener(nil, cfg, codec, userDB, log)
+	l, err := NewListener(nil, cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -2520,7 +2521,7 @@ func TestNewProxySession_Errors(t *testing.T) {
 	codec := &postgresql.PGCodec{}
 
 	// Test with valid pool
-	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Errorf("NewProxySession error = %v", err)
 	}
@@ -2682,7 +2683,7 @@ func TestProxySession_OnQuery(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -2741,7 +2742,7 @@ func TestProxySession_OnQueryComplete(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3007,7 +3008,7 @@ func TestListener_Start_InvalidAddress(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	l, err := NewListener(nil, cfg, codec, userDB, log)
+	l, err := NewListener(nil, cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -3044,7 +3045,7 @@ func TestListener_handleConnection_MaxConnections(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := &postgresql.PGCodec{}
 
-	l, err := NewListener(nil, cfg, codec, userDB, log)
+	l, err := NewListener(nil, cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -3282,7 +3283,7 @@ func TestProxySession_OnQuery_Select(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := postgresql.NewCodec()
 
-	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3336,7 +3337,7 @@ func TestProxySession_OnQuery_Insert(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := postgresql.NewCodec()
 
-	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, log)
+	ps, err := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, auth.NewAuthLimiter(), nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -3457,7 +3458,7 @@ func TestHandleConnection_MaxClientsReached(t *testing.T) {
 	userDB := auth.NewUserDatabase()
 	codec := postgresql.NewCodec()
 
-	l, err := NewListener(nil, cfg, codec, userDB, log)
+	l, err := NewListener(nil, cfg, codec, userDB, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -4277,7 +4278,7 @@ func TestListener_ActiveState(t *testing.T) {
 	codec := postgresql.NewCodec()
 	p, _ := pool.NewPool(poolCfg, codec, log, nil)
 
-	l, err := NewListener(p, poolCfg, codec, nil, log)
+	l, err := NewListener(p, poolCfg, codec, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}

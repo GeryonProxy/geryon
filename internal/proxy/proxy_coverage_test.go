@@ -15,6 +15,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 )
 
 // --- sendRollbackToBackend with a real server connection ---
@@ -55,7 +56,7 @@ func TestProxySession_sendRollbackToBackend_WithConn(t *testing.T) {
 	}()
 
 	codec := postgresql.NewCodec()
-	ps, err := NewProxySession(context.Background(), proxyClient, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), proxyClient, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestProxySession_sendRollbackToBackend_NilServerConn(t *testing.T) {
 	defer client.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	// Don't set server conn
 
 	// Should not panic
@@ -124,7 +125,7 @@ func TestRelay_forwardServerToClient_ReadyForQuery_Idle(t *testing.T) {
 
 	codec := postgresql.NewCodec()
 
-	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -199,7 +200,7 @@ func TestRelay_forwardServerToClient_ReadyForQuery_InTxn(t *testing.T) {
 
 	codec := postgresql.NewCodec()
 
-	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -265,7 +266,7 @@ func TestRelay_forwardServerToClient_DataRowCount(t *testing.T) {
 	p := pm.GetPool("test-rows")
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.serverConn = serverConn
 
 	// Drain client reads in background
@@ -319,7 +320,7 @@ func TestRelay_forwardServerToClient_NilServerConn(t *testing.T) {
 	p := pm.GetPool("test-nil")
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	// Don't set serverConn
 
 	relay := NewRelay()
@@ -350,7 +351,7 @@ func TestRelay_forwardClientToServer_ContextCancelled(t *testing.T) {
 	p := pm.GetPool("test-ctx")
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 
 	relay := NewRelay()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -409,7 +410,7 @@ func TestRelay_forwardServerToClient_ContextCancelled(t *testing.T) {
 	p := pm.GetPool("test-ctx-s2c")
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 
 	serverConn := &pool.ServerConn{}
 	serverRead, _ := net.Pipe()
@@ -450,7 +451,7 @@ func TestProxySession_OnQuery_WithRouter(t *testing.T) {
 	defer client.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 
 	// Create a router with read/write splitting
 	backends := []*pool.Backend{
@@ -501,7 +502,7 @@ func TestRelay_Run_NilServerConn_Returns(t *testing.T) {
 	p := pm.GetPool("test-run-nil")
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.serverConn = nil // explicit nil
 
 	relay := NewRelay()
@@ -544,7 +545,7 @@ func TestRelay_forwardClientToServer_Terminate(t *testing.T) {
 	defer clientRead.Close()
 	defer clientWrite.Close()
 
-	ps, _ := NewProxySession(context.Background(), clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 
 	// Write a Terminate message from client side
 	go func() {
@@ -799,7 +800,7 @@ func TestRelay_forwardServerToClient_ReadyForQuery_FailedTxn(t *testing.T) {
 	p := pm.GetPool("test-failed-txn")
 
 	codec := postgresql.NewCodec()
-	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -864,7 +865,7 @@ func TestRelay_forwardServerToClient_WithQueryLogger(t *testing.T) {
 	p := pm.GetPool("test-qlog")
 
 	codec := postgresql.NewCodec()
-	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, err := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewProxySession failed: %v", err)
 	}
@@ -949,11 +950,11 @@ func TestRelay_forwardServerToClient_WithTxnManager(t *testing.T) {
 	p := pm.GetPool("test-txn-mgr")
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), clientConn, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.serverConn = serverConn
 
 	// Set up transaction manager and transaction info
-	txnMgr := pool.NewTransactionManager(30*time.Minute, 5*time.Minute, 0, log)
+	txnMgr := pool.NewTransactionManager(30*time.Minute, 5*time.Minute, 30*time.Second, log)
 	ps.transactionMgr = txnMgr
 	abortFn := func() { ps.sendRollbackToBackend() }
 	txnInfo := txnMgr.Register(ps.id, 0, abortFn)
@@ -1009,7 +1010,7 @@ func TestProxySession_handlePostgreSQLAuth_WriteFail(t *testing.T) {
 	defer client.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.username = "testuser"
 	ps.database = "testdb"
 
@@ -1049,7 +1050,7 @@ func TestRelay_forwardAndCapture_BasicFlow(t *testing.T) {
 	codec := postgresql.NewCodec()
 	cacheRules := cache.NewRulesEngine()
 	cacheStore := cache.NewStore(1024*1024, 5*time.Minute)
-	ps, _ := NewProxySession(context.Background(), clientRead, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), clientRead, p, codec, nil, cfg, cacheStore, cacheRules, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.currentQuery = "SELECT 1"
 
 	// Drain client reads
@@ -1161,7 +1162,7 @@ func TestRelay_Run_WithServerConn_ContextCancel(t *testing.T) {
 	defer serverWrite.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), clientWrite, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 
 	serverConn := &pool.ServerConn{}
 	serverConn.SetConnForTest(serverRead)
@@ -1207,7 +1208,7 @@ func TestProxySession_handlePostgreSQLAuth_RateLimited(t *testing.T) {
 	defer server.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.username = "testuser"
 	ps.database = "testdb"
 
@@ -1261,7 +1262,7 @@ func TestProxySession_handlePostgreSQLAuth_WrongMsgType(t *testing.T) {
 	userDB.AddUser(&auth.User{Username: "testuser"})
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, userDB, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.username = "testuser"
 	ps.database = "testdb"
 
@@ -1304,7 +1305,7 @@ func TestProxySession_handlePostgreSQLAuth_SASLReadEOF(t *testing.T) {
 	defer server.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.username = "testuser"
 	ps.database = "testdb"
 
@@ -1344,7 +1345,7 @@ func TestProxySession_handlePostgreSQLAuth_SASLLengthEOF(t *testing.T) {
 	defer server.Close()
 
 	codec := postgresql.NewCodec()
-	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, log)
+	ps, _ := NewProxySession(context.Background(), client, p, codec, nil, cfg, nil, nil, nil, nil, nil, nil, nil, tracing.NewTracer(nil, log), log)
 	ps.username = "testuser"
 	ps.database = "testdb"
 

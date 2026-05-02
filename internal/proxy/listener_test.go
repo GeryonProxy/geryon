@@ -8,6 +8,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 )
 
 func TestParseMemoryString(t *testing.T) {
@@ -282,7 +283,7 @@ func TestNewListener(t *testing.T) {
 
 	userDB := auth.NewUserDatabase()
 
-	l, err := NewListener(p, cfg, nil, userDB, log)
+	l, err := NewListener(p, cfg, nil, userDB, tracing.NewTracer(nil, log), log)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}

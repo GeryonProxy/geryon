@@ -161,6 +161,14 @@ type GossipConfig struct {
 	Join   []string `yaml:"join"`
 }
 
+// TracingConfig contains OpenTelemetry distributed tracing settings.
+type TracingConfig struct {
+	Enabled      bool    `yaml:"enabled"`
+	Exporter     string  `yaml:"exporter"`      // "otlpgrpc" | "jaeger" | "zipkin"
+	Endpoint     string  `yaml:"endpoint"`      // OTLP endpoint
+	SamplingRate float64 `yaml:"sampling_rate"` // 0.0 - 1.0
+}
+
 // ClusterConfig contains cluster settings.
 type ClusterConfig struct {
 	Enabled bool         `yaml:"enabled"`
@@ -228,6 +236,7 @@ type Config struct {
 	Cluster ClusterConfig `yaml:"cluster"`
 	Auth    AuthConfig    `yaml:"auth"`
 	Pools   []PoolConfig  `yaml:"pools"`
+	Tracing TracingConfig `yaml:"tracing"`
 }
 
 // DefaultConfig returns a configuration with default values.

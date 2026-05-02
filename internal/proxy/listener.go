@@ -33,6 +33,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/stmt"
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
 	"github.com/GeryonProxy/geryon/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // MySQL packet size limit (16MB is protocol max)
@@ -88,6 +89,7 @@ type Listener struct {
 	transactionMgr *pool.TransactionManager
 	authLimiter    *auth.AuthLimiter
 	router         *pool.Router
+	tracer         *tracing.Tracer
 	authMode       string // "passthrough" or "interception"
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -95,7 +97,7 @@ type Listener struct {
 }
 
 // NewListener creates a new proxy listener.
-func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.Codec, userDB *auth.UserDatabase, log *logger.Logger) (*Listener, error) {
+func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.Codec, userDB *auth.UserDatabase, tracer *tracing.Tracer, log *logger.Logger) (*Listener, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	l := &Listener{
@@ -108,6 +110,7 @@ func NewListener(poolInstance *pool.Pool, cfg *config.PoolConfig, codec common.C
 		ctx:      ctx,
 		cancel:   cancel,
 		log:      log,
+		tracer:   tracer,
 		authMode: cfg.AuthMode,
 	}
 
@@ -322,7 +325,7 @@ func (l *Listener) handleConnection(conn net.Conn) {
 	}
 
 	// Create proxy session with cache, query logger, and transaction manager
-	session, err := NewProxySession(l.ctx, conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.authLimiter, l.router, l.tlsConfig, l.log)
+	session, err := NewProxySession(l.ctx, conn, l.pool, l.codec, l.userDB, l.config, l.cacheStore, l.cacheRules, l.queryLogger, l.transactionMgr, l.authLimiter, l.router, l.tlsConfig, l.tracer, l.log)
 	if err != nil {
 		l.log.Error("Failed to create session", "error", err)
 		return
@@ -498,7 +501,9 @@ type ProxySession struct {
 	// Query timing for logging
 	currentQuery   string
 	queryStartTime time.Time
-	lastBoundStmt  string // last bound statement name for re-preparation
+	tracer         *tracing.Tracer // OTel tracer for distributed tracing
+	lastSpanEnd    func()          // end func for current OTel span, nil if no active span
+	lastBoundStmt  string          // last bound statement name for re-preparation
 	// M-8 fix: pending parse tracking for confirmed prepared statements
 	pendingParseMu    sync.Mutex
 	pendingParseStmt  string // statement name waiting for ParseComplete confirmation
@@ -510,7 +515,7 @@ var (
 )
 
 // NewProxySession creates a new proxy session.
-func NewProxySession(ctx context.Context, clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, authLimiter *auth.AuthLimiter, router *pool.Router, tlsConfig *tls.Config, log *logger.Logger) (*ProxySession, error) {
+func NewProxySession(ctx context.Context, clientConn net.Conn, p *pool.Pool, codec common.Codec, userDB *auth.UserDatabase, cfg *config.PoolConfig, cacheStore *cache.Store, cacheRules *cache.RulesEngine, queryLogger *logger.QueryLogger, transactionMgr *pool.TransactionManager, authLimiter *auth.AuthLimiter, router *pool.Router, tlsConfig *tls.Config, tracer *tracing.Tracer, log *logger.Logger) (*ProxySession, error) {
 	// Create pool strategy
 	strategy, err := pool.DefaultStrategyFactory.CreateStrategy(p)
 	if err != nil {
@@ -538,6 +543,7 @@ func NewProxySession(ctx context.Context, clientConn net.Conn, p *pool.Pool, cod
 		router:         router,
 		stmtRepreparer: stmt.NewTransparentRepreparer(stmt.NewManager(1000)),
 		tlsConfig:      tlsConfig,
+		tracer:         tracer,
 		log:            log,
 	}
 
@@ -2666,6 +2672,25 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 			query, _ = codec.ExtractQuery(msg)
 			ps.currentQuery = query
 			ps.queryStartTime = queryStartTime
+
+			// Start OTel span for query execution
+			if ps.tracer != nil && ctx != nil {
+				// End any previous span
+				if ps.lastSpanEnd != nil {
+					ps.lastSpanEnd()
+				}
+				var spanEnd func()
+				ctx, spanEnd = ps.tracer.StartSpan(ctx, "query.execute")
+				ps.lastSpanEnd = spanEnd
+				tracing.AddSpanAttributes(ctx,
+					attribute.String(tracing.AttrPoolName, ps.config.Name),
+					attribute.String(tracing.AttrClientAddr, ps.clientConn.RemoteAddr().String()),
+					attribute.String(tracing.AttrCorrID, ps.relay.CorrelationID()),
+				)
+				if query != "" {
+					tracing.AddSpanAttributes(ctx, attribute.String("query.text", query[:min(len(query), 200)]))
+				}
+			}
 
 			// Check for transaction boundaries (M-6 fix: use codec methods which strip comments)
 			if ps.transactionMgr != nil {
