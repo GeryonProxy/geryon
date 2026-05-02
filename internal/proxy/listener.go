@@ -24,6 +24,7 @@ import (
 
 	"github.com/GeryonProxy/geryon/internal/auth"
 	"github.com/GeryonProxy/geryon/internal/cache"
+	ctxutil "github.com/GeryonProxy/geryon/internal/context"
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
@@ -31,6 +32,7 @@ import (
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
 	"github.com/GeryonProxy/geryon/internal/stmt"
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 )
 
 // MySQL packet size limit (16MB is protocol max)
@@ -2556,12 +2558,25 @@ func (ps *ProxySession) recordAuthSuccess() {
 
 // Relay handles bidirectional message forwarding.
 type Relay struct {
-	mu sync.Mutex
+	mu             sync.Mutex
+	correlationID  string // Unique ID for request tracing
+}
+
+// CorrelationID returns the correlation ID for this relay.
+func (r *Relay) CorrelationID() string {
+	return r.correlationID
+}
+
+// WithCorrelationID returns a context with the correlation ID set.
+func (r *Relay) WithCorrelationID(ctx context.Context) context.Context {
+	return ctxutil.WithCorrelationID(ctx, r.correlationID)
 }
 
 // NewRelay creates a new relay.
 func NewRelay() *Relay {
-	return &Relay{}
+	return &Relay{
+		correlationID: tracing.GenerateCorrelationID(),
+	}
 }
 
 // Run runs the bidirectional relay.

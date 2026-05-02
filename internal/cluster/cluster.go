@@ -703,7 +703,7 @@ func (s *SwimGossip) protocolRound() {
 	go s.probe(target)
 }
 
-// probe sends a direct ping to a node.
+// probe sends a direct ping to a node with retry.
 func (s *SwimGossip) probe(target *Node) {
 	// CRIT-1 fix: Acquire semaphore to bound concurrent probes
 	select {
@@ -713,25 +713,42 @@ func (s *SwimGossip) probe(target *Node) {
 	}
 	defer func() { <-s.probeSem }()
 
-	// Send ping with deadline
-	conn, err := net.DialTimeout("tcp", target.Address, s.probeTimeout)
-	if err != nil {
-		// Node might be failed, start indirect probing
-		s.indirectProbe(target)
+	// Retry with exponential backoff for probe
+	const maxRetries = 3
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 50ms, 100ms, 200ms
+			backoff := time.Duration(50<<attempt) * time.Millisecond
+			// Cap at probe timeout
+			if backoff > s.probeTimeout {
+				backoff = s.probeTimeout
+			}
+			time.Sleep(backoff)
+		}
+
+		// Send ping with deadline
+		conn, err := net.DialTimeout("tcp", target.Address, s.probeTimeout)
+		if err != nil {
+			continue // Retry on connection failure
+		}
+
+		// Set read deadline for the probe
+		conn.SetReadDeadline(time.Now().Add(s.probeTimeout))
+
+		// Node responded, mark as alive - hold mutex for entire update
+		s.mu.Lock()
+		s.alive[target.ID] = time.Now()
+		delete(s.suspected, target.ID)
+		target.LastSeen = time.Now()
+		target.State = NodeStateFollower // M-3 fix: update under lock
+		s.mu.Unlock()
+		conn.Close()
 		return
 	}
-	defer conn.Close()
 
-	// Set read deadline for the probe
-	conn.SetReadDeadline(time.Now().Add(s.probeTimeout))
-
-	// Node responded, mark as alive - hold mutex for entire update
-	s.mu.Lock()
-	s.alive[target.ID] = time.Now()
-	delete(s.suspected, target.ID)
-	target.LastSeen = time.Now()
-	target.State = NodeStateFollower // M-3 fix: update under lock
-	s.mu.Unlock()
+	// All retries exhausted, start indirect probing
+	s.indirectProbe(target)
 }
 
 // indirectProbe asks other nodes to probe a suspected failed node.
