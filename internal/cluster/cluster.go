@@ -261,13 +261,15 @@ func (c *Cluster) handleRPC(conn net.Conn) {
 		return
 	}
 
-	// C-2 fix: Verify HMAC signature if secret is configured
-	if c.config.Secret != "" {
-		expected := computeHMAC(c.config.Secret, rpc.Type, rpc.From, rpc.Payload)
-		if !hmac.Equal([]byte(rpc.Signature), []byte(expected)) {
-			c.log.Warn("Invalid HMAC signature on RPC", "from", rpc.From, "type", rpc.Type)
-			return
-		}
+	// C-2 fix: Verify HMAC signature - reject if secret not configured
+	if c.config.Secret == "" {
+		c.log.Warn("Rejecting RPC from", "from", rpc.From, "reason", "cluster secret not configured")
+		return
+	}
+	expected := computeHMAC(c.config.Secret, rpc.Type, rpc.From, rpc.Payload)
+	if !hmac.Equal([]byte(rpc.Signature), []byte(expected)) {
+		c.log.Warn("Invalid HMAC signature on RPC", "from", rpc.From, "type", rpc.Type)
+		return
 	}
 
 	// Validate RPC type to prevent unknown type processing
@@ -363,19 +365,22 @@ type LogEntry struct {
 
 // handleVoteRequest processes a vote request.
 func (c *Cluster) handleVoteRequest(rpc RPC) {
+	// Must not use defer Unlock() since we may release lock early for sendRPC
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	var req VoteRequest
 	if err := json.Unmarshal(rpc.Payload, &req); err != nil {
 		c.log.Error("Failed to unmarshal vote request", "error", err)
+		c.mu.Unlock()
 		return
 	}
 
 	// Reply false if term < currentTerm
 	if req.Term < c.currentTerm {
+		term := c.currentTerm
+		c.mu.Unlock()
 		c.sendRPC(rpc.From, RPCVoteResponse, VoteResponse{
-			Term:        c.currentTerm,
+			Term:        term,
 			VoteGranted: false,
 		})
 		return
@@ -396,8 +401,10 @@ func (c *Cluster) handleVoteRequest(rpc RPC) {
 		c.state = NodeStateFollower
 	}
 
+	term := c.currentTerm
+	c.mu.Unlock()
 	c.sendRPC(rpc.From, RPCVoteResponse, VoteResponse{
-		Term:        c.currentTerm,
+		Term:        term,
 		VoteGranted: canVote,
 	})
 }
@@ -547,7 +554,10 @@ func (c *Cluster) sendRPC(to string, rpcType string, payload interface{}) {
 		return
 	}
 
+	// Read node address from map with read lock held
+	c.mu.RLock()
 	node, ok := c.nodes[to]
+	c.mu.RUnlock()
 	if !ok {
 		return
 	}

@@ -173,6 +173,12 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 // withAuth adds authentication middleware.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip auth check if authentication is disabled
+		if !s.authEnabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)

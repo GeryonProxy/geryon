@@ -256,10 +256,11 @@ func (s *Session) PreparedStatements() *SessionPreparedStatements {
 func (s *Session) Stats() SessionStats {
 	s.mu.RLock()
 	serverConnID := uint64(0)
-	if s.serverConn != nil {
-		serverConnID = s.serverConn.ID()
-	}
+	serverConn := s.serverConn // Capture reference under lock
 	s.mu.RUnlock()
+	if serverConn != nil {
+		serverConnID = serverConn.ID()
+	}
 
 	return SessionStats{
 		ID:           s.id,

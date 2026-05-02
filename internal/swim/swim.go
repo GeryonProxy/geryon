@@ -48,6 +48,10 @@ type Protocol struct {
 
 	// Logger
 	logger *logger.Logger
+
+	// Pending probe timers by member ID (prevents unbounded goroutine growth)
+	pendingProbes map[string]chan struct{}
+	probeCancelMu sync.Mutex
 }
 
 // Member represents a cluster member.
@@ -135,6 +139,7 @@ func NewProtocol(id, addr string, log *logger.Logger) *Protocol {
 		id:             id,
 		addr:           addr,
 		members:        make(map[string]*Member),
+		pendingProbes:  make(map[string]chan struct{}),
 		probeInterval:  1 * time.Second,
 		probeTimeout:   500 * time.Millisecond,
 		suspectTimeout: 5 * time.Second,
@@ -457,6 +462,16 @@ func (p *Protocol) probeRandomMember() {
 		return
 	}
 
+	// Cancel any existing pending probe for this member
+	p.probeCancelMu.Lock()
+	if cancelCh, exists := p.pendingProbes[member.ID]; exists {
+		close(cancelCh)
+		delete(p.pendingProbes, member.ID)
+	}
+	cancelCh := make(chan struct{})
+	p.pendingProbes[member.ID] = cancelCh
+	p.probeCancelMu.Unlock()
+
 	// Send ping
 	ping := Message{
 		Type:   MsgPing,
@@ -466,19 +481,31 @@ func (p *Protocol) probeRandomMember() {
 	member.LastProbe = time.Now()
 	p.sendMessage(member.Address, ping)
 
-	// Wait for ack with timeout
-	time.AfterFunc(p.probeTimeout, func() {
-		// Check if we got an ack
-		p.mu.RLock()
-		m, exists := p.members[member.ID]
-		if exists && m.LastProbe.Equal(member.LastProbe) {
-			// No ack received, mark as suspect
-			p.mu.RUnlock()
-			p.suspectMember(member.ID)
-		} else {
-			p.mu.RUnlock()
+	// Wait for ack with timeout - tracked to prevent unbounded goroutine growth
+	go func() {
+		select {
+		case <-cancelCh:
+			// Probe cancelled (member state changed)
+			return
+		case <-time.After(p.probeTimeout):
+			// Check if we got an ack
+			p.mu.RLock()
+			m, exists := p.members[member.ID]
+			if exists && m.LastProbe.Equal(member.LastProbe) {
+				// No ack received, mark as suspect
+				p.mu.RUnlock()
+				p.suspectMember(member.ID)
+			} else {
+				p.mu.RUnlock()
+			}
+			// Clean up pending probe tracking
+			p.probeCancelMu.Lock()
+			if c, ok := p.pendingProbes[member.ID]; ok && c == cancelCh {
+				delete(p.pendingProbes, member.ID)
+			}
+			p.probeCancelMu.Unlock()
 		}
-	})
+	}()
 }
 
 // suspectMember marks a member as suspect.
