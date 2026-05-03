@@ -850,8 +850,8 @@ admin:
 # Requires otel collector running to receive traces
 tracing:
   enabled: false
-  exporter: otlpgrpc        # otlpgrpc (OTLP gRPC, requires otel-collector)
-  endpoint: "localhost:4317" # OTLP receiver address
+  exporter: otlpgrpc        # otlpgrpc | jaeger | stdout
+  endpoint: "localhost:4317" # OTLP receiver address (otlpgrpc/jaeger)
   sampling_rate: 1.0        # 0.0 to 1.0 (1.0 = trace everything)
 
 cluster:

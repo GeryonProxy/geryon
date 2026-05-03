@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -13,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -69,6 +71,14 @@ func (t *Tracer) Init(ctx context.Context) error {
 			otlptracegrpc.WithEndpoint(t.config.Endpoint),
 			otlptracegrpc.WithInsecure(),
 		)
+	case "jaeger":
+		// Jaeger OTLP gRPC mode (Jaeger 1.35+ accepts OTLP natively on port 4317)
+		exporter, err = otlptracegrpc.New(ctx,
+			otlptracegrpc.WithEndpoint(t.config.Endpoint),
+			otlptracegrpc.WithInsecure(),
+		)
+	case "stdout":
+		exporter, err = stdouttrace.New(stdouttrace.WithWriter(os.Stdout))
 	default:
 		t.log.Warn("Unknown tracing exporter, tracing disabled", "exporter", t.config.Exporter)
 		return nil
