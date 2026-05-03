@@ -520,14 +520,17 @@ func (n *Node) handleAppendEntries(msg Message) {
 		if req.PrevLogIndex == 0 || n.hasLogEntry(req.PrevLogIndex, req.PrevLogTerm) {
 			success = true
 
-			// Append new entries
+			// Append new entries, tracking which are actually new
+			var newEntries []Entry
 			for _, entry := range req.Entries {
-				n.appendEntry(entry)
+				if n.appendEntry(entry) {
+					newEntries = append(newEntries, entry)
+				}
 			}
 
-			// Persist received entries to WAL for durability
-			if n.wal != nil && len(req.Entries) > 0 {
-				if err := n.wal.AppendBatch(req.Entries); err != nil {
+			// Persist only genuinely new entries to WAL
+			if n.wal != nil && len(newEntries) > 0 {
+				if err := n.wal.AppendBatch(newEntries); err != nil {
 					n.logger.Error("Failed to persist entries to WAL", "error", err)
 				}
 			}
@@ -848,7 +851,8 @@ func (n *Node) hasLogEntry(index, term uint64) bool {
 }
 
 // appendEntry appends an entry to the log.
-func (n *Node) appendEntry(entry Entry) {
+// Returns true if the entry was newly added (not already present).
+func (n *Node) appendEntry(entry Entry) bool {
 	n.logMu.Lock()
 	defer n.logMu.Unlock()
 
@@ -859,13 +863,15 @@ func (n *Node) appendEntry(entry Entry) {
 			if e.Term != entry.Term {
 				n.logEntries = n.logEntries[:i]
 				n.logEntries = append(n.logEntries, entry)
+				return true
 			}
-			return
+			return false
 		}
 	}
 
 	// Append new entry
 	n.logEntries = append(n.logEntries, entry)
+	return true
 }
 
 // hasMajority checks if we have a majority of votes.

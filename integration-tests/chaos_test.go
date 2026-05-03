@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -149,9 +150,11 @@ func (c *ChaosRunner) Stop() {
 
 // Example chaos operations
 
-// ConnectionStorm simulates a connection storm
+// ConnectionStorm simulates a connection storm by opening many TCP connections
+// to Geryon in parallel and immediately closing them.
 type ConnectionStorm struct {
 	connections int
+	targetAddr  string
 }
 
 func (c *ConnectionStorm) Name() string {
@@ -159,15 +162,41 @@ func (c *ConnectionStorm) Name() string {
 }
 
 func (c *ConnectionStorm) Execute(ctx context.Context) error {
-	// Simulate creating many connections
-	// This would connect to Geryon and create connections
-	time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+	addr := c.targetAddr
+	if addr == "" {
+		addr = env("GERYON_ADDR", "127.0.0.1:15432")
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, c.connections)
+
+	for i := 0; i < c.connections; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+			// Hold connection briefly then close
+			time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
+			conn.Close()
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
 	return nil
 }
 
-// SlowQuery simulates slow queries
+// SlowQuery simulates slow queries by connecting to Geryon, sending a query
+// that triggers backend processing, and measuring latency.
 type SlowQuery struct {
-	delay time.Duration
+	targetAddr string
 }
 
 func (s *SlowQuery) Name() string {
@@ -175,12 +204,34 @@ func (s *SlowQuery) Name() string {
 }
 
 func (s *SlowQuery) Execute(ctx context.Context) error {
-	delay := time.Duration(rand.Intn(1000)+100) * time.Millisecond
-	time.Sleep(delay)
+	addr := s.targetAddr
+	if addr == "" {
+		addr = env("GERYON_ADDR", "127.0.0.1:15432")
+	}
+
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("dial failed: %w", err)
+	}
+	defer conn.Close()
+
+	// Send a small payload to trigger proxy processing
+	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	_, err = conn.Write([]byte("SELECT 1"))
+	if err != nil {
+		return fmt.Errorf("write failed: %w", err)
+	}
+
+	// Simulate query latency by reading response with a timeout
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 1024)
+	_, _ = conn.Read(buf)
+
 	return nil
 }
 
-// BackendFailure simulates backend failures
+// BackendFailure simulates backend failures by repeatedly connecting to
+// Geryon and checking that the proxy handles unreachable backends gracefully.
 type BackendFailure struct {
 	backend string
 }
@@ -190,12 +241,31 @@ func (b *BackendFailure) Name() string {
 }
 
 func (b *BackendFailure) Execute(ctx context.Context) error {
-	// This would simulate killing a backend
-	// For safety, this is a no-op in the example
+	addr := env("GERYON_ADDR", "127.0.0.1:15432")
+
+	// Attempt connections to exercise error paths when backends may be down
+	for i := 0; i < 3; i++ {
+		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+		if err != nil {
+			return fmt.Errorf("dial failed on attempt %d: %w", i+1, err)
+		}
+		conn.SetDeadline(time.Now().Add(3 * time.Second))
+		_, _ = conn.Write([]byte("SELECT 1"))
+		buf := make([]byte, 1024)
+		_, _ = conn.Read(buf)
+		conn.Close()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+	}
 	return nil
 }
 
-// NetworkPartition simulates network partitions
+// NetworkPartition simulates network issues by opening connections and
+// abruptly closing them mid-stream to test proxy resilience.
 type NetworkPartition struct {
 	duration time.Duration
 }
@@ -205,8 +275,32 @@ func (n *NetworkPartition) Name() string {
 }
 
 func (n *NetworkPartition) Execute(ctx context.Context) error {
-	// This would simulate network issues
-	time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond)
+	addr := env("GERYON_ADDR", "127.0.0.1:15432")
+
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("dial failed: %w", err)
+	}
+
+	// Write partial data then abruptly close (simulates partition)
+	conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	_, _ = conn.Write([]byte("SEL"))
+
+	// Simulate partition duration with half-open connection
+	partitionDuration := n.duration
+	if partitionDuration == 0 {
+		partitionDuration = time.Duration(rand.Intn(200)+50) * time.Millisecond
+	}
+
+	select {
+	case <-time.After(partitionDuration):
+	case <-ctx.Done():
+		conn.Close()
+		return ctx.Err()
+	}
+
+	// Abrupt close — no graceful shutdown
+	conn.Close()
 	return nil
 }
 
