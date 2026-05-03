@@ -875,6 +875,8 @@ auth:
   users:
     - username: "app"
       password_hash: "SCRAM-SHA-256$4096:salt:storedkey:serverkey"
+      # mysql_password_hash: ""  # SHA256(SHA256(password)) hex, for MySQL caching_sha2_password
+      # ntlm_password_hash: ""   # NT hash (MD4 of UTF-16LE password) hex, for MSSQL NTLMv2
       max_connections: 1000
       allowed_pools: ["*"]
 

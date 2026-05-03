@@ -508,6 +508,9 @@ type ProxySession struct {
 	pendingParseMu    sync.Mutex
 	pendingParseStmt  string // statement name waiting for ParseComplete confirmation
 	pendingParseQuery string // query for the pending parse
+	// NTLM state for MSSQL interception auth verification
+	ntlmServerChallenge [8]byte           // captured from server's Type 2 challenge
+	ntlmUser            *auth.User        // user whose NTLM hash to verify
 }
 
 var (
@@ -1894,7 +1897,17 @@ func (ps *ProxySession) forwardMySQLAuth() error {
 					return err
 				}
 
-				// Forward to server
+				// Verify NTLMv2 credentials if proxy has stored hash for this user
+		if ps.ntlmUser != nil && ps.ntlmUser.NTLMPasswordHash != "" {
+			if err := ps.verifyNTLMClientResponse(clientPayload, clientHeader[0]); err != nil {
+				ps.log.Warn("NTLMv2 verification failed", "user", ps.ntlmUser.Username, "error", err)
+				ps.recordAuthFailure()
+				return fmt.Errorf("NTLM authentication failed: %w", err)
+			}
+			ps.log.Debug("NTLMv2 verification succeeded", "user", ps.ntlmUser.Username)
+		}
+
+		// Forward to server
 				clientPkt := make([]byte, 4+clientLength)
 				copy(clientPkt, clientHeader)
 				clientPkt[3] = seq + 1
@@ -2060,12 +2073,19 @@ func (ps *ProxySession) handleMSSQLPassthrough(ctx context.Context) error {
 
 // handleMSSQLInterception handles MSSQL interception authentication.
 // Geryon verifies user exists and has pool access, then forwards auth to backend.
+// If the user has an NTLM password hash stored, the proxy also verifies the
+// NTLMv2 challenge-response locally during the SSPI exchange.
 func (ps *ProxySession) handleMSSQLInterception(ctx context.Context, user *auth.User, clientIP string, preLoginData, login7Data []byte) error {
 	// Verify user exists in Geryon database
 	if user == nil {
 		ps.log.Warn("Unknown user in interception mode", "user", sanitizeLogValue(ps.username))
 		ps.recordAuthFailure()
 		return fmt.Errorf("unknown user: %s", ps.username)
+	}
+
+	// Store user for NTLM verification during SSPI exchange
+	if user.NTLMPasswordHash != "" {
+		ps.ntlmUser = user
 	}
 
 	// Check per-user connection limit
@@ -2195,7 +2215,12 @@ func (ps *ProxySession) forwardMSSQLLogin7Response() error {
 		// Check for SSPI/NTLM authentication token (TokenTypeSSPI = 0xED)
 		// or SSPI packet type (0x11) — indicates challenge-response is needed
 		if respPayloadLen > 0 && (respPayload[0] == 0xED || respHeader[0] == 0x11) {
-			// Forward SSPI challenge to client
+			// Capture NTLM Type 2 challenge for local verification
+				if ps.ntlmUser != nil {
+					ps.captureNTLMChallenge(respPayload, respHeader[0])
+				}
+
+				// Forward SSPI challenge to client
 			resp := make([]byte, respLength)
 			copy(resp[0:8], respHeader)
 			copy(resp[8:], respPayload)
@@ -2298,6 +2323,59 @@ func (ps *ProxySession) forwardMSSQLClientSSPIResponse(serverReader *bufio.Reade
 		if respHeader[1]&0x01 != 0 {
 			break
 		}
+	}
+
+	return nil
+}
+
+// captureNTLMChallenge extracts the server challenge from an NTLM Type 2 message
+// embedded in a TDS SSPI payload.
+func (ps *ProxySession) captureNTLMChallenge(payload []byte, packetType byte) {
+	ntlmData := payload
+	if packetType == 0xED && len(payload) > 3 {
+		ntlmLen := int(binary.LittleEndian.Uint16(payload[1:3]))
+		if len(payload) >= 3+ntlmLen {
+			ntlmData = payload[3 : 3+ntlmLen]
+		}
+	}
+
+	chal, err := auth.ParseNTLMChallenge(ntlmData)
+	if err != nil {
+		ps.log.Debug("Failed to parse NTLM challenge for capture", "error", err)
+		return
+	}
+	ps.ntlmServerChallenge = chal.Challenge
+	ps.log.Debug("Captured NTLM server challenge for verification")
+}
+
+// verifyNTLMClientResponse verifies the client's NTLM Type 3 response against
+// the stored NT password hash for the user.
+func (ps *ProxySession) verifyNTLMClientResponse(payload []byte, packetType byte) error {
+	ntlmData := payload
+	if packetType == 0x11 {
+		ntlmData = payload
+	} else if len(payload) > 3 {
+		ntlmLen := int(binary.LittleEndian.Uint16(payload[1:3]))
+		if len(payload) >= 3+ntlmLen {
+			ntlmData = payload[3 : 3+ntlmLen]
+		}
+	}
+
+	authMsg, err := auth.ParseNTLMAuthenticate(ntlmData)
+	if err != nil {
+		return fmt.Errorf("failed to parse NTLM authenticate: %w", err)
+	}
+
+	ntHash := make([]byte, len(ps.ntlmUser.NTLMPasswordHash)/2)
+	for i := 0; i < len(ntHash); i++ {
+		_, err := fmt.Sscanf(ps.ntlmUser.NTLMPasswordHash[i*2:i*2+2], "%02x", &ntHash[i])
+		if err != nil {
+			return fmt.Errorf("invalid NTLM password hash format: %w", err)
+		}
+	}
+
+	if !auth.VerifyNTLMResponse(authMsg, ps.ntlmServerChallenge, ntHash) {
+		return fmt.Errorf("NTLMv2 response verification failed for user %s", ps.ntlmUser.Username)
 	}
 
 	return nil

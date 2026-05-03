@@ -63,6 +63,8 @@ type Cluster struct {
 	votedFor      string
 	leaderID      string
 	votesReceived map[string]bool
+	logEntries    []LogEntry
+	commitIndex   uint64
 
 	// Membership
 	nodes map[string]*Node
@@ -98,6 +100,8 @@ const (
 	RPCAppendEntries   = "AppendEntries"
 	RPCHeartbeat       = "Heartbeat"
 	RPCInstallSnapshot = "InstallSnapshot"
+	RPCJoin            = "Join"
+	RPCPingReq         = "PingReq"
 )
 
 // C-2 fix: computeHMAC computes an HMAC-SHA256 signature for cluster messages.
@@ -274,7 +278,7 @@ func (c *Cluster) handleRPC(conn net.Conn) {
 
 	// Validate RPC type to prevent unknown type processing
 	switch rpc.Type {
-	case RPCVoteRequest, RPCVoteResponse, RPCAppendEntries, RPCHeartbeat, RPCInstallSnapshot:
+	case RPCVoteRequest, RPCVoteResponse, RPCAppendEntries, RPCHeartbeat, RPCInstallSnapshot, RPCJoin, RPCPingReq:
 		// Known type, proceed
 	default:
 		c.log.Debug("Unknown RPC type", "type", rpc.Type)
@@ -329,6 +333,10 @@ func (c *Cluster) handleRaftRPC(rpc RPC) {
 		c.handleAppendEntries(rpc)
 	case RPCHeartbeat:
 		c.handleHeartbeat(rpc)
+	case RPCJoin:
+		c.handleJoin(rpc)
+	case RPCPingReq:
+		c.handlePingReq(rpc)
 	}
 }
 
@@ -365,7 +373,6 @@ type LogEntry struct {
 
 // handleVoteRequest processes a vote request.
 func (c *Cluster) handleVoteRequest(rpc RPC) {
-	// Must not use defer Unlock() since we may release lock early for sendRPC
 	c.mu.Lock()
 
 	var req VoteRequest
@@ -375,7 +382,6 @@ func (c *Cluster) handleVoteRequest(rpc RPC) {
 		return
 	}
 
-	// Reply false if term < currentTerm
 	if req.Term < c.currentTerm {
 		term := c.currentTerm
 		c.mu.Unlock()
@@ -386,14 +392,12 @@ func (c *Cluster) handleVoteRequest(rpc RPC) {
 		return
 	}
 
-	// If term > currentTerm, update term and become follower
 	if req.Term > c.currentTerm {
 		c.currentTerm = req.Term
 		c.state = NodeStateFollower
 		c.votedFor = ""
 	}
 
-	// Check if we can grant vote
 	canVote := (c.votedFor == "" || c.votedFor == req.CandidateID)
 
 	if canVote {
@@ -420,7 +424,6 @@ func (c *Cluster) handleVoteResponse(rpc RPC) {
 		return
 	}
 
-	// Ignore if not a candidate or term is outdated
 	if c.state != NodeStateCandidate || resp.Term < c.currentTerm {
 		return
 	}
@@ -440,30 +443,71 @@ func (c *Cluster) handleVoteResponse(rpc RPC) {
 	}
 }
 
-// handleAppendEntries processes append entries.
+// handleAppendEntries processes append entries with full log replication.
 func (c *Cluster) handleAppendEntries(rpc RPC) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	var req AppendEntries
 	if err := json.Unmarshal(rpc.Payload, &req); err != nil {
 		c.log.Error("Failed to unmarshal append entries", "error", err)
+		c.mu.Unlock()
 		return
 	}
 
-	// Reply false if term < currentTerm
+	resp := VoteResponse{
+		Term:        c.currentTerm,
+		VoteGranted: false,
+	}
+
 	if req.Term < c.currentTerm {
-		// Send response with current term
+		c.mu.Unlock()
+		c.sendRPC(rpc.From, RPCVoteResponse, resp)
 		return
 	}
 
-	// If term >= currentTerm, recognize leader
-	if req.Term >= c.currentTerm {
-		c.currentTerm = req.Term
-		c.state = NodeStateFollower
-		c.leaderID = req.LeaderID
-		c.votedFor = ""
+	c.currentTerm = req.Term
+	c.state = NodeStateFollower
+	c.leaderID = req.LeaderID
+	c.votedFor = ""
+
+	if req.PrevLogIndex > 0 {
+		if int(req.PrevLogIndex) > len(c.logEntries) {
+			c.mu.Unlock()
+			c.sendRPC(rpc.From, RPCVoteResponse, resp)
+			return
+		}
+		if len(c.logEntries) > 0 && c.logEntries[req.PrevLogIndex-1].Term != req.PrevLogTerm {
+			c.logEntries = c.logEntries[:req.PrevLogIndex-1]
+			c.mu.Unlock()
+			c.sendRPC(rpc.From, RPCVoteResponse, resp)
+			return
+		}
 	}
+
+	for _, entry := range req.Entries {
+		if int(entry.Index) <= len(c.logEntries) {
+			if int(entry.Index) == len(c.logEntries) {
+				c.logEntries = append(c.logEntries, entry)
+			} else if c.logEntries[entry.Index-1].Term != entry.Term {
+				c.logEntries = c.logEntries[:entry.Index-1]
+				c.logEntries = append(c.logEntries, entry)
+			}
+		}
+	}
+
+	if req.LeaderCommit > c.commitIndex {
+		if req.LeaderCommit > uint64(len(c.logEntries)) {
+			c.commitIndex = uint64(len(c.logEntries))
+		} else {
+			c.commitIndex = req.LeaderCommit
+		}
+	}
+
+	resp.Term = c.currentTerm
+	resp.VoteGranted = true
+
+	c.mu.Unlock()
+	c.sendRPC(rpc.From, RPCVoteResponse, resp)
 }
 
 // handleHeartbeat processes heartbeat messages.
@@ -501,7 +545,6 @@ func (c *Cluster) startElection() {
 
 	c.log.Info("Starting election", "term", c.currentTerm, "node", c.nodeID)
 
-	// Request votes from all other nodes
 	req := VoteRequest{
 		Term:        c.currentTerm,
 		CandidateID: c.nodeID,
@@ -522,7 +565,6 @@ func (c *Cluster) becomeLeader() {
 
 	c.log.Info("Became leader", "term", c.currentTerm, "node", c.nodeID)
 
-	// Send immediate heartbeat
 	c.sendHeartbeats()
 }
 
@@ -554,7 +596,6 @@ func (c *Cluster) sendRPC(to string, rpcType string, payload interface{}) {
 		return
 	}
 
-	// Read node address from map with read lock held
 	c.mu.RLock()
 	node, ok := c.nodes[to]
 	c.mu.RUnlock()
@@ -562,7 +603,6 @@ func (c *Cluster) sendRPC(to string, rpcType string, payload interface{}) {
 		return
 	}
 
-	// C-2 fix: Use TLS dial if configured
 	var conn net.Conn
 	if c.config.TLSConfig != nil {
 		conn, err = tls.Dial("tcp", node.Address, c.config.TLSConfig)
@@ -575,7 +615,6 @@ func (c *Cluster) sendRPC(to string, rpcType string, payload interface{}) {
 	}
 	defer conn.Close()
 
-	// Set write deadline to prevent hanging on slow nodes
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 
 	rpc := RPC{
@@ -584,7 +623,6 @@ func (c *Cluster) sendRPC(to string, rpcType string, payload interface{}) {
 		Payload: data,
 	}
 
-	// C-2 fix: Sign RPC with HMAC-SHA256
 	if c.config.Secret != "" {
 		rpc.Signature = computeHMAC(c.config.Secret, rpcType, c.nodeID, data)
 	}
@@ -605,13 +643,20 @@ func (c *Cluster) quorum() int {
 	return (len(c.nodes) / 2) + 1
 }
 
-// joinPeers attempts to join the configured peers.
+// joinPeers sends join requests to configured peers.
 func (c *Cluster) joinPeers() {
-	time.Sleep(1 * time.Second) // Give time for server to start
+	time.Sleep(1 * time.Second)
 
 	for _, peer := range c.config.Peers {
 		c.log.Info("Attempting to join peer", "peer", peer)
-		// Implementation would send a join request
+		joinReq := struct {
+			NodeID  string `json:"node_id"`
+			Address string `json:"address"`
+		}{
+			NodeID:  c.nodeID,
+			Address: c.config.ListenAddr,
+		}
+		c.sendRPC(peer, RPCJoin, joinReq)
 	}
 }
 
@@ -659,6 +704,69 @@ func (c *Cluster) AddNode(node *Node) {
 	}
 }
 
+// handleJoin processes a join request from a new node.
+func (c *Cluster) handleJoin(rpc RPC) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var req struct {
+		NodeID  string `json:"node_id"`
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal(rpc.Payload, &req); err != nil {
+		c.log.Error("Failed to unmarshal join request", "error", err)
+		return
+	}
+
+	if req.NodeID == "" || req.Address == "" {
+		c.log.Warn("Invalid join request: missing node_id or address")
+		return
+	}
+
+	if _, exists := c.nodes[req.NodeID]; exists {
+		c.log.Debug("Node already in cluster", "node_id", req.NodeID)
+		return
+	}
+
+	c.nodes[req.NodeID] = &Node{
+		ID:       req.NodeID,
+		Address:  req.Address,
+		State:    NodeStateFollower,
+		LastSeen: time.Now(),
+	}
+	c.log.Info("Node joined cluster", "node_id", req.NodeID, "address", req.Address)
+
+	if c.state == NodeStateLeader {
+		c.sendHeartbeats()
+	}
+}
+
+// handlePingReq processes an indirect ping request from another node.
+func (c *Cluster) handlePingReq(rpc RPC) {
+	var req struct {
+		TargetID   string `json:"target_id"`
+		TargetAddr string `json:"target_addr"`
+	}
+	if err := json.Unmarshal(rpc.Payload, &req); err != nil {
+		c.log.Error("Failed to unmarshal ping request", "error", err)
+		return
+	}
+
+	conn, err := net.DialTimeout("tcp", req.TargetAddr, 3*time.Second)
+	if err != nil {
+		c.log.Debug("Indirect probe failed", "target", req.TargetID, "error", err)
+		return
+	}
+	conn.Close()
+
+	c.mu.RLock()
+	if node, ok := c.nodes[req.TargetID]; ok {
+		node.LastSeen = time.Now()
+		node.State = NodeStateFollower
+	}
+	c.mu.RUnlock()
+}
+
 // run runs the SWIM gossip protocol.
 func (s *SwimGossip) run() {
 	ticker := time.NewTicker(s.protocolPeriod)
@@ -679,7 +787,6 @@ func (s *SwimGossip) protocolRound() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Select random node to probe
 	nodes := s.cluster.GetNodes()
 	if len(nodes) <= 1 {
 		return
@@ -699,55 +806,46 @@ func (s *SwimGossip) protocolRound() {
 		return
 	}
 
-	// Probe the target
 	go s.probe(target)
 }
 
 // probe sends a direct ping to a node with retry.
 func (s *SwimGossip) probe(target *Node) {
-	// CRIT-1 fix: Acquire semaphore to bound concurrent probes
 	select {
 	case s.probeSem <- struct{}{}:
 	default:
-		return // Skip if semaphore full
+		return
 	}
 	defer func() { <-s.probeSem }()
 
-	// Retry with exponential backoff for probe
 	const maxRetries = 3
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 50ms, 100ms, 200ms
 			backoff := time.Duration(50<<attempt) * time.Millisecond
-			// Cap at probe timeout
 			if backoff > s.probeTimeout {
 				backoff = s.probeTimeout
 			}
 			time.Sleep(backoff)
 		}
 
-		// Send ping with deadline
 		conn, err := net.DialTimeout("tcp", target.Address, s.probeTimeout)
 		if err != nil {
-			continue // Retry on connection failure
+			continue
 		}
 
-		// Set read deadline for the probe
 		conn.SetReadDeadline(time.Now().Add(s.probeTimeout))
 
-		// Node responded, mark as alive - hold mutex for entire update
 		s.mu.Lock()
 		s.alive[target.ID] = time.Now()
 		delete(s.suspected, target.ID)
 		target.LastSeen = time.Now()
-		target.State = NodeStateFollower // M-3 fix: update under lock
+		target.State = NodeStateFollower
 		s.mu.Unlock()
 		conn.Close()
 		return
 	}
 
-	// All retries exhausted, start indirect probing
 	s.indirectProbe(target)
 }
 
@@ -757,13 +855,19 @@ func (s *SwimGossip) indirectProbe(target *Node) {
 	s.suspected[target.ID] = time.Now()
 	s.mu.Unlock()
 
-	// Ask k random nodes to probe the target
 	nodes := s.cluster.GetNodes()
 	asked := 0
 
 	for _, n := range nodes {
 		if n.ID != s.cluster.nodeID && n.ID != target.ID && asked < s.numIndirectProbes {
-			// Send indirect ping request
+			pingReq := struct {
+				TargetID   string `json:"target_id"`
+				TargetAddr string `json:"target_addr"`
+			}{
+				TargetID:   target.ID,
+				TargetAddr: target.Address,
+			}
+			s.cluster.sendRPC(n.ID, RPCPingReq, pingReq)
 			asked++
 		}
 	}
