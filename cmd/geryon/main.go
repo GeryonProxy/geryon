@@ -248,6 +248,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	restServer.SetTracer(tracer)
+
 	if err := restServer.Start(); err != nil {
 		log.Error("Failed to start REST server", "error", err)
 		os.Exit(1)
@@ -294,8 +296,9 @@ func main() {
 		Listen: cfg.Admin.GRPC.Listen,
 		Auth:   cfg.Admin.GRPC.Auth,
 	}, poolMgr, log, reloadFn)
-	if err := grpcServer.Start(); err != nil {
-		log.Error("Failed to start gRPC server", "error", err)
+		grpcServer.SetTracer(tracer)
+		if err := grpcServer.Start(); err != nil {
+			log.Error("Failed to start gRPC server", "error", err)
 		os.Exit(1)
 	}
 

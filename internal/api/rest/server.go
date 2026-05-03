@@ -34,6 +34,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/proxy"
+	"github.com/GeryonProxy/geryon/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 //go:embed static/*
@@ -71,6 +73,7 @@ type Server struct {
 	cluster    Cluster
 	userDB     *auth.UserDatabase
 	userMu     sync.Mutex // serializes user persistence operations
+	tracer     *tracing.Tracer
 }
 
 // NewServer creates a new REST API server.
@@ -133,7 +136,7 @@ func NewServer(cfg *config.AdminRESTConfig, poolMgr *pool.Manager, listeners []*
 	writeTimeout := parseDuration(cfg.WriteTimeout, 30*time.Second)
 	s.httpServer = &http.Server{
 		Addr:         cfg.Listen,
-		Handler:      s.withLogging(s.withPanicRecovery(s.withRateLimit(s.withSecurityHeaders(s.withCORS(s.withAuth(mux)))))),
+		Handler:      s.withTracing(s.withLogging(s.withPanicRecovery(s.withRateLimit(s.withSecurityHeaders(s.withCORS(s.withAuth(mux))))))),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  60 * time.Second,
@@ -223,6 +226,27 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"duration", time.Since(start),
 		)
+	})
+}
+
+// SetTracer sets the OpenTelemetry tracer for the REST API.
+func (s *Server) SetTracer(t *tracing.Tracer) {
+	s.tracer = t
+}
+
+func (s *Server) withTracing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.tracer == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		_, end := s.tracer.StartSpan(r.Context(), "rest.api."+r.URL.Path)
+		tracing.AddSpanAttributes(r.Context(),
+			attribute.String("http.method", r.Method),
+			attribute.String("http.path", r.URL.Path),
+		)
+		defer end()
+		next.ServeHTTP(w, r)
 	})
 }
 

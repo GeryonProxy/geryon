@@ -21,6 +21,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/config"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
+	"github.com/GeryonProxy/geryon/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Server implements an HTTP Admin API for streaming stats.
@@ -39,6 +41,7 @@ type Server struct {
 	authToken   string
 	authEnabled bool
 	reloadFn    func() error
+	tracer      *tracing.Tracer
 }
 
 // Config holds HTTP/2 Admin API server configuration.
@@ -77,6 +80,11 @@ func NewServer(cfg *Config, poolMgr *pool.Manager, log *logger.Logger, reloadFn 
 	return s
 }
 
+// SetTracer sets the OpenTelemetry tracer for the admin API.
+func (s *Server) SetTracer(t *tracing.Tracer) {
+	s.tracer = t
+}
+
 // Start starts the HTTP/2 Admin API server.
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
@@ -101,7 +109,7 @@ func (s *Server) Start() error {
 	writeTimeout := parseDuration(s.config.WriteTimeout, 30*time.Second)
 	s.server = &http.Server{
 		Addr:         s.config.Listen,
-		Handler:      s.withLogging(s.withPanicRecovery(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux))))),
+		Handler:      s.withTracing(s.withLogging(s.withPanicRecovery(s.withSecurityHeaders(s.withRateLimit(s.withAuth(mux)))))),
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  60 * time.Second,
@@ -142,6 +150,22 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"duration", time.Since(start),
 		)
+	})
+}
+
+func (s *Server) withTracing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.tracer == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		_, end := s.tracer.StartSpan(r.Context(), "admin.api."+r.URL.Path)
+		tracing.AddSpanAttributes(r.Context(),
+			attribute.String("http.method", r.Method),
+			attribute.String("http.path", r.URL.Path),
+		)
+		defer end()
+		next.ServeHTTP(w, r)
 	})
 }
 
