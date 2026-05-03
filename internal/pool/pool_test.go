@@ -483,6 +483,57 @@ func BenchmarkBackendAddress(b *testing.B) {
 	}
 }
 
+func BenchmarkWaitQueueSignal(b *testing.B) {
+	wq := NewWaitQueue(10000)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for b.Loop() {
+		// Simulate a waiter arriving and being signaled immediately
+		go func() {
+			time.Sleep(time.Microsecond)
+			wq.Signal(&ServerConn{})
+		}()
+		wq.Wait(ctx, 5*time.Second)
+	}
+}
+
+func BenchmarkWaitQueueSignalParallel(b *testing.B) {
+	wq := NewWaitQueue(10000)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			go func() {
+				time.Sleep(time.Microsecond)
+				wq.Signal(&ServerConn{})
+			}()
+			wq.Wait(ctx, 5*time.Second)
+		}
+	})
+}
+
+func BenchmarkWaitQueueHighContention(b *testing.B) {
+	wq := NewWaitQueue(10000)
+	ctx := context.Background()
+
+	// Pre-fill with waiters to simulate high contention
+	for i := 0; i < 500; i++ {
+		go func() {
+			wq.Wait(ctx, 10*time.Second)
+		}()
+	}
+
+	// Let waiters settle
+	time.Sleep(10 * time.Millisecond)
+
+	b.ResetTimer()
+	for b.Loop() {
+		wq.Signal(&ServerConn{})
+	}
+}
+
 func TestManager_CreatePool(t *testing.T) {
 	log, _ := logger.New("error", "json")
 	mgr := NewManager(log)
