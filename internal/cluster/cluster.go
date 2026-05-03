@@ -48,6 +48,9 @@ type Config struct {
 	ElectionTimeout   time.Duration
 	HeartbeatInterval time.Duration
 	Logger            *logger.Logger
+
+	// OnBackendHealth is called when a backend health update is received from the leader.
+	OnBackendHealth func(backendID string, healthy bool, sourceNode string)
 }
 
 // Cluster manages distributed consensus and node membership.
@@ -102,6 +105,7 @@ const (
 	RPCInstallSnapshot = "InstallSnapshot"
 	RPCJoin            = "Join"
 	RPCPingReq         = "PingReq"
+	RPCBackendHealth   = "backend_health"
 )
 
 // C-2 fix: computeHMAC computes an HMAC-SHA256 signature for cluster messages.
@@ -278,7 +282,7 @@ func (c *Cluster) handleRPC(conn net.Conn) {
 
 	// Validate RPC type to prevent unknown type processing
 	switch rpc.Type {
-	case RPCVoteRequest, RPCVoteResponse, RPCAppendEntries, RPCHeartbeat, RPCInstallSnapshot, RPCJoin, RPCPingReq:
+	case RPCVoteRequest, RPCVoteResponse, RPCAppendEntries, RPCHeartbeat, RPCInstallSnapshot, RPCJoin, RPCPingReq, RPCBackendHealth:
 		// Known type, proceed
 	default:
 		c.log.Debug("Unknown RPC type", "type", rpc.Type)
@@ -337,6 +341,8 @@ func (c *Cluster) handleRaftRPC(rpc RPC) {
 		c.handleJoin(rpc)
 	case RPCPingReq:
 		c.handlePingReq(rpc)
+	case RPCBackendHealth:
+		c.handleBackendHealth(rpc)
 	}
 }
 
@@ -765,6 +771,31 @@ func (c *Cluster) handlePingReq(rpc RPC) {
 		node.State = NodeStateFollower
 	}
 	c.mu.RUnlock()
+}
+
+// BackendHealthUpdate represents a backend health update received from the leader.
+type BackendHealthUpdate struct {
+	BackendID string `json:"backend_id"`
+	Healthy   bool   `json:"healthy"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+func (c *Cluster) handleBackendHealth(rpc RPC) {
+	var update BackendHealthUpdate
+	if err := json.Unmarshal(rpc.Payload, &update); err != nil {
+		c.log.Error("Failed to unmarshal backend health update", "error", err)
+		return
+	}
+
+	c.log.Debug("Received backend health update",
+		"backend", update.BackendID,
+		"healthy", update.Healthy,
+		"from", rpc.From,
+	)
+
+	if c.config.OnBackendHealth != nil {
+		c.config.OnBackendHealth(update.BackendID, update.Healthy, rpc.From)
+	}
 }
 
 // run runs the SWIM gossip protocol.

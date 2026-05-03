@@ -1337,6 +1337,7 @@ func TestCluster_handleRPC_ValidVoteRequest(t *testing.T) {
 		NodeID:     "node-1",
 		ListenAddr: "127.0.0.1:0",
 		Logger:     log,
+		Secret:     "test-secret",
 	})
 
 	client, server := net.Pipe()
@@ -1344,10 +1345,12 @@ func TestCluster_handleRPC_ValidVoteRequest(t *testing.T) {
 
 	// Send a valid VoteRequest RPC from client side
 	go func() {
+		payload := []byte(`{"term":1,"candidate_id":"node-2"}`)
 		rpc := RPC{
-			From:    "node-2",
-			Type:    RPCVoteRequest,
-			Payload: []byte(`{"term":1,"candidate_id":"node-2"}`),
+			From:      "node-2",
+			Type:      RPCVoteRequest,
+			Payload:   payload,
+			Signature: computeHMAC("test-secret", RPCVoteRequest, "node-2", payload),
 		}
 		json.NewEncoder(client).Encode(rpc)
 	}()
@@ -1414,16 +1417,19 @@ func TestCluster_handleRPC_UnknownType(t *testing.T) {
 		NodeID:     "node-1",
 		ListenAddr: "127.0.0.1:0",
 		Logger:     log,
+		Secret:     "test-secret",
 	})
 
 	client, server := net.Pipe()
 	defer client.Close()
 
 	go func() {
+		payload := []byte(`{}`)
 		rpc := RPC{
-			From:    "node-2",
-			Type:    "UnknownType",
-			Payload: []byte(`{}`),
+			From:      "node-2",
+			Type:      "UnknownType",
+			Payload:   payload,
+			Signature: computeHMAC("test-secret", "UnknownType", "node-2", payload),
 		}
 		json.NewEncoder(client).Encode(rpc)
 	}()
@@ -1446,7 +1452,7 @@ func TestCluster_handleRPC_UnknownType(t *testing.T) {
 
 // TestCluster_handleRPC_AllKnownTypes tests handleRPC with all valid RPC types
 func TestCluster_handleRPC_AllKnownTypes(t *testing.T) {
-	types := []string{RPCVoteRequest, RPCVoteResponse, RPCAppendEntries, RPCHeartbeat, RPCInstallSnapshot}
+	types := []string{RPCVoteRequest, RPCVoteResponse, RPCAppendEntries, RPCHeartbeat, RPCInstallSnapshot, RPCBackendHealth}
 
 	for _, rpcType := range types {
 		t.Run(rpcType, func(t *testing.T) {
@@ -1455,16 +1461,19 @@ func TestCluster_handleRPC_AllKnownTypes(t *testing.T) {
 				NodeID:     "node-1",
 				ListenAddr: "127.0.0.1:0",
 				Logger:     log,
+				Secret:     "test-secret",
 			})
 
 			client, server := net.Pipe()
 			defer client.Close()
 
 			go func() {
+				payload := []byte(`{}`)
 				rpc := RPC{
-					From:    "node-2",
-					Type:    rpcType,
-					Payload: []byte(`{}`),
+					From:      "node-2",
+					Type:      rpcType,
+					Payload:   payload,
+					Signature: computeHMAC("test-secret", rpcType, "node-2", payload),
 				}
 				json.NewEncoder(client).Encode(rpc)
 			}()

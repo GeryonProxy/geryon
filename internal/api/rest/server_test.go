@@ -393,6 +393,7 @@ func TestServer_ConfigReloadEndpoint(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", "http://"+s.listener.Addr().String()+"/api/v1/config/reload", nil)
 	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /config/reload failed: %v", err)

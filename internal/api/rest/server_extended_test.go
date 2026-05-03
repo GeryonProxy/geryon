@@ -741,6 +741,7 @@ func TestServer_Ready(t *testing.T) {
 	// Test POST (should fail)
 	req2, _ := http.NewRequest("POST", "http://"+s.listener.Addr().String()+"/api/v1/ready", nil)
 	req2.Header.Set("Authorization", "Bearer "+testToken)
+	req2.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
@@ -786,6 +787,7 @@ func TestServer_Health(t *testing.T) {
 	// Test POST (should fail)
 	req2, _ := http.NewRequest("POST", "http://"+s.listener.Addr().String()+"/api/v1/health", nil)
 	req2.Header.Set("Authorization", "Bearer "+testToken)
+	req2.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
@@ -865,6 +867,7 @@ func TestServer_Connections(t *testing.T) {
 	// Test POST (should fail)
 	req2, _ := http.NewRequest("POST", "http://"+s.listener.Addr().String()+"/api/v1/connections", nil)
 	req2.Header.Set("Authorization", "Bearer "+testToken)
+	req2.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
