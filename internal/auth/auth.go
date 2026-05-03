@@ -24,6 +24,7 @@ type User struct {
 	Username          string
 	PasswordHash      string // SCRAM-SHA-256 format (PostgreSQL)
 	MysqlPasswordHash string // SHA256(SHA256(password)) for MySQL caching_sha2_password
+	NTLMPasswordHash  string // NT hash (MD4 of UTF-16LE password) hex-encoded, for MSSQL NTLMv2
 	MaxConnections    int
 	DefaultPool       string
 	AllowedPools      []string
@@ -65,6 +66,7 @@ func (db *UserDatabase) LoadFromConfig(cfg *config.AuthConfig) error {
 			Username:          u.Username,
 			PasswordHash:      u.PasswordHash,
 			MysqlPasswordHash: u.MysqlPasswordHash,
+				NTLMPasswordHash:  u.NTLMPasswordHash,
 			MaxConnections:    u.MaxConnections,
 			DefaultPool:       u.DefaultPool,
 			AllowedPools:      u.AllowedPools,

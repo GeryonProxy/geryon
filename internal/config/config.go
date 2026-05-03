@@ -135,6 +135,7 @@ type User struct {
 	Username          string   `yaml:"username"`
 	PasswordHash      string   `yaml:"password_hash"`       // SCRAM-SHA-256 (PostgreSQL)
 	MysqlPasswordHash string   `yaml:"mysql_password_hash"` // SHA256(SHA256(password)) for MySQL
+	NTLMPasswordHash  string   `yaml:"ntlm_password_hash"`  // NT hash (hex) for MSSQL NTLMv2
 	MaxConnections    int      `yaml:"max_connections"`
 	DefaultPool       string   `yaml:"default_pool"`
 	AllowedPools      []string `yaml:"allowed_pools"`

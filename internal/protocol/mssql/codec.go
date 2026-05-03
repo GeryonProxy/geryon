@@ -588,8 +588,10 @@ func ParseTokenStream(data []byte) ([]Token, error) {
 			if pos+int(length) > len(data) {
 				return tokens, fmt.Errorf("truncated SSPI token data")
 			}
+			sspiData := make([]byte, length)
+			copy(sspiData, data[pos:pos+int(length)])
 			pos += int(length)
-			tokens = append(tokens, Token{Type: tokenType})
+			tokens = append(tokens, Token{Type: tokenType, Data: sspiData})
 
 		case TokenTypeEnvChange:
 			// Environment change token
@@ -616,6 +618,7 @@ type Token struct {
 	Status      uint16
 	RowCount    uint32
 	ColumnCount int
+	Data        []byte // Raw payload (SSPI auth data, error info, etc.)
 }
 
 // IsFinalToken returns true if this is a final token in a response.
