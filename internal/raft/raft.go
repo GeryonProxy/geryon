@@ -525,6 +525,13 @@ func (n *Node) handleAppendEntries(msg Message) {
 				n.appendEntry(entry)
 			}
 
+			// Persist received entries to WAL for durability
+			if n.wal != nil && len(req.Entries) > 0 {
+				if err := n.wal.AppendBatch(req.Entries); err != nil {
+					n.logger.Error("Failed to persist entries to WAL", "error", err)
+				}
+			}
+
 			// Update commit index
 			if req.LeaderCommit > n.commitIndex.Load() {
 				lastIndex, _ := n.lastLogInfo()

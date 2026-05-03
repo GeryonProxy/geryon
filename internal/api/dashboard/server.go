@@ -721,20 +721,21 @@ func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Write to temp file, then rename. On Windows, rename fails if
-		// destination exists — overwrite the original as fallback instead of
-		// deleting it.
+		s.userMu.Lock()
 		tmpPath := configPath + ".tmp"
 		if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+			s.userMu.Unlock()
 			s.writeErrorJSON(w, http.StatusInternalServerError, "Failed to write config")
 			return
 		}
 		if err := os.Rename(tmpPath, configPath); err != nil {
 			if writeErr := os.WriteFile(configPath, data, 0600); writeErr != nil {
+				s.userMu.Unlock()
 				s.writeErrorJSON(w, http.StatusInternalServerError, "Failed to save config")
 				return
 			}
 		}
+		s.userMu.Unlock()
 
 		s.log.Info("Configuration file updated via dashboard", "path", configPath)
 		s.writeJSON(w, map[string]any{"status": "success", "message": "Configuration saved"})

@@ -358,6 +358,13 @@ func (l *Listener) handleConnection(conn net.Conn) {
 
 // Stop stops the listener.
 func (l *Listener) Stop() error {
+	return l.StopContext(context.Background())
+}
+
+// StopContext stops the listener and waits for in-flight connections to complete,
+// respecting the given context deadline. On context cancellation, remaining
+// sessions are forcefully closed.
+func (l *Listener) StopContext(ctx context.Context) error {
 	l.mu.Lock()
 	if !l.active.Load() {
 		l.mu.Unlock()
@@ -372,10 +379,20 @@ func (l *Listener) Stop() error {
 	}
 	l.mu.Unlock()
 
-	// Wait for in-flight handleConnection goroutines to complete.
-	// Must be done without holding l.mu to avoid deadlock: goroutines
-	// exiting may need to acquire l.mu to delete from sessions.
-	l.connWG.Wait()
+	// Wait for in-flight handleConnection goroutines to complete,
+	// or until context is cancelled.
+	done := make(chan struct{})
+	go func() {
+		l.connWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// All goroutines finished cleanly
+	case <-ctx.Done():
+		l.log.Warn("Shutdown deadline reached while draining connections — forcing close")
+	}
 
 	// Close all active sessions
 	l.mu.Lock()

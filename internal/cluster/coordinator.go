@@ -15,6 +15,11 @@ import (
 	"github.com/GeryonProxy/geryon/internal/tlsutil"
 )
 
+// CacheInvalidator is the interface for invalidating query cache entries.
+type CacheInvalidator interface {
+	InvalidateTables(tables []string)
+}
+
 // Coordinator wires together Raft consensus and SWIM gossip protocols.
 type Coordinator struct {
 	mu sync.RWMutex
@@ -37,9 +42,10 @@ type Coordinator struct {
 	commandCh chan ClusterCommand
 
 	// State
-	members  map[string]*MemberInfo
-	isLeader bool
-	logger   *logger.Logger
+	members         map[string]*MemberInfo
+	isLeader        bool
+	cacheInvalidator CacheInvalidator
+	logger          *logger.Logger
 }
 
 // MemberInfo represents information about a cluster member.
@@ -693,7 +699,16 @@ func (c *Coordinator) onBackendChange(name string, backend *raft.FSMBackend) {
 }
 
 func (c *Coordinator) onCacheInvalidate(pattern string, tables []string) {
-	// Cache invalidation is local - no event needed
+	if c.cacheInvalidator != nil && len(tables) > 0 {
+		c.cacheInvalidator.InvalidateTables(tables)
+	}
+}
+
+// SetCacheInvalidator sets the cache invalidator for cross-node cache coherence.
+func (c *Coordinator) SetCacheInvalidator(invalidator CacheInvalidator) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cacheInvalidator = invalidator
 }
 
 // Public API

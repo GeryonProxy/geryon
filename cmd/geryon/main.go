@@ -387,9 +387,9 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
-	// Stop listeners
+	// Stop listeners (with drain, respects shutdown deadline)
 	for _, listener := range listeners {
-		if err := listener.Stop(); err != nil {
+		if err := listener.StopContext(shutdownCtx); err != nil {
 			log.Error("Failed to stop listener", "error", err)
 		}
 	}

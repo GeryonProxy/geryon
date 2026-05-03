@@ -81,6 +81,7 @@ type Cluster struct {
 	shutdownCh chan struct{}
 	doneCh     chan struct{}
 	rpcSem     chan struct{} // H-4 fix: bounded goroutine semaphore
+	stopOnce   sync.Once
 
 	log *logger.Logger
 }
@@ -204,10 +205,11 @@ func (c *Cluster) Start() error {
 
 // Stop stops the cluster services.
 func (c *Cluster) Stop() error {
-	close(c.shutdownCh)
-	close(c.doneCh)
-
-	c.log.Info("Cluster stopped", "node_id", c.nodeID)
+	c.stopOnce.Do(func() {
+		close(c.shutdownCh)
+		close(c.doneCh)
+		c.log.Info("Cluster stopped", "node_id", c.nodeID)
+	})
 	return nil
 }
 

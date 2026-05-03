@@ -1289,23 +1289,21 @@ func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Write to a temp file first, then rename for atomicity.
-		// On Windows, os.Rename cannot overwrite an existing file. Instead of
-		// deleting the original (which risks data loss if the retry fails), we
-		// copy the temp file contents over the original using WriteFile.
+		s.userMu.Lock()
 		tmpPath := s.configPath + ".tmp"
 		if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+			s.userMu.Unlock()
 			writeError(w, http.StatusInternalServerError, "Failed to write config: "+sanitizeErr(err))
 			return
 		}
 		if err := os.Rename(tmpPath, s.configPath); err != nil {
-			// Rename failed (likely Windows with existing file). Overwrite the
-			// original contents instead of deleting it first.
 			if writeErr := os.WriteFile(s.configPath, data, 0600); writeErr != nil {
+				s.userMu.Unlock()
 				writeError(w, http.StatusInternalServerError, "Failed to save config: "+sanitizeErr(err))
 				return
 			}
 		}
+		s.userMu.Unlock()
 
 		s.log.Info("Configuration file updated", "path", s.configPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
