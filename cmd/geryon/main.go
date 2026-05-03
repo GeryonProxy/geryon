@@ -411,6 +411,11 @@ func main() {
 		}
 	}
 
+	// Flush tracing spans before closing pools
+	if err := tracer.Shutdown(shutdownCtx); err != nil {
+		log.Error("Failed to shutdown tracer", "error", err)
+	}
+
 	// Close pools
 	if err := poolMgr.Close(); err != nil {
 		log.Error("Failed to close pool manager", "error", err)
