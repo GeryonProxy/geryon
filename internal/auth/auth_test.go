@@ -414,6 +414,92 @@ func TestExtractBare(t *testing.T) {
 	}
 }
 
+// TestVerifyNativePassword_InvalidHashLength tests error for invalid hash length
+func TestVerifyNativePassword_InvalidHashLength(t *testing.T) {
+	storedHash := []byte{0x01, 0x02, 0x03} // too short, need 20 bytes
+	scramble := []byte("0123456789ABCDEF0123456789ABCDEF")
+	clientResponse := make([]byte, 20)
+	
+	err := verifyNativePassword(storedHash, scramble, clientResponse)
+	if err == nil {
+		t.Error("verifyNativePassword() = nil, want error for invalid hash length")
+	}
+}
+
+// TestVerifyNativePassword_InvalidClientResponseLength tests error for invalid client response length
+func TestVerifyNativePassword_InvalidClientResponseLength(t *testing.T) {
+	storedHash := make([]byte, 20)
+	scramble := []byte("0123456789ABCDEF0123456789ABCDEF")
+	clientResponse := []byte{0x01, 0x02} // too short, need 20 bytes
+	
+	err := verifyNativePassword(storedHash, scramble, clientResponse)
+	if err == nil {
+		t.Error("verifyNativePassword() = nil, want error for invalid client response length")
+	}
+}
+
+// TestVerifyNativePassword_ScrambleTooShort tests error for scramble too short
+func TestVerifyNativePassword_ScrambleTooShort(t *testing.T) {
+	storedHash := make([]byte, 20)
+	scramble := []byte("01234567") // less than 8 bytes
+	clientResponse := make([]byte, 20)
+	
+	err := verifyNativePassword(storedHash, scramble, clientResponse)
+	if err == nil {
+		t.Error("verifyNativePassword() = nil, want error for scramble too short")
+	}
+}
+
+// TestVerifyNativePassword_WrongPassword tests error for wrong password
+func TestVerifyNativePassword_WrongPassword(t *testing.T) {
+	storedHash := make([]byte, 20)
+	scramble := []byte("0123456789ABCDEF0123456789ABCDEF")
+	// Use wrong client response (all zeros instead of proper XOR result)
+	clientResponse := make([]byte, 20)
+	
+	err := verifyNativePassword(storedHash, scramble, clientResponse)
+	if err == nil {
+		t.Error("verifyNativePassword() = nil, want error for wrong password")
+	}
+}
+
+// TestXorBytes_Basic tests xorBytes basic functionality
+func TestXorBytes_Basic(t *testing.T) {
+	a := []byte{0x01, 0x02, 0x03, 0x04}
+	b := []byte{0xFF, 0xFE, 0xFD, 0xFC}
+	result := xorBytes(a, b)
+	expected := []byte{0xFE, 0xFC, 0xFE, 0xF8}
+	
+	for i := range expected {
+		if result[i] != expected[i] {
+			t.Errorf("xorBytes()[%d] = %x, want %x", i, result[i], expected[i])
+		}
+	}
+}
+
+// TestXorBytes_EqualLengths tests xorBytes with equal length slices
+func TestXorBytes_EqualLengths(t *testing.T) {
+	a := []byte{0xAA, 0xBB, 0xCC}
+	b := []byte{0x11, 0x22, 0x33}
+	result := xorBytes(a, b)
+	
+	if len(result) != 3 {
+		t.Errorf("xorBytes length = %d, want 3", len(result))
+	}
+}
+
+// TestXorBytes_DifferentLengths tests xorBytes with different length slices (returns nil)
+func TestXorBytes_DifferentLengths(t *testing.T) {
+	a := []byte{0x01, 0x02}
+	b := []byte{0xFF, 0xFE, 0xFD}
+	result := xorBytes(a, b)
+
+	// xorBytes returns nil when lengths differ
+	if result != nil {
+		t.Errorf("xorBytes() = %v, want nil for different lengths", result)
+	}
+}
+
 func BenchmarkGenerateSCRAMHash(b *testing.B) {
 	for b.Loop() {
 		GenerateSCRAMHash("benchmarkpassword")

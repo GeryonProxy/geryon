@@ -455,6 +455,97 @@ func TestValidate_AuthTokenRequired(t *testing.T) {
 	}
 }
 
+func TestValidate_AllAdminAuthTokensRequired(t *testing.T) {
+	// Test that all admin auth configurations require tokens when enabled
+	tests := []struct {
+		name        string
+		authEnabled func(cfg *Config)
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "GRPC auth enabled no token",
+			authEnabled: func(cfg *Config) {
+				cfg.Admin.REST.Auth.Enabled = false
+				cfg.Admin.Dashboard.Auth.Enabled = false
+				cfg.Admin.MCP.Auth.Enabled = false
+				cfg.Admin.GRPC.Auth.Enabled = true
+				cfg.Admin.GRPC.Auth.Token = ""
+			},
+			wantErr:     true,
+			errContains: "gRPC auth is enabled but no auth token",
+		},
+		{
+			name: "MCP auth enabled no token",
+			authEnabled: func(cfg *Config) {
+				cfg.Admin.REST.Auth.Enabled = false
+				cfg.Admin.GRPC.Auth.Enabled = false
+				cfg.Admin.Dashboard.Auth.Enabled = false
+				cfg.Admin.MCP.Auth.Enabled = true
+				cfg.Admin.MCP.Auth.Token = ""
+			},
+			wantErr:     true,
+			errContains: "MCP auth is enabled but no auth token",
+		},
+		{
+			name: "Dashboard auth enabled no token",
+			authEnabled: func(cfg *Config) {
+				cfg.Admin.REST.Auth.Enabled = false
+				cfg.Admin.GRPC.Auth.Enabled = false
+				cfg.Admin.MCP.Auth.Enabled = false
+				cfg.Admin.Dashboard.Auth.Enabled = true
+				cfg.Admin.Dashboard.Auth.Token = ""
+			},
+			wantErr:     true,
+			errContains: "Dashboard auth is enabled but no auth token",
+		},
+		{
+			name: "REST auth enabled no token",
+			authEnabled: func(cfg *Config) {
+				cfg.Admin.GRPC.Auth.Enabled = false
+				cfg.Admin.MCP.Auth.Enabled = false
+				cfg.Admin.Dashboard.Auth.Enabled = false
+				cfg.Admin.REST.Auth.Enabled = true
+				cfg.Admin.REST.Auth.Token = ""
+			},
+			wantErr:     true,
+			errContains: "REST auth is enabled but no auth token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tt.authEnabled(cfg)
+			err := Validate(cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("Validate() = nil, want error")
+				} else if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("Validate() error = %q, want containing %q", err.Error(), tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Validate() = %v, want nil", err)
+				}
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDefaultConfig_AdminDefaults(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.Admin.REST.Listen != "127.0.0.1:8080" {

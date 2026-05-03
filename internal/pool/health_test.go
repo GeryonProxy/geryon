@@ -1009,3 +1009,60 @@ func TestHealthChecker_CustomQuery(t *testing.T) {
 		t.Errorf("checkQuery = %q, want SELECT health_check()", hc.checkQuery)
 	}
 }
+
+// TestAllowProbe_CircuitClosed tests AllowProbe when circuit is closed
+func TestAllowProbe_CircuitClosed(t *testing.T) {
+	bh := &BackendHealth{
+		circuitState: CircuitClosed,
+	}
+	if !bh.AllowProbe() {
+		t.Error("AllowProbe() = false, want true when circuit is closed")
+	}
+}
+
+// TestAllowProbe_CircuitOpen_CooldownNotElapsed tests AllowProbe when circuit is open but cooldown hasn't elapsed
+func TestAllowProbe_CircuitOpen_CooldownNotElapsed(t *testing.T) {
+	bh := &BackendHealth{
+		circuitState: CircuitOpen,
+		circuitOpened: time.Now(), // Just now
+	}
+	if bh.AllowProbe() {
+		t.Error("AllowProbe() = true, want false when cooldown not elapsed")
+	}
+}
+
+// TestAllowProbe_CircuitOpen_CooldownElapsed tests AllowProbe when circuit opens and cooldown has elapsed
+func TestAllowProbe_CircuitOpen_CooldownElapsed(t *testing.T) {
+	bh := &BackendHealth{
+		circuitState: CircuitOpen,
+		circuitOpened: time.Now().Add(-35 * time.Second), // 35 seconds ago > 30s cooldown
+	}
+	if !bh.AllowProbe() {
+		t.Error("AllowProbe() = false, want true when cooldown elapsed")
+	}
+	if bh.circuitState != CircuitHalfOpen {
+		t.Errorf("circuitState = %v, want CircuitHalfOpen", bh.circuitState)
+	}
+}
+
+// TestAllowProbe_CircuitHalfOpen_AllowsProbe tests AllowProbe when circuit is half-open
+func TestAllowProbe_CircuitHalfOpen_AllowsProbe(t *testing.T) {
+	bh := &BackendHealth{
+		circuitState: CircuitHalfOpen,
+		lastProbeTime: time.Now().Add(-10 * time.Second), // 10 seconds ago > 5s
+	}
+	if !bh.AllowProbe() {
+		t.Error("AllowProbe() = false, want true when enough time passed in half-open")
+	}
+}
+
+// TestAllowProbe_CircuitHalfOpen_BlocksRapidProbe tests AllowProbe blocks rapid probes in half-open state
+func TestAllowProbe_CircuitHalfOpen_BlocksRapidProbe(t *testing.T) {
+	bh := &BackendHealth{
+		circuitState: CircuitHalfOpen,
+		lastProbeTime: time.Now().Add(-2 * time.Second), // 2 seconds ago < 5s
+	}
+	if bh.AllowProbe() {
+		t.Error("AllowProbe() = true, want false for rapid probe in half-open")
+	}
+}
