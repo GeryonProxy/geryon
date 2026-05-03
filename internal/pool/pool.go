@@ -411,6 +411,7 @@ type WaitQueue struct {
 	mu      sync.Mutex
 	cond    *sync.Cond
 	waiters []*waiter
+	head    int // index of first valid waiter
 	maxSize int
 	metrics waitQueueMetrics
 }
@@ -433,26 +434,47 @@ func NewWaitQueue(maxSize int) *WaitQueue {
 	return wq
 }
 
+// len returns the number of valid waiters.
+func (wq *WaitQueue) len() int {
+	return len(wq.waiters) - wq.head
+}
+
+// shrink removes consumed entries from the front of the slice.
+func (wq *WaitQueue) shrink() {
+	if wq.head > 0 {
+		wq.waiters = wq.waiters[wq.head:]
+		wq.head = 0
+	}
+}
+
 // Wait blocks until a server connection is available or timeout.
 func (wq *WaitQueue) Wait(ctx context.Context, timeout time.Duration) (*ServerConn, error) {
 	w := &waiter{ready: make(chan struct{})}
 
 	wq.mu.Lock()
-	if len(wq.waiters) >= wq.maxSize {
+	if wq.len() >= wq.maxSize {
 		wq.mu.Unlock()
 		return nil, fmt.Errorf("connection queue full (max %d)", wq.maxSize)
 	}
+	wq.shrink()
 	wq.waiters = append(wq.waiters, w)
 	wq.mu.Unlock()
 
 	// Remove waiter from queue on exit
 	defer func() {
 		wq.mu.Lock()
-		for i, waiter := range wq.waiters {
-			if waiter == w {
-				wq.waiters = append(wq.waiters[:i], wq.waiters[i+1:]...)
+		for i := wq.head; i < len(wq.waiters); i++ {
+			if wq.waiters[i] == w {
+				wq.waiters[i] = nil
+				if i == wq.head {
+					wq.head++
+				}
 				break
 			}
+		}
+		// Compact if more than half the slice is consumed
+		if wq.head > len(wq.waiters)/2 {
+			wq.shrink()
 		}
 		wq.mu.Unlock()
 	}()
@@ -508,13 +530,24 @@ func (wq *WaitQueue) Signal(conn *ServerConn) bool {
 	wq.mu.Lock()
 	defer wq.mu.Unlock()
 
-	if len(wq.waiters) == 0 {
+	// Advance past nil entries (removed waiters)
+	for wq.head < len(wq.waiters) && wq.waiters[wq.head] == nil {
+		wq.head++
+	}
+
+	if wq.head >= len(wq.waiters) {
 		return false
 	}
 
 	// Get first waiter (FIFO)
-	w := wq.waiters[0]
-	wq.waiters = wq.waiters[1:]
+	w := wq.waiters[wq.head]
+	wq.waiters[wq.head] = nil
+	wq.head++
+
+	// Compact if more than half consumed
+	if wq.head > len(wq.waiters)/2 {
+		wq.shrink()
+	}
 
 	// Deliver connection
 	w.conn = conn

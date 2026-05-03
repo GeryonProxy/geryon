@@ -25,43 +25,43 @@ var ntlmssPSignature = []byte("NTLMSSP\x00")
 
 // NTLMNegotiate represents a Type 1 (Negotiate) message.
 type NTLMNegotiate struct {
-	Flags     uint32
-	Domain    string
+	Flags       uint32
+	Domain      string
 	Workstation string
 }
 
 // NTLMChallenge represents a Type 2 (Challenge) message.
 type NTLMChallenge struct {
-	TargetName    string
-	Challenge     [8]byte
-	Flags         uint32
-	TargetInfo    []byte
+	TargetName string
+	Challenge  [8]byte
+	Flags      uint32
+	TargetInfo []byte
 }
 
 // NTLMAuthenticate represents a Type 3 (Authenticate) message.
 type NTLMAuthenticate struct {
-	LMResponse     []byte
-	NTLMResponse   []byte
-	Domain         string
-	User           string
-	Workstation    string
+	LMResponse          []byte
+	NTLMResponse        []byte
+	Domain              string
+	User                string
+	Workstation         string
 	EncryptedSessionKey []byte
-	Flags          uint32
+	Flags               uint32
 }
 
 // NTLM flags.
 const (
-	ntlmFlagUnicode     uint32 = 0x00000001
-	ntlmFlagNTLM        uint32 = 0x00000200
-	ntlmFlagTargetInfo  uint32 = 0x00800000
-	ntlmFlagVersion     uint32 = 0x02000000
-	ntlmFlag128Bit      uint32 = 0x20000000
-	ntlmFlag56Bit       uint32 = 0x08000000
-	ntlmFlagKeyExchange uint32 = 0x40000000
-	ntlmFlagExtendedSec uint32 = 0x00080000
+	ntlmFlagUnicode       uint32 = 0x00000001
+	ntlmFlagNTLM          uint32 = 0x00000200
+	ntlmFlagTargetInfo    uint32 = 0x00800000
+	ntlmFlagVersion       uint32 = 0x02000000
+	ntlmFlag128Bit        uint32 = 0x20000000
+	ntlmFlag56Bit         uint32 = 0x08000000
+	ntlmFlagKeyExchange   uint32 = 0x40000000
+	ntlmFlagExtendedSec   uint32 = 0x00080000
 	ntlmFlagNegotiateSign uint32 = 0x00000010
 	ntlmFlagNegotiateSeal uint32 = 0x00000020
-	ntlmFlagAlwaysSign  uint32 = 0x00008000
+	ntlmFlagAlwaysSign    uint32 = 0x00008000
 )
 
 // defaultServerFlags returns flags the proxy's NTLM server will advertise.

@@ -42,10 +42,10 @@ type Coordinator struct {
 	commandCh chan ClusterCommand
 
 	// State
-	members         map[string]*MemberInfo
-	isLeader        bool
+	members          map[string]*MemberInfo
+	isLeader         bool
 	cacheInvalidator CacheInvalidator
-	logger          *logger.Logger
+	logger           *logger.Logger
 }
 
 // MemberInfo represents information about a cluster member.
@@ -709,6 +709,51 @@ func (c *Coordinator) SetCacheInvalidator(invalidator CacheInvalidator) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cacheInvalidator = invalidator
+}
+
+// StateString returns the current Raft state as a string.
+func (c *Coordinator) StateString() string {
+	if c.raftNode == nil {
+		return "unknown"
+	}
+	return c.raftNode.State().String()
+}
+
+// GetNodeCount returns the number of members in the cluster.
+func (c *Coordinator) GetNodeCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.members)
+}
+
+// GetTerm returns the current Raft term.
+func (c *Coordinator) GetTerm() uint64 {
+	if c.raftNode == nil {
+		return 0
+	}
+	return c.raftNode.CurrentTerm()
+}
+
+// GetNodes returns cluster members as Node structs for API compatibility.
+func (c *Coordinator) GetNodes() []*Node {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	nodes := make([]*Node, 0, len(c.members))
+	for _, m := range c.members {
+		state := NodeStateFollower
+		if m.NodeID == c.nodeID && c.isLeader {
+			state = NodeStateLeader
+		}
+		nodes = append(nodes, &Node{
+			ID:       m.NodeID,
+			Address:  m.Address,
+			State:    state,
+			LastSeen: m.LastSeen,
+			Meta:     map[string]string{"raft_address": m.RaftAddress, "swim_address": m.SWIMAddress},
+		})
+	}
+	return nodes
 }
 
 // Public API

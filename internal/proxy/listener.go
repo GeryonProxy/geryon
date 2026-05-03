@@ -24,8 +24,8 @@ import (
 
 	"github.com/GeryonProxy/geryon/internal/auth"
 	"github.com/GeryonProxy/geryon/internal/cache"
-	ctxutil "github.com/GeryonProxy/geryon/internal/context"
 	"github.com/GeryonProxy/geryon/internal/config"
+	ctxutil "github.com/GeryonProxy/geryon/internal/context"
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/common"
@@ -526,8 +526,8 @@ type ProxySession struct {
 	pendingParseStmt  string // statement name waiting for ParseComplete confirmation
 	pendingParseQuery string // query for the pending parse
 	// NTLM state for MSSQL interception auth verification
-	ntlmServerChallenge [8]byte           // captured from server's Type 2 challenge
-	ntlmUser            *auth.User        // user whose NTLM hash to verify
+	ntlmServerChallenge [8]byte    // captured from server's Type 2 challenge
+	ntlmUser            *auth.User // user whose NTLM hash to verify
 }
 
 var (
@@ -1915,16 +1915,16 @@ func (ps *ProxySession) forwardMySQLAuth() error {
 				}
 
 				// Verify NTLMv2 credentials if proxy has stored hash for this user
-		if ps.ntlmUser != nil && ps.ntlmUser.NTLMPasswordHash != "" {
-			if err := ps.verifyNTLMClientResponse(clientPayload, clientHeader[0]); err != nil {
-				ps.log.Warn("NTLMv2 verification failed", "user", ps.ntlmUser.Username, "error", err)
-				ps.recordAuthFailure()
-				return fmt.Errorf("NTLM authentication failed: %w", err)
-			}
-			ps.log.Debug("NTLMv2 verification succeeded", "user", ps.ntlmUser.Username)
-		}
+				if ps.ntlmUser != nil && ps.ntlmUser.NTLMPasswordHash != "" {
+					if err := ps.verifyNTLMClientResponse(clientPayload, clientHeader[0]); err != nil {
+						ps.log.Warn("NTLMv2 verification failed", "user", ps.ntlmUser.Username, "error", err)
+						ps.recordAuthFailure()
+						return fmt.Errorf("NTLM authentication failed: %w", err)
+					}
+					ps.log.Debug("NTLMv2 verification succeeded", "user", ps.ntlmUser.Username)
+				}
 
-		// Forward to server
+				// Forward to server
 				clientPkt := make([]byte, 4+clientLength)
 				copy(clientPkt, clientHeader)
 				clientPkt[3] = seq + 1
@@ -2233,11 +2233,11 @@ func (ps *ProxySession) forwardMSSQLLogin7Response() error {
 		// or SSPI packet type (0x11) — indicates challenge-response is needed
 		if respPayloadLen > 0 && (respPayload[0] == 0xED || respHeader[0] == 0x11) {
 			// Capture NTLM Type 2 challenge for local verification
-				if ps.ntlmUser != nil {
-					ps.captureNTLMChallenge(respPayload, respHeader[0])
-				}
+			if ps.ntlmUser != nil {
+				ps.captureNTLMChallenge(respPayload, respHeader[0])
+			}
 
-				// Forward SSPI challenge to client
+			// Forward SSPI challenge to client
 			resp := make([]byte, respLength)
 			copy(resp[0:8], respHeader)
 			copy(resp[8:], respPayload)
@@ -2659,8 +2659,8 @@ func (ps *ProxySession) recordAuthSuccess() {
 
 // Relay handles bidirectional message forwarding.
 type Relay struct {
-	mu             sync.Mutex
-	correlationID  string // Unique ID for request tracing
+	mu            sync.Mutex
+	correlationID string // Unique ID for request tracing
 }
 
 // CorrelationID returns the correlation ID for this relay.
@@ -2917,7 +2917,7 @@ func (r *Relay) forwardClientToServer(ctx context.Context, clientConn net.Conn, 
 								Query:        query,
 								QueryHash:    cacheKey,
 								Duration:     time.Since(queryStartTime),
-								IsCached:      true,
+								IsCached:     true,
 								RowsReturned: 0,
 							})
 						}
@@ -3123,16 +3123,16 @@ func (r *Relay) forwardAndCapture(serverConn net.Conn, clientConn net.Conn, msg 
 				ps.queryLogger.LogQuery(logger.QueryLogEntry{
 					Timestamp:     queryStartTime,
 					QueryID:       fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
-					CorrelationID:  ps.relay.CorrelationID(),
+					CorrelationID: ps.relay.CorrelationID(),
 					Pool:          ps.config.Name,
 					ClientAddr:    ps.clientConn.RemoteAddr().String(),
-					BackendAddr:  backendAddr,
-					Username:     ps.username,
-					Database:     ps.database,
-					Query:        query,
-					QueryHash:    cacheKey,
-					Duration:     duration,
-					RowsReturned: rowCount,
+					BackendAddr:   backendAddr,
+					Username:      ps.username,
+					Database:      ps.database,
+					Query:         query,
+					QueryHash:     cacheKey,
+					Duration:      duration,
+					RowsReturned:  rowCount,
 					IsCached:      false,
 					TransactionID: func() string {
 						if ps.transactionInfo != nil {
@@ -3307,7 +3307,7 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 			ps.queryLogger.LogQuery(logger.QueryLogEntry{
 				Timestamp:     ps.queryStartTime,
 				QueryID:       fmt.Sprintf("%d-%d", ps.id, ps.queryCount.Load()),
-				CorrelationID:  ps.relay.CorrelationID(),
+				CorrelationID: ps.relay.CorrelationID(),
 				Pool:          ps.config.Name,
 				ClientAddr:    ps.clientConn.RemoteAddr().String(),
 				BackendAddr:   backendAddr,
@@ -3316,7 +3316,7 @@ func (r *Relay) forwardServerToClient(ctx context.Context, clientConn net.Conn, 
 				Query:         ps.currentQuery,
 				QueryHash:     cache.GenerateKey(ps.currentQuery).String(),
 				Duration:      duration,
-				RowsReturned: rowCount,
+				RowsReturned:  rowCount,
 				IsCached:      false,
 				TransactionID: func() string {
 					if ps.transactionInfo != nil {

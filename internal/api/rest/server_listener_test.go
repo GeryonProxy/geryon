@@ -14,8 +14,8 @@ import (
 	"github.com/GeryonProxy/geryon/internal/logger"
 	"github.com/GeryonProxy/geryon/internal/pool"
 	"github.com/GeryonProxy/geryon/internal/protocol/postgresql"
-	"github.com/GeryonProxy/geryon/internal/tracing"
 	"github.com/GeryonProxy/geryon/internal/proxy"
+	"github.com/GeryonProxy/geryon/internal/tracing"
 )
 
 // createListenerWithPool creates a proxy.Listener with a real pool, query logger,

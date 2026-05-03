@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GeryonProxy/geryon/internal/logger"
@@ -23,6 +24,16 @@ type Watcher struct {
 	onChange func(*Config)
 	stopCh   chan struct{}
 	running  bool
+
+	// lastWriteAt tracks when an external process (dashboard/API) last wrote
+	// the config file, so we can skip reloading our own writes.
+	lastWriteAt int64 // unix nanos, accessed atomically
+}
+
+// MarkWrite records that a config write just occurred from this process.
+// The watcher will skip the next check to avoid reloading its own write.
+func (w *Watcher) MarkWrite() {
+	atomic.StoreInt64(&w.lastWriteAt, time.Now().UnixNano())
 }
 
 // NewWatcher creates a new configuration watcher.
@@ -104,6 +115,13 @@ func (w *Watcher) watch() {
 
 // check checks if the configuration file has changed.
 func (w *Watcher) check() error {
+	// Skip if our own process wrote the file recently (debounce self-writes)
+	if lastWrite := atomic.LoadInt64(&w.lastWriteAt); lastWrite > 0 {
+		if time.Since(time.Unix(0, lastWrite)) < w.interval {
+			return nil
+		}
+	}
+
 	hash, err := w.computeHash()
 	if err != nil {
 		return fmt.Errorf("failed to read config file: %w", err)

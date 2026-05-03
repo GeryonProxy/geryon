@@ -61,6 +61,7 @@ type Server struct {
 	cluster         dashboardCluster
 	configPath      string
 	refreshRouterFn func()
+	onConfigWrite   func() // called after writing config file (for watcher debounce)
 }
 
 // dashboardCluster is the subset of cluster state the dashboard needs.
@@ -115,6 +116,15 @@ func (s *Server) SetRefreshRouterFn(fn func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshRouterFn = fn
+}
+
+// SetOnConfigWrite sets the callback invoked after the dashboard writes
+// the config file. Used to debounce the config watcher so it does not
+// reload a write that originated from this process.
+func (s *Server) SetOnConfigWrite(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onConfigWrite = fn
 }
 
 // Start starts the dashboard server.
@@ -738,6 +748,9 @@ func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
 		s.userMu.Unlock()
 
 		s.log.Info("Configuration file updated via dashboard", "path", configPath)
+		if s.onConfigWrite != nil {
+			s.onConfigWrite()
+		}
 		s.writeJSON(w, map[string]any{"status": "success", "message": "Configuration saved"})
 
 	default:
@@ -982,6 +995,10 @@ func (s *Server) saveUsersWithUser(newUser *auth.User) error {
 		if writeErr := os.WriteFile(s.configPath, data, 0600); writeErr != nil {
 			return fmt.Errorf("config write fallback failed: %w", err)
 		}
+	}
+
+	if s.onConfigWrite != nil {
+		s.onConfigWrite()
 	}
 
 	return nil

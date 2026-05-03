@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
@@ -296,53 +295,44 @@ func main() {
 		Listen: cfg.Admin.GRPC.Listen,
 		Auth:   cfg.Admin.GRPC.Auth,
 	}, poolMgr, log, reloadFn)
-		grpcServer.SetTracer(tracer)
-		if err := grpcServer.Start(); err != nil {
-			log.Error("Failed to start gRPC server", "error", err)
+	grpcServer.SetTracer(tracer)
+	if err := grpcServer.Start(); err != nil {
+		log.Error("Failed to start gRPC server", "error", err)
 		os.Exit(1)
 	}
 
 	// Create and start cluster if enabled
-	var clusterNode *cluster.Cluster
+	var clusterCoord *cluster.Coordinator
 	if cfg.Cluster.Enabled {
-		// C-2 fix: Load TLS config for inter-node encryption
-		var clusterTLS *tls.Config
-		if cfg.Cluster.TLS.Mode != "" && cfg.Cluster.TLS.Mode != "disable" {
-			var err error
-			clusterTLS, err = tlsutil.LoadServerConfig(cfg.Cluster.TLS)
-			if err != nil {
-				log.Error("Failed to load cluster TLS config", "error", err)
-				os.Exit(1)
-			}
-			log.Info("Cluster TLS enabled", "mode", cfg.Cluster.TLS.Mode)
-		}
+		clusterDataDir := filepath.Join(filepath.Dir(*configPath), "cluster-data")
+		os.MkdirAll(clusterDataDir, 0700)
 
-		clusterConfig := cluster.Config{
-			NodeID:            cfg.Cluster.NodeID,
-			ListenAddr:        cfg.Cluster.Raft.Listen,
-			Peers:             cfg.Cluster.Raft.Peers,
-			Secret:            cfg.Cluster.Secret, // C-2 fix
-			TLSConfig:         clusterTLS,         // C-2 fix
-			ElectionTimeout:   parseDuration(cfg.Cluster.Raft.ElectionTimeout),
-			HeartbeatInterval: parseDuration(cfg.Cluster.Raft.HeartbeatInterval),
-			Logger:            log,
-		}
-		clusterNode = cluster.New(clusterConfig)
-		if err := clusterNode.Start(); err != nil {
-			log.Error("Failed to start cluster", "error", err)
+		coord, err := cluster.NewCoordinator(&cfg.Cluster, clusterDataDir, log)
+		if err != nil {
+			log.Error("Failed to create cluster coordinator", "error", err)
 			os.Exit(1)
 		}
-		log.Info("Cluster node started", "node_id", cfg.Cluster.NodeID, "state", clusterNode.GetState())
+		if err := coord.Start(); err != nil {
+			log.Error("Failed to start cluster coordinator", "error", err)
+			os.Exit(1)
+		}
+		clusterCoord = coord
+		log.Info("Cluster coordinator started", "node_id", cfg.Cluster.NodeID, "state", coord.StateString())
 
-		// Wire cluster to REST API for metrics export
-		restServer.SetCluster(clusterNode)
-		dashboardServer.SetCluster(clusterNode)
-		mcpServer.SetCluster(clusterNode)
+		// Wire cluster to API servers for metrics export
+		restServer.SetCluster(coord)
+		dashboardServer.SetCluster(coord)
+		mcpServer.SetCluster(coord)
 	}
 
 	// Create config watcher for hot reload
 	configFile := *configPath
 	configWatcher := config.NewWatcher(configFile, 5*time.Second, log)
+	// Wire config-write debounce callbacks so dashboard/REST writes
+	// don't trigger a spurious config reload.
+	dashboardServer.SetOnConfigWrite(func() { configWatcher.MarkWrite() })
+	restServer.SetOnConfigWrite(func() { configWatcher.MarkWrite() })
+
 	configWatcher.OnChange(func(newCfg *config.Config) {
 		log.Info("Configuration file changed, reloading")
 
@@ -415,9 +405,9 @@ func main() {
 	}
 
 	// Stop cluster if enabled
-	if clusterNode != nil {
-		if err := clusterNode.Stop(); err != nil {
-			log.Error("Failed to stop cluster", "error", err)
+	if clusterCoord != nil {
+		if err := clusterCoord.Stop(); err != nil {
+			log.Error("Failed to stop cluster coordinator", "error", err)
 		}
 	}
 

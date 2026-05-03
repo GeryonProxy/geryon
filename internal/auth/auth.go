@@ -66,7 +66,7 @@ func (db *UserDatabase) LoadFromConfig(cfg *config.AuthConfig) error {
 			Username:          u.Username,
 			PasswordHash:      u.PasswordHash,
 			MysqlPasswordHash: u.MysqlPasswordHash,
-				NTLMPasswordHash:  u.NTLMPasswordHash,
+			NTLMPasswordHash:  u.NTLMPasswordHash,
 			MaxConnections:    u.MaxConnections,
 			DefaultPool:       u.DefaultPool,
 			AllowedPools:      u.AllowedPools,

@@ -60,20 +60,21 @@ type Cluster interface {
 
 // Server represents the REST API server.
 type Server struct {
-	mu         sync.RWMutex
-	config     *config.AdminRESTConfig
-	listener   net.Listener
-	httpServer *http.Server
-	poolMgr    *pool.Manager
-	listeners  []*proxy.Listener
-	log        *logger.Logger
-	started    bool
-	configPath string
-	reloadFn   func() error
-	cluster    Cluster
-	userDB     *auth.UserDatabase
-	userMu     sync.Mutex // serializes user persistence operations
-	tracer     *tracing.Tracer
+	mu            sync.RWMutex
+	config        *config.AdminRESTConfig
+	listener      net.Listener
+	httpServer    *http.Server
+	poolMgr       *pool.Manager
+	listeners     []*proxy.Listener
+	log           *logger.Logger
+	started       bool
+	configPath    string
+	reloadFn      func() error
+	cluster       Cluster
+	userDB        *auth.UserDatabase
+	userMu        sync.Mutex // serializes user persistence operations
+	tracer        *tracing.Tracer
+	onConfigWrite func() // called after writing config file (for watcher debounce)
 }
 
 // NewServer creates a new REST API server.
@@ -150,6 +151,15 @@ func (s *Server) SetCluster(c Cluster) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cluster = c
+}
+
+// SetOnConfigWrite sets the callback invoked after the REST API writes
+// the config file. Used to debounce the config watcher so it does not
+// reload a write that originated from this process.
+func (s *Server) SetOnConfigWrite(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onConfigWrite = fn
 }
 
 // setupDashboard sets up the dashboard routes.
@@ -323,12 +333,12 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut ||
 			r.Method == http.MethodDelete || r.Method == http.MethodPatch {
 			// Layer 1: Require X-Requested-With header
-				if r.Header.Get("X-Requested-With") == "" {
-					http.Error(w, "Forbidden: missing X-Requested-With header", http.StatusForbidden)
-					return
-				}
+			if r.Header.Get("X-Requested-With") == "" {
+				http.Error(w, "Forbidden: missing X-Requested-With header", http.StatusForbidden)
+				return
+			}
 
-				// Layer 3: Origin check: when AllowedOrigins is empty, accept same-origin requests
+			// Layer 3: Origin check: when AllowedOrigins is empty, accept same-origin requests
 			// (Origin matching the request's own scheme+Host).
 			if origin != "" && !s.isAllowedOrigin(origin) {
 				// Same-origin check: Origin should match our Host
@@ -1306,6 +1316,12 @@ func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
 		s.userMu.Unlock()
 
 		s.log.Info("Configuration file updated", "path", s.configPath)
+		s.mu.RLock()
+		onConfigWrite := s.onConfigWrite
+		s.mu.RUnlock()
+		if onConfigWrite != nil {
+			onConfigWrite()
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":    "success",
 			"message":   "Configuration saved. Reload to apply.",

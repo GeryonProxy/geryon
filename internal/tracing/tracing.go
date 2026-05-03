@@ -25,7 +25,7 @@ import (
 type Config struct {
 	Enabled      bool    `yaml:"enabled"`
 	Exporter     string  `yaml:"exporter"`      // "otlpgrpc" | "jaeger" | "zipkin"
-	Endpoint     string  `yaml:"endpoint"`     // OTLP endpoint
+	Endpoint     string  `yaml:"endpoint"`      // OTLP endpoint
 	SamplingRate float64 `yaml:"sampling_rate"` // 0.0 - 1.0
 	ServiceName  string  `yaml:"service_name"`
 }
